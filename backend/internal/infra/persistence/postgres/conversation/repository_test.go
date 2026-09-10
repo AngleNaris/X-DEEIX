@@ -696,11 +696,15 @@ func TestTranslateErrorAllowsNil(t *testing.T) {
 
 func TestCreateFileObjectRejectsStorageQuotaWithSharedError(t *testing.T) {
 	db := openConversationRepositoryTestDB(t)
-	if err := db.AutoMigrate(&model.UserStorageQuota{}); err != nil {
+	if err := db.AutoMigrate(&model.UserStorageQuota{}, &model.User{}); err != nil {
+		t.Fatal(err)
+	}
+	user := model.User{PublicID: "quota_owner", Username: "quota-owner", Role: "user", Status: "active"}
+	if err := db.Create(&user).Error; err != nil {
 		t.Fatal(err)
 	}
 	_, err := NewRepo(db).CreateFileObjectAndConsumeQuota(t.Context(), &domainconversation.FileObject{
-		UserID: 1, SizeBytes: 2,
+		UserID: user.ID, SizeBytes: 2,
 	}, 1)
 	if !errors.Is(err, repository.ErrStorageQuotaExceeded) {
 		t.Fatalf("expected shared storage quota error, got %v", err)
