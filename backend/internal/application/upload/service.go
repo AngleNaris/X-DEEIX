@@ -252,7 +252,7 @@ func (s *Service) UploadFile(ctx context.Context, input UploadFileInput) (*Uploa
 	if err != nil {
 		return nil, err
 	}
-	relativePath, detectedMIME, shaValue, sizeBytes, err := saveUploadedFile(
+	saved, err := s.saveUploadedFile(
 		ctx,
 		store,
 		input.Reader,
@@ -261,6 +261,7 @@ func (s *Service) UploadFile(ctx context.Context, input UploadFileInput) (*Uploa
 		normalizedName,
 		maxUploadBytes,
 		normalizedMIME,
+		cfg,
 	)
 	if err != nil {
 		if errors.Is(err, errLocalFileTooLarge) {
@@ -268,6 +269,11 @@ func (s *Service) UploadFile(ctx context.Context, input UploadFileInput) (*Uploa
 		}
 		return nil, err
 	}
+	relativePath, detectedMIME, shaValue, sizeBytes := saved.path, saved.mimeType, saved.sha256, saved.size
+	if saved.mimeType == "image/webp" {
+		normalizedMIME = detectedMIME
+	}
+	normalizedName = saved.fileName
 	category := inferFileCategory(detectedMIME, normalizedName)
 	logRemoveErr := func(path string, err error) {
 		if err != nil && s.logger != nil {
@@ -956,7 +962,12 @@ func isTextMIMEForEmbed(mimeType, fileName string) bool {
 	return false
 }
 
-func saveUploadedFile(
+type savedUpload struct {
+	path, mimeType, sha256, fileName string
+	size                             int64
+}
+
+func (s *Service) saveUploadedFile(
 	ctx context.Context,
 	store objectstore.Store,
 	reader io.Reader,
@@ -965,7 +976,8 @@ func saveUploadedFile(
 	fileName string,
 	maxUploadBytes int64,
 	declaredMIME string,
-) (string, string, string, int64, error) {
+	cfg config.Config,
+) (savedUpload, error) {
 	normalizedUserID := strings.TrimSpace(userPublicID)
 	if normalizedUserID == "" {
 		normalizedUserID = "unknown_user"
@@ -976,7 +988,7 @@ func saveUploadedFile(
 
 	tmpFile, err := os.CreateTemp("", fileID+"_*.upload")
 	if err != nil {
-		return "", "", "", 0, err
+		return savedUpload{}, err
 	}
 	tmpName := tmpFile.Name()
 	defer func() {
@@ -991,10 +1003,38 @@ func saveUploadedFile(
 	hasher := sha256.New()
 	written, err := io.Copy(io.MultiWriter(tmpFile, hasher), io.LimitReader(bufferedReader, maxUploadBytes+1))
 	if err != nil {
-		return "", "", "", 0, err
+		return savedUpload{}, err
 	}
 	if written > maxUploadBytes {
-		return "", "", "", 0, errLocalFileTooLarge
+		return savedUpload{}, errLocalFileTooLarge
+	}
+
+	// Validate the original format and size before converting; compression cannot bypass upload policy.
+	if isAllowedMIME(detectedMIME, cfg) && isAllowedMIME("image/webp", cfg) &&
+		(cfg.FileImageMaxBytes <= 0 || written <= cfg.FileImageMaxBytes) {
+		converted, convertErr := convertStoredImage(ctx, tmpName, detectedMIME, cfg.ImageStorageFormat, cfg.ImageStorageQuality)
+		if ctx.Err() != nil {
+			return savedUpload{}, ctx.Err()
+		}
+		if convertErr != nil && s.logger != nil {
+			s.logger.Warn("image_storage_conversion_failed", zap.String("file_id", fileID), zap.Error(convertErr))
+		}
+		if len(converted) > 0 {
+			if err = tmpFile.Truncate(0); err != nil {
+				return savedUpload{}, err
+			}
+			if _, err = tmpFile.Seek(0, io.SeekStart); err != nil {
+				return savedUpload{}, err
+			}
+			hasher.Reset()
+			count, writeErr := io.MultiWriter(tmpFile, hasher).Write(converted)
+			if writeErr != nil {
+				return savedUpload{}, writeErr
+			}
+			written = int64(count)
+			detectedMIME = "image/webp"
+			fileName = strings.TrimSuffix(fileName, filepath.Ext(fileName)) + ".webp"
+		}
 	}
 
 	now := time.Now()
@@ -1006,14 +1046,14 @@ func saveUploadedFile(
 	)
 	relativePath = filepath.ToSlash(relativePath)
 	if _, err = tmpFile.Seek(0, io.SeekStart); err != nil {
-		return "", "", "", 0, err
+		return savedUpload{}, err
 	}
 	if _, err = store.Put(ctx, relativePath, tmpFile, objectstore.PutOptions{
 		SizeBytes:   written,
 		ContentType: detectedMIME,
 	}); err != nil {
-		return "", "", "", 0, err
+		return savedUpload{}, err
 	}
 
-	return relativePath, detectedMIME, hex.EncodeToString(hasher.Sum(nil)), written, nil
+	return savedUpload{path: relativePath, mimeType: detectedMIME, sha256: hex.EncodeToString(hasher.Sum(nil)), size: written, fileName: fileName}, nil
 }

@@ -12,6 +12,36 @@ type testSettingsRepo struct {
 	byNamespace map[string][]domainsettings.SystemSetting
 }
 
+func TestImageStorageSettingsValidationAndRuntime(t *testing.T) {
+	for _, value := range []string{"original", "webp_lossless", "webp_lossy"} {
+		if err := validatePatchItem(PatchItem{Namespace: "storage", Key: "image_format", Value: value}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, item := range []PatchItem{
+		{Namespace: "storage", Key: "image_format", Value: "jpeg"},
+		{Namespace: "storage", Key: "image_quality", Value: "0"},
+		{Namespace: "storage", Key: "image_quality", Value: "101"},
+		{Namespace: "storage", Key: "image_quality", Value: "85.5"},
+	} {
+		if validatePatchItem(item) == nil {
+			t.Fatalf("accepted invalid setting: %+v", item)
+		}
+	}
+	for _, quality := range []string{"1", "85", "100"} {
+		if err := validatePatchItem(PatchItem{Namespace: "storage", Key: "image_quality", Value: quality}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := config.Config{}
+	runtime := &RuntimeSettings{}
+	runtime.applyItem(&cfg, domainsettings.SystemSetting{Namespace: "storage", Key: "image_format", Value: "webp_lossy"})
+	runtime.applyItem(&cfg, domainsettings.SystemSetting{Namespace: "storage", Key: "image_quality", Value: "85"})
+	if cfg.ImageStorageFormat != "webp_lossy" || cfg.ImageStorageQuality != 85 {
+		t.Fatalf("settings not applied: %s %d", cfg.ImageStorageFormat, cfg.ImageStorageQuality)
+	}
+}
+
 type testVectorStore struct {
 	available bool
 	err       error

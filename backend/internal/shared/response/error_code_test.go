@@ -18,7 +18,7 @@ func TestInferErrorCode(t *testing.T) {
 		{name: "invalid id", status: http.StatusBadRequest, msg: "invalid conversation id", want: "conversation.invalid_id"},
 		{name: "two factor", status: http.StatusUnauthorized, msg: "invalid two factor code", want: CodeAuthInvalidTwoFactorCode},
 		{name: "pricing", status: http.StatusPaymentRequired, msg: "model pricing is required", want: CodeBillingPricingRequired},
-		{name: "quota", status: http.StatusConflict, msg: "storage quota exceeded", want: CodeQuotaExceeded},
+		{name: "storage quota", status: http.StatusConflict, msg: "storage quota exceeded", want: "file.storage_quota_exceeded"},
 		{name: "upstream", status: http.StatusBadGateway, msg: "remote models unavailable", want: "llm.remote_models_unavailable"},
 		{name: "generation canceled", status: http.StatusBadRequest, msg: "message generation canceled", want: "conversation_run.canceled"},
 		{name: "internal", status: http.StatusInternalServerError, msg: "update settings failed: pq: bad column", want: CodeInternal},

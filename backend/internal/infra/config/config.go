@@ -437,6 +437,8 @@ type Config struct {
 	UserStorageQuotaBytes int64
 	MaxUploadFileBytes    int64
 	MaxMessageFiles       int
+	ImageStorageFormat    string
+	ImageStorageQuality   int
 	// 文件处理配置
 	ImageMaxDimension                 int    // 图片缩放最大边长（像素），0 = 不缩放
 	FileFullContextLimitEnabled       bool   // 是否启用全文注入阈值限制
@@ -691,6 +693,8 @@ func Load() Config {
 		UserStorageQuotaBytes:             104857600,
 		MaxUploadFileBytes:                20971520,
 		MaxMessageFiles:                   10,
+		ImageStorageFormat:                "original",
+		ImageStorageQuality:               85,
 		ImageMaxDimension:                 1024,
 		FileFullContextLimitEnabled:       true,
 		FileFullContextMaxBytes:           DefaultFileFullContextMaxBytes,

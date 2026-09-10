@@ -170,6 +170,7 @@
     "serviceUnavailable": "向量服务不可用。"
   },
   "file": {
+    "storageQuotaExceeded": "存储空间不足，无法上传文件或保存生成结果。请在文件管理中删除不再需要的文件，或联系管理员增加存储额度后重试。",
     "embeddingUnavailable": "当前文件暂不支持向量处理。",
     "extractNotReady": "文件解析尚未完成。",
     "invalidId": "文件 ID 无效。",

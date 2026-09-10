@@ -180,7 +180,7 @@ var exactErrorSpecs = map[string]errorSpec{
 	"invalid file stream":                                  {Code: "file.invalid_stream", Message: "invalid file stream"},
 	"invalid file reference":                               {Code: "file.invalid_reference", Message: "invalid file reference"},
 	"invalid file name":                                    {Code: "file.invalid_name", Message: "invalid file name"},
-	"storage quota exceeded":                               {Code: CodeQuotaExceeded, Message: "storage quota exceeded"},
+	"storage quota exceeded":                               {Code: "file.storage_quota_exceeded", Message: "storage quota exceeded"},
 	"dangerous file type not allowed":                      {Code: CodeFileTypeBlocked, Message: "file type is not allowed"},
 	"mime blocked":                                         {Code: CodeFileTypeBlocked, Message: "file type is not allowed"},
 	"embedding unavailable":                                {Code: "file.embedding_unavailable", Message: "embedding is unavailable"},

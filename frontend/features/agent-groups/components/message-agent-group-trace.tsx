@@ -277,7 +277,7 @@ function AgentGroupStepTrace({
     >
       <AccordionItem
         value="open"
-        className={cn("border-b-0", isRunning && "trace-sweep")}
+        className="border-b-0"
       >
         <AccordionTrigger
           iconPosition="none"
@@ -292,7 +292,8 @@ function AgentGroupStepTrace({
                   !isRunning && "text-muted-foreground group-hover:text-foreground",
                 )}
               >
-                <MarkerContent className="min-w-0">
+                {/* Text clipping must stay on the title, never on a container with scrollable descendants. */}
+                <MarkerContent className={cn("min-w-0", isRunning && "trace-sweep")}>
                   {actorIcon ? `${actorIcon} ` : ""}
                   {actorLabel}
                 </MarkerContent>

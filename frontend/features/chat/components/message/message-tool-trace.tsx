@@ -951,8 +951,6 @@ function ToolChainRows({ steps, labels }: { steps: ToolChainStep[]; labels: Proc
             className={cn(
               "group/tool-chain-row grid grid-cols-[0.875rem_8rem_minmax(0,1fr)] gap-x-5 gap-y-0.5 text-[12px] leading-5",
               "max-sm:grid-cols-[0.875rem_minmax(0,1fr)] max-sm:gap-x-2",
-              // 进行中的工具调用行扫光提示
-              step.toolStatus && isToolTraceStatusActive(step.toolStatus) && "trace-sweep",
             )}
           >
             <div className="relative flex justify-center">
@@ -969,6 +967,7 @@ function ToolChainRows({ steps, labels }: { steps: ToolChainStep[]; labels: Proc
               <span
                 className={cn(
                   "block truncate font-medium text-muted-foreground/76 transition-colors group-hover/tool-chain-row:text-foreground/88",
+                  step.toolStatus && isToolTraceStatusActive(step.toolStatus) && "trace-sweep",
                   step.failed && "text-destructive/85 group-hover/tool-chain-row:text-destructive",
                 )}
               >

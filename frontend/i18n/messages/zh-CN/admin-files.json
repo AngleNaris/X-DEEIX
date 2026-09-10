@@ -1,5 +1,9 @@
 {
   "groups": {
+    "imageStorage": {
+      "title": "图片存储",
+      "description": "设置新上传及新生成图片的保存格式。保持尺寸和透明背景，仅采用更小的转换结果；已有文件、动图及 WebP 保持原样。转换不可用时保留原图。"
+    },
     "uploadLimits": {
       "title": "上传限制",
       "description": "控制对话附件数量、MIME 白名单和文件大小上限。"
@@ -83,6 +87,19 @@
   },
   "fields": {
     "storage": {
+      "image_format": {
+        "label": "图片保存格式",
+        "description": "适用于用户上传和模型生成的静态 PNG/JPEG 图片。按实际保存大小计算存储额度；有损模式会改变画质。",
+        "options": {
+          "original": "保留原图",
+          "webp_lossless": "WebP 无损",
+          "webp_lossy": "WebP 有损"
+        }
+      },
+      "image_quality": {
+        "label": "WebP 压缩质量",
+        "description": "范围 1–100，默认 85。数值越高，保留细节越多，文件通常越大。"
+      },
       "max_message_files": {
         "label": "附件数量上限",
         "description": "用于限制单条对话消息可携带的附件数量。",

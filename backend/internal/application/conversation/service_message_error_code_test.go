@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 )
 
 func TestClassifyRunErrorCodeKnowledgeBaseErrors(t *testing.T) {
@@ -14,6 +16,7 @@ func TestClassifyRunErrorCodeKnowledgeBaseErrors(t *testing.T) {
 		err  error
 		want string
 	}{
+		{name: "repository storage quota", err: fmt.Errorf("save image: %w", repository.ErrStorageQuotaExceeded), want: "file.storage_quota_exceeded"},
 		{name: "invalid reference", err: ErrInvalidKnowledgeBaseReference, want: MessageErrorCodeKnowledgeBaseInvalidReference},
 		{name: "unavailable", err: ErrKnowledgeBaseUnavailable, want: MessageErrorCodeKnowledgeBaseUnavailable},
 		{name: "not ready", err: ErrKnowledgeBaseNotReady, want: MessageErrorCodeKnowledgeBaseNotReady},

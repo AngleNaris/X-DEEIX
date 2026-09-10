@@ -1,6 +1,10 @@
 package conversation
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+)
 
 var (
 	// ErrConversationNotFound 会话不存在或无权限。
@@ -72,7 +76,7 @@ var (
 	// ErrFileInUse 文件正在被头像、知识库等资源使用。
 	ErrFileInUse = errors.New("file in use")
 	// ErrStorageQuotaExceeded 文件配额超限。
-	ErrStorageQuotaExceeded = errors.New("storage quota exceeded")
+	ErrStorageQuotaExceeded = repository.ErrStorageQuotaExceeded
 	// ErrFileTooLarge 文件过大。
 	ErrFileTooLarge = errors.New("file too large")
 	// ErrMIMEBlocked 文件类型不被允许。

@@ -694,6 +694,19 @@ func TestTranslateErrorAllowsNil(t *testing.T) {
 	}
 }
 
+func TestCreateFileObjectRejectsStorageQuotaWithSharedError(t *testing.T) {
+	db := openConversationRepositoryTestDB(t)
+	if err := db.AutoMigrate(&model.UserStorageQuota{}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewRepo(db).CreateFileObjectAndConsumeQuota(t.Context(), &domainconversation.FileObject{
+		UserID: 1, SizeBytes: 2,
+	}, 1)
+	if !errors.Is(err, repository.ErrStorageQuotaExceeded) {
+		t.Fatalf("expected shared storage quota error, got %v", err)
+	}
+}
+
 func TestAttachmentDurationSecondsFromMetaJSON(t *testing.T) {
 	if got := attachmentDurationSecondsFromMetaJSON(`{"duration_seconds":6}`); got != 6 {
 		t.Fatalf("expected attachment duration 6, got %d", got)

@@ -55,3 +55,16 @@ test("streaming titles sweep only their text while unread dots remain completion
     assert.match(source, /streaming\s*&&\s*"trace-sweep"/);
   }
 });
+
+test("trace text masks never enclose scrollable group or tool content", () => {
+  for (const [path, container] of [
+    ["../../../features/agent-groups/components/message-agent-group-trace.tsx", "AccordionItem"],
+    ["../../../features/chat/components/message/message-tool-trace.tsx", "li"],
+  ]) {
+    const source = readFileSync(new URL(path, import.meta.url), "utf8");
+    const openings = source.match(new RegExp(`<${container}\\b[\\s\\S]*?>`, "g")) ?? [];
+    assert.ok(openings.length > 0);
+    for (const opening of openings) assert.ok(!opening.includes('"trace-sweep"'), `${container} must not paint clipped descendant text`);
+    assert.match(source, /trace-sweep/);
+  }
+});

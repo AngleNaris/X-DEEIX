@@ -170,6 +170,7 @@
     "serviceUnavailable": "Embedding service is unavailable."
   },
   "file": {
+    "storageQuotaExceeded": "Not enough storage space to upload files or save generated results. Delete unneeded files in Files, or contact an administrator to increase your storage limit, then try again.",
     "embeddingUnavailable": "Embedding is unavailable for this file.",
     "extractNotReady": "File extraction is not ready.",
     "invalidId": "Invalid file ID.",

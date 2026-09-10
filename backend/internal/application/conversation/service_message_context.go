@@ -203,7 +203,7 @@ func classifyRunErrorCode(err error) string {
 	case errors.Is(err, ErrFileNotFound):
 		return "file_not_found"
 	case errors.Is(err, ErrStorageQuotaExceeded):
-		return "storage_quota_exceeded"
+		return "file.storage_quota_exceeded"
 	case errors.Is(err, ErrFileTooLarge):
 		return "file_too_large"
 	case errors.Is(err, ErrInvalidKnowledgeBaseReference):

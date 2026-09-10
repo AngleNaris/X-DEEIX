@@ -177,6 +177,10 @@ func (r *RuntimeSettings) applyItem(cfg *config.Config, item domainsettings.Syst
 		cfg.ModelOptionDeniedPaths = item.Value
 
 		// 存储配置
+	case "storage:image_format":
+		cfg.ImageStorageFormat = strings.TrimSpace(item.Value)
+	case "storage:image_quality":
+		cfg.ImageStorageQuality = toInt(item.Value, cfg.ImageStorageQuality)
 	case "storage:user_storage_quota_bytes":
 		cfg.UserStorageQuotaBytes = toInt64(item.Value, cfg.UserStorageQuotaBytes)
 	case "storage:max_upload_file_bytes":

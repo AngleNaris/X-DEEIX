@@ -67,18 +67,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 FROM debian:bookworm-slim AS runtime-deps
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates tzdata \
+  && apt-get install -y --no-install-recommends ca-certificates tzdata webp \
   && rm -rf /var/lib/apt/lists/*
 
 
-FROM debian:bookworm-slim AS runtime
+FROM runtime-deps AS runtime
 
 WORKDIR /app
 
-COPY --from=runtime-deps /etc/ssl/certs /etc/ssl/certs
-COPY --from=runtime-deps /usr/share/zoneinfo /usr/share/zoneinfo
-COPY --from=runtime-deps /etc/localtime /etc/localtime
-COPY --from=runtime-deps /etc/timezone /etc/timezone
 COPY --from=backend-builder /out/deeix-chat /app/deeix-chat
 COPY --from=frontend-builder /src/frontend/out /app/frontend/out
 COPY LICENSE NOTICE /app/licenses/DEEIX-Chat/

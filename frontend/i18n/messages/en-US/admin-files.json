@@ -1,5 +1,9 @@
 {
   "groups": {
+    "imageStorage": {
+      "title": "Image storage",
+      "description": "Choose the storage format for new uploads and generated images. Preserve dimensions and transparency, and use converted files only when smaller. Existing files, animations and WebP stay unchanged. Keep originals if conversion is unavailable."
+    },
     "uploadLimits": {
       "title": "Upload limits",
       "description": "Controls attachment count, MIME allowlist, and file size limits for chat messages."
@@ -83,6 +87,19 @@
   },
   "fields": {
     "storage": {
+      "image_format": {
+        "label": "Image storage format",
+        "description": "Applies to uploaded and generated static PNG/JPEG images. Storage usage reflects the saved size; lossy mode changes image quality.",
+        "options": {
+          "original": "Keep original",
+          "webp_lossless": "WebP lossless",
+          "webp_lossy": "WebP lossy"
+        }
+      },
+      "image_quality": {
+        "label": "WebP quality",
+        "description": "1–100, default 85. Higher quality preserves more detail and usually creates larger files."
+      },
       "max_message_files": {
         "label": "Attachment limit",
         "description": "Maximum number of attachments allowed in one chat message.",

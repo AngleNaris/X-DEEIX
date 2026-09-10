@@ -3,6 +3,8 @@ package repository
 import "errors"
 
 var (
+	// ErrStorageQuotaExceeded 表示文件存储配额不足。
+	ErrStorageQuotaExceeded = errors.New("storage quota exceeded")
 	// ErrNotFound 表示记录不存在。
 	ErrNotFound = errors.New("record not found")
 	// ErrDuplicate 表示违反唯一约束。

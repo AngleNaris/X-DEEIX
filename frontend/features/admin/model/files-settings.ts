@@ -195,6 +195,33 @@ export const INITIAL_SERVICE_STATES: Record<ServiceName, ServiceState> = {
 
 export const SETTINGS_GROUPS: SettingsGroup[] = [
   {
+    key: "imageStorage",
+    title: "Image storage",
+    description: "Storage format for newly uploaded and generated images.",
+    fields: [
+      {
+        namespace: "storage",
+        key: "image_format",
+        label: "Image storage format",
+        description: "Keep originals or convert new uploads and generated images to smaller WebP files.",
+        type: "select",
+        options: [
+          { label: "Keep original", value: "original" },
+          { label: "WebP lossless", value: "webp_lossless" },
+          { label: "WebP lossy", value: "webp_lossy" },
+        ],
+      },
+      {
+        namespace: "storage",
+        key: "image_quality",
+        label: "WebP quality",
+        description: "1–100; higher values preserve more detail. Default: 85.",
+        type: "int",
+        visibleWhen: { field: "storage.image_format", equals: "webp_lossy" },
+      },
+    ],
+  },
+  {
     key: "uploadLimits",
     title: "Upload limits",
     description: "Controls attachment count, MIME allowlist, and file size limits for chat messages.",
@@ -1157,6 +1184,8 @@ export function isEmbeddingServiceConfigured(settings: Record<string, string>): 
 
 export function applySettingsDefaults(next: Record<string, string>): Record<string, string> {
   const result = { ...next };
+  result["storage.image_format"] ||= "original";
+  result["storage.image_quality"] ||= "85";
   result["extract.tika_source"] = TIKA_SERVICE_SOURCES.EXTERNAL;
   result["extract.rapidocr_source"] = TIKA_SERVICE_SOURCES.EXTERNAL;
   result["extract.ocr_engine"] = resolveOCREngine(result["extract.ocr_engine"] ?? "");

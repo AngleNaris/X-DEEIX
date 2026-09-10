@@ -518,6 +518,15 @@ func validatePatchItem(item PatchItem) error {
 		return validateEmailDomainList(value, key)
 	case "storage:max_upload_file_bytes":
 		return validateInt64Min(value, 1, key)
+	case "storage:image_format":
+		switch value {
+		case "original", "webp_lossless", "webp_lossy":
+			return nil
+		default:
+			return fmt.Errorf("%s must be one of: original, webp_lossless, webp_lossy", key)
+		}
+	case "storage:image_quality":
+		return validateIntMinMax(value, 1, 100, key)
 	case "storage:user_storage_quota_bytes":
 		return validateInt64Min(value, 0, key)
 	case "file:file_full_context_max_bytes":
