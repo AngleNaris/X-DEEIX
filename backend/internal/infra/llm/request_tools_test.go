@@ -913,6 +913,26 @@ func TestParseChatCompletionsPlainTextToolCalls(t *testing.T) {
 	}
 }
 
+func TestParseChatCompletionsPlainTextSingleObjectToolCall(t *testing.T) {
+	payload := mustDecodeObject(t, `{
+		"id": "chatcmpl_plain_single",
+		"choices": [{
+			"message": {
+				"role": "assistant",
+				"content": "<tool_calls> {\"name\":\"list_agent_groups\",\"arguments\":{}} </tool_calls>"
+			}
+		}]
+	}`)
+
+	result := buildGenerateOutputFromParsedForAdapter(EndpointChatCompletions, AdapterOpenAIChatCompletions, payload, textEncodedToolCallsGenericActive)
+	if result.Text != "" {
+		t.Fatalf("expected single plain tool call envelope to be removed from visible text, got %q", result.Text)
+	}
+	if len(result.ToolCalls) != 1 || result.ToolCalls[0].ToolCallID != "text_call_1" || result.ToolCalls[0].ToolName != "list_agent_groups" || result.ToolCalls[0].ArgumentsJSON != "{}" {
+		t.Fatalf("unexpected single plain tool call: %#v", result.ToolCalls)
+	}
+}
+
 func TestParseChatCompletionsEscapedPlainTextToolCalls(t *testing.T) {
 	payload := mustDecodeObject(t, `{
 		"id": "chatcmpl_escaped",
@@ -957,6 +977,32 @@ func TestConsumeChatStreamPlainTextToolCallsAreNotEmittedAsText(t *testing.T) {
 	}
 	if len(result.ToolCalls) != 2 || result.ToolCalls[0].ToolName != "list_agent_groups" || result.ToolCalls[1].ToolName != "list_roles" {
 		t.Fatalf("unexpected plain stream tool calls: %#v", result.ToolCalls)
+	}
+}
+
+func TestConsumeChatStreamPlainTextSingleObjectToolCallIsNotEmittedAsText(t *testing.T) {
+	rawStream := strings.Join([]string{
+		`data: {"id":"chatcmpl_plain_single","choices":[{"delta":{"content":"<tool_calls>{\"name\":\"list_agent_groups\",\"arguments\":{}}</tool_calls>"}}]}`,
+		`data: [DONE]`,
+		``,
+	}, "\n\n")
+	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0)}
+	var deltas []string
+
+	err := consumeOpenAIGenerateStream(EndpointChatCompletions, AdapterOpenAIChatCompletions, strings.NewReader(rawStream), result, func(event GenerateStreamEvent) error {
+		if event.Delta != "" {
+			deltas = append(deltas, event.Delta)
+		}
+		return nil
+	}, textEncodedToolCallsGenericActive)
+	if err != nil {
+		t.Fatalf("consume single-object stream: %v", err)
+	}
+	if len(deltas) != 0 || result.Text != "" {
+		t.Fatalf("expected single plain tool call to stay out of visible text, deltas=%#v text=%q", deltas, result.Text)
+	}
+	if len(result.ToolCalls) != 1 || result.ToolCalls[0].ToolName != "list_agent_groups" || result.ToolCalls[0].ArgumentsJSON != "{}" {
+		t.Fatalf("unexpected single plain stream tool call: %#v", result.ToolCalls)
 	}
 }
 

@@ -178,8 +178,13 @@ func parsePlainToolCalls(text string, offset int) (string, []ToolCall, bool) {
 		blockStart, blockEnd := match[0], match[1]
 		contentStart, contentEnd := match[2], match[3]
 		var items []map[string]interface{}
-		if err := json.Unmarshal([]byte(strings.TrimSpace(text[contentStart:contentEnd])), &items); err != nil {
-			continue
+		payload := []byte(strings.TrimSpace(text[contentStart:contentEnd]))
+		if err := json.Unmarshal(payload, &items); err != nil {
+			var item map[string]interface{}
+			if err := json.Unmarshal(payload, &item); err != nil {
+				continue
+			}
+			items = []map[string]interface{}{item}
 		}
 		blockCalls := make([]ToolCall, 0, len(items))
 		for _, item := range items {
