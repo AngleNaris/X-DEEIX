@@ -933,6 +933,14 @@ func TestParseChatCompletionsPlainTextSingleObjectToolCall(t *testing.T) {
 	}
 }
 
+func TestParseChatCompletionsPlainTextAdjacentObjectToolCalls(t *testing.T) {
+	payload := mustDecodeObject(t, `{"id":"chatcmpl_plain_adjacent","choices":[{"message":{"role":"assistant","content":"<tool_calls>{\"name\":\"one\",\"arguments\":{}} {\"name\":\"two\",\"arguments\":{\"x\":1}}</tool_calls>"}}]}`)
+	result := buildGenerateOutputFromParsedForAdapter(EndpointChatCompletions, AdapterOpenAIChatCompletions, payload, textEncodedToolCallsGenericActive)
+	if result.Text != "" || len(result.ToolCalls) != 2 || result.ToolCalls[0].ToolName != "one" || result.ToolCalls[1].ToolName != "two" {
+		t.Fatalf("unexpected adjacent plain tool calls: text=%q calls=%#v", result.Text, result.ToolCalls)
+	}
+}
+
 func TestParseChatCompletionsEscapedPlainTextToolCalls(t *testing.T) {
 	payload := mustDecodeObject(t, `{
 		"id": "chatcmpl_escaped",

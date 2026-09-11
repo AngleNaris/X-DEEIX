@@ -1,9 +1,11 @@
 package llm
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"html"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -177,14 +179,9 @@ func parsePlainToolCalls(text string, offset int) (string, []ToolCall, bool) {
 	for _, match := range matches {
 		blockStart, blockEnd := match[0], match[1]
 		contentStart, contentEnd := match[2], match[3]
-		var items []map[string]interface{}
-		payload := []byte(strings.TrimSpace(text[contentStart:contentEnd]))
-		if err := json.Unmarshal(payload, &items); err != nil {
-			var item map[string]interface{}
-			if err := json.Unmarshal(payload, &item); err != nil {
-				continue
-			}
-			items = []map[string]interface{}{item}
+		items, ok := decodePlainToolCallItems([]byte(strings.TrimSpace(text[contentStart:contentEnd])))
+		if !ok {
+			continue
 		}
 		blockCalls := make([]ToolCall, 0, len(items))
 		for _, item := range items {
@@ -230,6 +227,32 @@ func parsePlainToolCalls(text string, offset int) (string, []ToolCall, bool) {
 	}
 	clean.WriteString(text[last:])
 	return strings.TrimSpace(clean.String()), toolCalls, true
+}
+
+// decodePlainToolCallItems accepts both a JSON array/object and adjacent JSON
+// objects emitted in one <tool_calls> block.
+func decodePlainToolCallItems(payload []byte) ([]map[string]interface{}, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	items := make([]map[string]interface{}, 0)
+	for {
+		var value interface{}
+		if err := decoder.Decode(&value); err != nil {
+			if errors.Is(err, io.EOF) {
+				return items, len(items) > 0
+			}
+			return nil, false
+		}
+		switch value := value.(type) {
+		case map[string]interface{}:
+			items = append(items, value)
+		case []interface{}:
+			for _, entry := range value {
+				if item, ok := entry.(map[string]interface{}); ok {
+					items = append(items, item)
+				}
+			}
+		}
+	}
 }
 
 // parseDSMLToolCalls 解析 DeepSeek V4 以 DSML 文本片段返回的工具调用。
