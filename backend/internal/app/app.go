@@ -165,6 +165,15 @@ func (a agentGroupWriterAdapter) UpdateAgentGroup(ctx context.Context, userID ui
 	})
 }
 
+func (a agentGroupWriterAdapter) UpdateAgentGroupMember(ctx context.Context, userID uint, groupPublicID string, memberPublicID string, input conversation.AgentGroupMemberUpdateInput) (*domainagentgroup.Group, error) {
+	return a.inner.UpdateAgentGroupMember(ctx, userID, groupPublicID, memberPublicID, agentgroup.UpdateMemberInput{
+		Enabled:         input.Enabled,
+		ModelOverride:   input.ModelOverride,
+		ReasoningEffort: input.ReasoningEffort,
+		DutyInstruction: input.DutyInstruction,
+	})
+}
+
 func (a agentGroupWriterAdapter) DeleteAgentGroup(ctx context.Context, userID uint, publicID string) error {
 	return a.inner.DeleteAgentGroup(ctx, userID, publicID)
 }

@@ -26,7 +26,7 @@ type AgentGroupQueryRepository interface {
 	CountAgentGroupReferencesByRole(ctx context.Context, roleID uint) (int64, error)
 	// CountAgentGroupReferencesByProject 统计项目下群组数量（项目删除保护）。
 	CountAgentGroupReferencesByProject(ctx context.Context, projectID uint) (int64, error)
-	// CountAgentGroupHistory 统计群组的会话与运行历史总数（删除保护）。
+	// CountAgentGroupHistory 统计群组的会话与运行历史总数。
 	CountAgentGroupHistory(ctx context.Context, groupID uint) (int64, error)
 }
 
@@ -36,7 +36,7 @@ type AgentGroupWriteRepository interface {
 	CreateAgentGroupWithSupervisor(ctx context.Context, group *domainagentgroup.Group, supervisor domainagentgroup.Member, workers []domainagentgroup.Member) error
 	// UpdateAgentGroupByPublicID 更新群组元数据并递增配置版本。
 	UpdateAgentGroupByPublicID(ctx context.Context, userID uint, publicID string, patch domainagentgroup.GroupPatch) (*domainagentgroup.Group, error)
-	// DeleteAgentGroupByPublicID 硬删除没有会话/运行历史的群组。
+	// DeleteAgentGroupByPublicID 删除群组并解绑会话；历史运行记录保留。
 	DeleteAgentGroupByPublicID(ctx context.Context, userID uint, publicID string) error
 	// AddAgentGroupMember 添加工作成员并递增群组配置版本。
 	AddAgentGroupMember(ctx context.Context, groupID uint, member domainagentgroup.Member) error

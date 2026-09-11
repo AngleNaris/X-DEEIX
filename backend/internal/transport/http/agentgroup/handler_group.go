@@ -154,7 +154,7 @@ func (h *Handler) UpdateAgentGroup(c *gin.Context) {
 
 // DeleteAgentGroup godoc
 // @Summary 删除群组
-// @Description 删除没有历史记录的 Agent 群组（存在会话或运行历史时拒绝）
+// @Description 删除 Agent 群组；会话历史保留并解除群组绑定，运行历史保留
 // @Tags chat
 // @Accept json
 // @Produce json
@@ -162,7 +162,6 @@ func (h *Handler) UpdateAgentGroup(c *gin.Context) {
 // @Param id path string true "群组 public_id"
 // @Success 200 {object} ErrorDoc
 // @Failure 404 {object} ErrorDoc
-// @Failure 409 {object} ErrorDoc
 // @Failure 500 {object} ErrorDoc
 // @Router /conversation-agent-groups/{id} [delete]
 func (h *Handler) DeleteAgentGroup(c *gin.Context) {

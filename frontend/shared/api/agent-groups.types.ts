@@ -64,7 +64,7 @@ export type UpdateAgentGroupMemberRequest = {
   enabled?: boolean;
   modelOverride?: string;
   dutyInstruction?: string;
-  reasoningEffort?: AgentGroupMemberReasoningEffort;
+  reasoningEffort?: AgentGroupMemberReasoningEffort | "";
   sortOrder?: number;
 };
 

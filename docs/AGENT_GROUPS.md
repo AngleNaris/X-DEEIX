@@ -84,7 +84,7 @@ Members can later be enabled/disabled, re-ordered, have their override/duty inst
 ### Limits
 
 - 32 members per group.
-- Role references protect deletion: a role used by a non-removed group member cannot be deleted, a project that still contains groups cannot be deleted, and a group with conversation/run history cannot be deleted (all return `409 Conflict`).
+- Role references protect deletion: a role used by a non-removed group member cannot be deleted, and a project that still contains groups cannot be deleted (both return `409 Conflict`). Deleting a group unbinds its conversations, soft-deletes the group and members, and preserves conversation and run history.
 
 ## Sharing and exporting
 

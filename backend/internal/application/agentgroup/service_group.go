@@ -127,16 +127,12 @@ func (s *Service) UpdateAgentGroup(ctx context.Context, userID uint, publicID st
 	return group, nil
 }
 
-// DeleteAgentGroup 删除没有历史记录的群组。
+// DeleteAgentGroup 删除群组；会话解绑后保留历史，运行记录仍可查询。
 func (s *Service) DeleteAgentGroup(ctx context.Context, userID uint, publicID string) error {
 	if err := s.requireEnabled(ctx); err != nil {
 		return err
 	}
-	err := s.repo.DeleteAgentGroupByPublicID(ctx, userID, publicID)
-	if errors.Is(err, repository.ErrConflict) {
-		return ErrAgentGroupHistoryExists
-	}
-	return s.translateRepoError(err)
+	return s.translateRepoError(s.repo.DeleteAgentGroupByPublicID(ctx, userID, publicID))
 }
 
 // AddAgentGroupMember 添加工作成员。

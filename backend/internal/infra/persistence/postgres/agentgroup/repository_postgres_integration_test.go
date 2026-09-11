@@ -211,19 +211,92 @@ func TestPostgresAgentGroupDeleteRacesLeaveNoOrphans(t *testing.T) {
 	})
 }
 
+func TestPostgresAgentGroupDeletePreservesConversationAndRunHistory(t *testing.T) {
+	db := openAgentGroupPostgresIntegrationDB(t)
+	group := seedPostgresAgentGroup(t, db, "delete_history")
+	conversation := models.Conversation{
+		UserID: group.UserID, AgentGroupID: &group.ID, PublicID: "conversation_delete_history",
+		Title: "history", LabelsJSON: "[]", SessionKey: "session_delete_history", Status: "active",
+	}
+	if err := db.Create(&conversation).Error; err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	run := seedPostgresAgentGroupRun(t, db, group, "delete_history", domainagentgroup.RunStatusCompleted)
+
+	if err := NewRepo(db).DeleteAgentGroupByPublicID(context.Background(), group.UserID, group.PublicID); err != nil {
+		t.Fatalf("delete group with history: %v", err)
+	}
+
+	var storedConversation models.Conversation
+	if err := db.First(&storedConversation, conversation.ID).Error; err != nil {
+		t.Fatalf("load preserved conversation: %v", err)
+	}
+	if storedConversation.AgentGroupID != nil {
+		t.Fatalf("conversation remains bound to deleted group: %#v", storedConversation.AgentGroupID)
+	}
+	var storedRun models.AgentGroupRun
+	if err := db.First(&storedRun, run.ID).Error; err != nil {
+		t.Fatalf("load preserved run: %v", err)
+	}
+	if storedRun.GroupID != group.ID {
+		t.Fatalf("run group id changed: %d", storedRun.GroupID)
+	}
+	groups, err := NewRepo(db).ListAgentGroups(context.Background(), group.UserID, 0)
+	if err != nil {
+		t.Fatalf("list groups after delete: %v", err)
+	}
+	if len(groups) != 0 {
+		t.Fatalf("deleted group still listed: %#v", groups)
+	}
+}
+
+func TestPostgresAgentGroupMemberUpdatePersistsReasoningEffort(t *testing.T) {
+	db := openAgentGroupPostgresIntegrationDB(t)
+	group := seedPostgresAgentGroup(t, db, "member_reasoning")
+	role := models.ConversationRole{UserID: group.UserID, PublicID: "role_member_reasoning", Name: "worker", Status: "active"}
+	if err := db.Create(&role).Error; err != nil {
+		t.Fatalf("create role: %v", err)
+	}
+	member := models.AgentGroupMember{
+		PublicID: "member_reasoning", GroupID: group.ID, RoleID: role.ID,
+		MemberType: domainagentgroup.MemberTypeWorker, Enabled: true,
+	}
+	if err := db.Create(&member).Error; err != nil {
+		t.Fatalf("create member: %v", err)
+	}
+	effort := "high"
+	if _, err := NewRepo(db).UpdateAgentGroupMemberByPublicID(context.Background(), group.ID, group.UserID, member.PublicID, domainagentgroup.MemberPatch{ReasoningEffort: &effort}); err != nil {
+		t.Fatalf("update member reasoning effort: %v", err)
+	}
+	var stored models.AgentGroupMember
+	if err := db.First(&stored, member.ID).Error; err != nil {
+		t.Fatalf("reload member: %v", err)
+	}
+	if stored.ReasoningEffort != effort {
+		t.Fatalf("reasoning effort = %q, want %q", stored.ReasoningEffort, effort)
+	}
+}
+
 func assertPostgresReferenceRaceOutcome(t *testing.T, db *gorm.DB, groupID uint, created bool, createErr error, deleteErr error, referenceModel interface{}) {
 	t.Helper()
+	if deleteErr != nil {
+		t.Fatalf("delete error = %v", deleteErr)
+	}
 	if created {
-		if createErr != nil || !errors.Is(deleteErr, repository.ErrConflict) {
-			t.Fatalf("create winner = created %v createErr %v deleteErr %v", created, createErr, deleteErr)
+		if createErr != nil {
+			t.Fatalf("create reported success with error: %v", createErr)
 		}
-	} else if deleteErr != nil || !errors.Is(createErr, repository.ErrNotFound) {
-		t.Fatalf("delete winner = created %v createErr %v deleteErr %v", created, createErr, deleteErr)
+	} else if createErr != nil && !errors.Is(createErr, repository.ErrNotFound) {
+		t.Fatalf("unexpected create error when delete won: %v", createErr)
 	}
-	var groupCount int64
-	if err := db.Model(&models.AgentGroup{}).Where("id = ?", groupID).Count(&groupCount).Error; err != nil {
-		t.Fatalf("count group: %v", err)
+	var group models.AgentGroup
+	if err := db.Unscoped().First(&group, groupID).Error; err != nil {
+		t.Fatalf("load deleted group: %v", err)
 	}
+	if !group.DeletedAt.Valid {
+		t.Fatalf("group %d was not soft deleted", groupID)
+	}
+
 	var referenceCount int64
 	column := "group_id"
 	if _, ok := referenceModel.(*models.Conversation); ok {
@@ -232,8 +305,18 @@ func assertPostgresReferenceRaceOutcome(t *testing.T, db *gorm.DB, groupID uint,
 	if err := db.Model(referenceModel).Where(column+" = ?", groupID).Count(&referenceCount).Error; err != nil {
 		t.Fatalf("count references: %v", err)
 	}
-	if groupCount != referenceCount || groupCount > 1 {
-		t.Fatalf("group/reference rows = %d/%d, want 0/0 or 1/1", groupCount, referenceCount)
+	if _, ok := referenceModel.(*models.Conversation); ok {
+		if referenceCount != 0 {
+			t.Fatalf("deleted group still owns %d conversations", referenceCount)
+		}
+		return
+	}
+	expected := int64(0)
+	if created {
+		expected = 1
+	}
+	if referenceCount != expected {
+		t.Fatalf("run references = %d, want %d", referenceCount, expected)
 	}
 }
 
@@ -274,6 +357,7 @@ func openAgentGroupPostgresIntegrationDB(t *testing.T) *gorm.DB {
 	})
 	if err := db.AutoMigrate(
 		&models.Conversation{},
+		&models.ConversationRole{},
 		&models.AgentGroup{},
 		&models.AgentGroupMember{},
 		&models.AgentGroupRun{},

@@ -537,16 +537,16 @@ func bufferChatVisibleDelta(result *GenerateOutput, delta string, onEvent func(G
 	return flushChatVisibleBuffer(result, onEvent, false, mode)
 }
 
-// flushChatVisibleBuffer 在 DeepSeek DSML 模式下延迟释放可见文本，确保完整工具调用不会作为普通文本输出。
-// 工具禁用轮（strip-only）剥离标记但不生成 ToolCall；模型在禁用轮仍输出 DSML 时置
+// flushChatVisibleBuffer 在文本工具调用模式下延迟释放可见文本，确保完整工具调用不会作为普通文本输出。
+// 工具禁用轮（strip-only）剥离标记但不生成 ToolCall；模型在禁用轮仍输出调用时置
 // TextToolCallsStripped，供上层判断模型尚未收尾。
 func flushChatVisibleBuffer(result *GenerateOutput, onEvent func(GenerateStreamEvent) error, final bool, mode textEncodedToolCallMode) error {
 	if result == nil || result.chatTextBuffer == "" {
 		return nil
 	}
-	if cleanText, toolCalls, ok := parseDSMLToolCalls(result.chatTextBuffer); ok {
+	if cleanText, toolCalls, ok := parseTextEncodedToolCalls(result.chatTextBuffer, mode); ok {
 		result.chatTextBuffer = ""
-		if mode == textEncodedToolCallsActive {
+		if textEncodedToolCallsAreActive(mode) {
 			result.ToolCalls = append(result.ToolCalls, toolCalls...)
 		} else {
 			result.TextToolCallsStripped = true
@@ -556,22 +556,29 @@ func flushChatVisibleBuffer(result *GenerateOutput, onEvent func(GenerateStreamE
 		}
 		return emitChatVisibleDelta(result, cleanText, onEvent)
 	}
-	if !final && maybeDSMLToolCallsPrefix(result.chatTextBuffer) {
+	if !final && maybeTextEncodedToolCallsPrefix(result.chatTextBuffer, mode) {
 		return nil
 	}
+	// 只有 DSML 标记的不完整包才是协议错误；普通 <tool_calls> 可能只是正文示例，
+	// 或者是无法解析的模型输出，交由下方普通文本路径保留。
 	if final && maybeDSMLToolCallsPrefix(result.chatTextBuffer) {
-		if mode == textEncodedToolCallsActive {
+		if textEncodedToolCallsAreActive(mode) {
+			if mode == textEncodedToolCallsGenericActive {
+				text := result.chatTextBuffer
+				result.chatTextBuffer = ""
+				return emitChatVisibleDelta(result, text, onEvent)
+			}
 			return errDeepSeekDSMLToolCallsIncomplete
 		}
-		// strip-only：丢弃悬空未闭合的 DSML 块，不中断工具禁用轮。
+		// strip-only：丢弃悬空未闭合的文本工具调用，不中断工具禁用轮。
 		result.TextToolCallsStripped = true
 		result.chatTextBuffer = ""
 		return nil
 	}
 	text := result.chatTextBuffer
 	result.chatTextBuffer = ""
-	if mode == textEncodedToolCallsStripOnly {
-		if stripped := stripRemainingDSMLToolCallMarkers(&text); stripped {
+	if mode != textEncodedToolCallsInactive && !textEncodedToolCallsAreActive(mode) {
+		if stripped := stripRemainingTextToolCallMarkers(&text); stripped {
 			result.TextToolCallsStripped = true
 		}
 	}
@@ -591,6 +598,30 @@ func emitChatVisibleDelta(result *GenerateOutput, delta string, onEvent func(Gen
 		Delta:      delta,
 		ResponseID: result.ResponseID,
 	})
+}
+
+// maybeTextEncodedToolCallsPrefix 识别当前文本工具调用协议的起始片段，用于流式等待更多 chunk。
+func maybeTextEncodedToolCallsPrefix(text string, mode textEncodedToolCallMode) bool {
+	if mode == textEncodedToolCallsInactive {
+		return false
+	}
+	if mode == textEncodedToolCallsGenericActive || mode == textEncodedToolCallsGenericStripOnly {
+		return maybePlainToolCallsPrefix(text)
+	}
+	return maybeDSMLToolCallsPrefix(text) || maybePlainToolCallsPrefix(text)
+}
+
+func maybePlainToolCallsPrefix(text string) bool {
+	value := strings.ToLower(strings.TrimLeft(strings.TrimSpace(text), "\ufeff"))
+	if value == "" {
+		return false
+	}
+	for _, marker := range []string{"<tool_calls", "\\<tool_calls"} {
+		if strings.Contains(value, marker) || strings.HasPrefix(marker, value) {
+			return true
+		}
+	}
+	return false
 }
 
 // maybeDSMLToolCallsPrefix 只识别 DeepSeek DSML tool_calls 的起始片段，用于流式等待更多 chunk。

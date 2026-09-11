@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	domainagentgroup "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/agentgroup"
+	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 )
 
 // 角色 / 项目 / Agent 群组的平台工具实现（全部限定用户本人数据）。
@@ -149,32 +149,41 @@ func (s *Service) platformListAgentGroups(ctx context.Context, call platformTool
 
 func platformAgentGroupSummary(group domainagentgroup.Group) map[string]interface{} {
 	members := make([]map[string]interface{}, 0, len(group.Members))
+	supervisorMemberID := ""
 	for _, member := range group.Members {
+		if member.MemberType == domainagentgroup.MemberTypeSupervisor {
+			supervisorMemberID = member.PublicID
+		}
 		members = append(members, map[string]interface{}{
-			"member_type":   member.MemberType,
-			"role_public_id": member.RolePublicID,
-			"role_name":     member.RoleName,
+			"member_public_id": member.PublicID,
+			"member_type":      member.MemberType,
+			"role_public_id":   member.RolePublicID,
+			"role_name":        member.RoleName,
+			"enabled":          member.Enabled,
+			"model_override":   member.ModelOverride,
+			"reasoning_effort": member.ReasoningEffort,
 			"duty_instruction": member.DutyInstruction,
 		})
 	}
 	return map[string]interface{}{
-		"group_id":        group.PublicID,
-		"name":            group.Name,
-		"description":     group.Description,
-		"supervisor_id":   group.SupervisorMemberID,
-		"members":         members,
+		"group_id":             group.PublicID,
+		"name":                 group.Name,
+		"description":          group.Description,
+		"supervisor_id":        group.SupervisorMemberID,
+		"supervisor_member_id": supervisorMemberID,
+		"members":              members,
 	}
 }
 
 // platformCreateAgentGroup 创建用户 Agent 群组（写操作，受批准模式管控；群组开关关闭时返回错误）。
 func (s *Service) platformCreateAgentGroup(ctx context.Context, call platformToolCallContext) (string, error) {
 	var args struct {
-		Name              string `json:"name"`
-		Description       string `json:"description"`
+		Name               string `json:"name"`
+		Description        string `json:"description"`
 		CoordinationPrompt string `json:"coordination_prompt"`
-		SupervisorRoleID  string `json:"supervisor_role_id"`
-		SupervisorDuty    string `json:"supervisor_duty"`
-		Workers           []struct {
+		SupervisorRoleID   string `json:"supervisor_role_id"`
+		SupervisorDuty     string `json:"supervisor_duty"`
+		Workers            []struct {
 			RoleID          string `json:"role_id"`
 			DutyInstruction string `json:"duty_instruction"`
 		} `json:"workers"`
@@ -252,15 +261,15 @@ func (s *Service) platformDeleteSkill(ctx context.Context, call platformToolCall
 // 所有字段可选，仅更新显式提供的字段；group_name 传空字符串表示移出分组。
 func (s *Service) platformUpdateRole(ctx context.Context, call platformToolCallContext) (string, error) {
 	var args struct {
-		RoleID         string  `json:"role_id"`
-		Name           *string `json:"name"`
-		Description    *string `json:"description"`
-		SystemPrompt   *string `json:"system_prompt"`
-		Model          *string `json:"model"`
-		GroupName      *string `json:"group_name"`
-		Color          *string `json:"color"`
-		Icon           *string `json:"icon"`
-		Pinned         *bool   `json:"pinned"`
+		RoleID          string  `json:"role_id"`
+		Name            *string `json:"name"`
+		Description     *string `json:"description"`
+		SystemPrompt    *string `json:"system_prompt"`
+		Model           *string `json:"model"`
+		GroupName       *string `json:"group_name"`
+		Color           *string `json:"color"`
+		Icon            *string `json:"icon"`
+		Pinned          *bool   `json:"pinned"`
 		ReasoningEffort *string `json:"reasoning_effort"`
 	}
 	if err := decodePlatformArgs(call.Arguments, &args); err != nil {
@@ -338,10 +347,10 @@ func (s *Service) platformUpdateProject(ctx context.Context, call platformToolCa
 // platformUpdateAgentGroup 更新用户 Agent 群组元数据（写操作，受批准模式管控；群组开关关闭时报错）。
 func (s *Service) platformUpdateAgentGroup(ctx context.Context, call platformToolCallContext) (string, error) {
 	var args struct {
-		GroupID             string  `json:"group_id"`
-		Name                *string `json:"name"`
-		Description         *string `json:"description"`
-		CoordinationPrompt  *string `json:"coordination_prompt"`
+		GroupID            string  `json:"group_id"`
+		Name               *string `json:"name"`
+		Description        *string `json:"description"`
+		CoordinationPrompt *string `json:"coordination_prompt"`
 	}
 	if err := decodePlatformArgs(call.Arguments, &args); err != nil {
 		return "", err
@@ -368,6 +377,46 @@ func (s *Service) platformUpdateAgentGroup(ctx context.Context, call platformToo
 		"group_id": group.PublicID,
 		"name":     group.Name,
 		"updated":  true,
+	})
+}
+
+// platformUpdateAgentGroupMember 更新用户 Agent 群组成员设置（写操作，受批准模式管控）。
+func (s *Service) platformUpdateAgentGroupMember(ctx context.Context, call platformToolCallContext) (string, error) {
+	var args struct {
+		GroupID         string  `json:"group_id"`
+		MemberID        string  `json:"member_id"`
+		Enabled         *bool   `json:"enabled"`
+		ModelOverride   *string `json:"model_override"`
+		ReasoningEffort *string `json:"reasoning_effort"`
+		DutyInstruction *string `json:"duty_instruction"`
+	}
+	if err := decodePlatformArgs(call.Arguments, &args); err != nil {
+		return "", err
+	}
+	groupID := strings.TrimSpace(args.GroupID)
+	memberID := strings.TrimSpace(args.MemberID)
+	if groupID == "" || memberID == "" {
+		return "", fmt.Errorf("group_id and member_id are required")
+	}
+	if s.agentGroupWriter == nil {
+		return "", fmt.Errorf("agent group service is unavailable")
+	}
+	group, err := s.agentGroupWriter.UpdateAgentGroupMember(ctx, call.UserID, groupID, memberID, AgentGroupMemberUpdateInput{
+		Enabled:         args.Enabled,
+		ModelOverride:   args.ModelOverride,
+		ReasoningEffort: args.ReasoningEffort,
+		DutyInstruction: args.DutyInstruction,
+	})
+	if err != nil {
+		return "", err
+	}
+	s.recordPlatformAudit(ctx, callCtx{userID: call.UserID, requestID: call.RequestID}, "platform_tools.update_agent_group_member", memberID, map[string]interface{}{
+		"group_id": group.PublicID,
+	})
+	return marshalPlatformResult(map[string]interface{}{
+		"group_id":  group.PublicID,
+		"member_id": memberID,
+		"updated":   true,
 	})
 }
 
@@ -416,7 +465,7 @@ func (s *Service) platformDeleteProject(ctx context.Context, call platformToolCa
 	})
 }
 
-// platformDeleteAgentGroup 删除用户 Agent 群组（有运行历史时服务拒绝；群组开关关闭时报错）。
+// platformDeleteAgentGroup 删除用户 Agent 群组（会话与运行历史保留；群组开关关闭时报错）。
 func (s *Service) platformDeleteAgentGroup(ctx context.Context, call platformToolCallContext) (string, error) {
 	var args struct {
 		GroupID string `json:"group_id"`

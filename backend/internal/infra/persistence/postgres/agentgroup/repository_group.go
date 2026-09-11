@@ -114,7 +114,7 @@ func (r *Repo) UpdateAgentGroupByPublicID(ctx context.Context, userID uint, publ
 	return r.GetAgentGroupByPublicID(ctx, userID, publicID)
 }
 
-// DeleteAgentGroupByPublicID 原子删除没有会话或运行历史的群组及其成员。
+// DeleteAgentGroupByPublicID 原子删除群组及其成员；会话历史解绑后保留，运行历史继续保留。
 func (r *Repo) DeleteAgentGroupByPublicID(ctx context.Context, userID uint, publicID string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var group models.AgentGroup
@@ -125,16 +125,10 @@ func (r *Repo) DeleteAgentGroupByPublicID(ctx context.Context, userID uint, publ
 		if err := query.First(&group).Error; err != nil {
 			return translateError(err)
 		}
-		var conversationCount int64
-		if err := tx.Model(&models.Conversation{}).Where("agent_group_id = ?", group.ID).Count(&conversationCount).Error; err != nil {
+		if err := tx.Model(&models.Conversation{}).
+			Where("agent_group_id = ?", group.ID).
+			Updates(map[string]interface{}{"agent_group_id": nil, "updated_at": now()}).Error; err != nil {
 			return translateError(err)
-		}
-		var runCount int64
-		if err := tx.Model(&models.AgentGroupRun{}).Where("group_id = ?", group.ID).Count(&runCount).Error; err != nil {
-			return translateError(err)
-		}
-		if conversationCount+runCount > 0 {
-			return repository.ErrConflict
 		}
 		if err := tx.Where("group_id = ?", group.ID).Delete(&models.AgentGroupMember{}).Error; err != nil {
 			return translateError(err)
@@ -173,6 +167,9 @@ func (r *Repo) UpdateAgentGroupMemberByPublicID(ctx context.Context, groupID uin
 	}
 	if patch.ModelOverride != nil {
 		fields["model_override"] = *patch.ModelOverride
+	}
+	if patch.ReasoningEffort != nil {
+		fields["reasoning_effort"] = *patch.ReasoningEffort
 	}
 	if patch.DutyInstruction != nil {
 		fields["duty_instruction"] = *patch.DutyInstruction

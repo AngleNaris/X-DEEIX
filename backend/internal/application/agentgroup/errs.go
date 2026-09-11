@@ -37,7 +37,7 @@ var (
 	ErrInvalidReasoningEffort = errors.New("invalid reasoning effort")
 	// ErrAgentGroupInvalidMemberOrder 成员排序输入不合法。
 	ErrAgentGroupInvalidMemberOrder = errors.New("invalid agent group member order")
-	// ErrAgentGroupHistoryExists 群组存在会话或运行历史，不可删除。
+	// ErrAgentGroupHistoryExists 保留用于兼容旧调用方；群组删除不再因历史记录失败。
 	ErrAgentGroupHistoryExists = errors.New("agent group history exists")
 	// ErrAgentGroupRunNotFound 群组运行不存在或无权限。
 	ErrAgentGroupRunNotFound = errors.New("agent group run not found")

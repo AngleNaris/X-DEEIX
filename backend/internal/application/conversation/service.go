@@ -206,11 +206,20 @@ type AgentGroupUpdateInput struct {
 	CoordinationPrompt *string
 }
 
+// AgentGroupMemberUpdateInput 平台工具更新群组成员设置输入。
+type AgentGroupMemberUpdateInput struct {
+	Enabled         *bool
+	ModelOverride   *string
+	ReasoningEffort *string
+	DutyInstruction *string
+}
+
 // agentGroupWriter 创建/列出/更新/删除 Agent 群组（由 agentgroup 服务注入，平台工具 create/list/update/delete_agent_group 使用）。
 type agentGroupWriter interface {
 	CreateAgentGroup(ctx context.Context, userID uint, input AgentGroupCreateInput) (*domainagentgroup.Group, error)
 	ListAgentGroups(ctx context.Context, userID uint) ([]domainagentgroup.Group, error)
 	UpdateAgentGroup(ctx context.Context, userID uint, publicID string, input AgentGroupUpdateInput) (*domainagentgroup.Group, error)
+	UpdateAgentGroupMember(ctx context.Context, userID uint, groupPublicID string, memberPublicID string, input AgentGroupMemberUpdateInput) (*domainagentgroup.Group, error)
 	DeleteAgentGroup(ctx context.Context, userID uint, publicID string) error
 }
 

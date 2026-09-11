@@ -887,6 +887,165 @@ func TestParseChatCompletionsDSMLToolCalls(t *testing.T) {
 	}
 }
 
+func TestParseChatCompletionsPlainTextToolCalls(t *testing.T) {
+	payload := mustDecodeObject(t, `{
+		"id": "chatcmpl_plain",
+		"choices": [{
+			"message": {
+				"role": "assistant",
+				"content": "<tool_calls> [{\"name\":\"list_agent_groups\",\"arguments\":{}},{\"name\":\"list_roles\",\"arguments\":{}}] </tool_calls>"
+			}
+		}]
+	}`)
+
+	result := buildGenerateOutputFromParsedForAdapter(EndpointChatCompletions, AdapterOpenAIChatCompletions, payload, textEncodedToolCallsGenericActive)
+	if result.Text != "" {
+		t.Fatalf("expected plain tool call envelope to be removed from visible text, got %q", result.Text)
+	}
+	if len(result.ToolCalls) != 2 {
+		t.Fatalf("expected two plain tool calls, got %#v", result.ToolCalls)
+	}
+	if result.ToolCalls[0].ToolCallID != "text_call_1" || result.ToolCalls[0].ToolName != "list_agent_groups" || result.ToolCalls[0].ArgumentsJSON != "{}" {
+		t.Fatalf("unexpected first plain tool call: %#v", result.ToolCalls[0])
+	}
+	if result.ToolCalls[1].ToolCallID != "text_call_2" || result.ToolCalls[1].ToolName != "list_roles" || result.ToolCalls[1].ArgumentsJSON != "{}" {
+		t.Fatalf("unexpected second plain tool call: %#v", result.ToolCalls[1])
+	}
+}
+
+func TestParseChatCompletionsEscapedPlainTextToolCalls(t *testing.T) {
+	payload := mustDecodeObject(t, `{
+		"id": "chatcmpl_escaped",
+		"choices": [{
+			"message": {
+				"role": "assistant",
+				"content": "\\<tool_calls> [{\"name\":\"list_roles\",\"arguments\":{}}] \\</tool_calls>"
+			}
+		}]
+	}`)
+
+	result := buildGenerateOutputFromParsedForAdapter(EndpointChatCompletions, AdapterOpenAIChatCompletions, payload, textEncodedToolCallsGenericActive)
+	if result.Text != "" {
+		t.Fatalf("expected escaped plain tool call envelope to be removed from visible text, got %q", result.Text)
+	}
+	if len(result.ToolCalls) != 1 || result.ToolCalls[0].ToolName != "list_roles" {
+		t.Fatalf("unexpected escaped plain tool calls: %#v", result.ToolCalls)
+	}
+}
+
+func TestConsumeChatStreamPlainTextToolCallsAreNotEmittedAsText(t *testing.T) {
+	rawStream := strings.Join([]string{
+		`data: {"id":"chatcmpl_plain","choices":[{"delta":{"content":"<tool_calls>[{\"name\":\"list_agent_groups\",\"arguments\":"}}]}`,
+		`data: {"id":"chatcmpl_plain","choices":[{"delta":{"content":"{}},{\"name\":\"list_roles\",\"arguments\":{}}]</tool_calls>"}}]}`,
+		`data: [DONE]`,
+		``,
+	}, "\n\n")
+	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0)}
+	var deltas []string
+
+	err := consumeOpenAIGenerateStream(EndpointChatCompletions, AdapterOpenAIChatCompletions, strings.NewReader(rawStream), result, func(event GenerateStreamEvent) error {
+		if event.Delta != "" {
+			deltas = append(deltas, event.Delta)
+		}
+		return nil
+	}, textEncodedToolCallsGenericActive)
+	if err != nil {
+		t.Fatalf("consume stream: %v", err)
+	}
+	if len(deltas) != 0 || result.Text != "" {
+		t.Fatalf("expected plain tool calls to stay out of visible text, deltas=%#v text=%q", deltas, result.Text)
+	}
+	if len(result.ToolCalls) != 2 || result.ToolCalls[0].ToolName != "list_agent_groups" || result.ToolCalls[1].ToolName != "list_roles" {
+		t.Fatalf("unexpected plain stream tool calls: %#v", result.ToolCalls)
+	}
+}
+
+func TestConsumeChatStreamEscapedPlainTextToolCallsAreNotEmittedAsText(t *testing.T) {
+	rawStream := strings.Join([]string{
+		`data: {"id":"chatcmpl_escaped","choices":[{"delta":{"content":"\\<tool_calls>[{\"name\":\"list_roles\",\"arguments\":"}}]}`,
+		`data: {"id":"chatcmpl_escaped","choices":[{"delta":{"content":"{}}] \\</tool_calls>"}}]}`,
+		`data: [DONE]`,
+		``,
+	}, "\n\n")
+	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0)}
+	var deltas []string
+
+	err := consumeOpenAIGenerateStream(EndpointChatCompletions, AdapterOpenAIChatCompletions, strings.NewReader(rawStream), result, func(event GenerateStreamEvent) error {
+		if event.Delta != "" {
+			deltas = append(deltas, event.Delta)
+		}
+		return nil
+	}, textEncodedToolCallsGenericActive)
+	if err != nil {
+		t.Fatalf("consume escaped stream: %v", err)
+	}
+	if len(deltas) != 0 || result.Text != "" {
+		t.Fatalf("expected escaped plain tool calls to stay out of visible text, deltas=%#v text=%q", deltas, result.Text)
+	}
+	if len(result.ToolCalls) != 1 || result.ToolCalls[0].ToolName != "list_roles" {
+		t.Fatalf("unexpected escaped plain stream tool calls: %#v", result.ToolCalls)
+	}
+}
+
+func TestConsumeChatStreamMalformedPlainToolCallsRemainVisibleText(t *testing.T) {
+	rawStream := strings.Join([]string{
+		`data: {"id":"chatcmpl_literal","choices":[{"delta":{"content":"Use the <tool_calls> syntax here"}}]}`,
+		`data: [DONE]`,
+		``,
+	}, "\n\n")
+	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0)}
+	if err := consumeOpenAIGenerateStream(EndpointChatCompletions, AdapterOpenAIChatCompletions, strings.NewReader(rawStream), result, nil, textEncodedToolCallsGenericActive); err != nil {
+		t.Fatalf("consume malformed plain stream: %v", err)
+	}
+	if result.Text != "Use the <tool_calls> syntax here" {
+		t.Fatalf("expected malformed plain tool call text to remain visible, got %q", result.Text)
+	}
+	if len(result.ToolCalls) != 0 {
+		t.Fatalf("expected no tool calls, got %#v", result.ToolCalls)
+	}
+}
+
+func TestConsumeDeepSeekStreamMalformedPlainToolCallsRemainVisibleText(t *testing.T) {
+	rawStream := strings.Join([]string{
+		`data: {"id":"chatcmpl_literal","choices":[{"delta":{"content":"Use the <tool_calls> syntax here"}}]}`,
+		`data: [DONE]`,
+		``,
+	}, "\n\n")
+	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0)}
+	if err := consumeOpenAIGenerateStream(EndpointChatCompletions, AdapterOpenAIChatCompletions, strings.NewReader(rawStream), result, nil, textEncodedToolCallsActive); err != nil {
+		t.Fatalf("consume malformed DeepSeek plain stream: %v", err)
+	}
+	if result.Text != "Use the <tool_calls> syntax here" {
+		t.Fatalf("expected malformed plain text to remain visible, got %q", result.Text)
+	}
+	if len(result.ToolCalls) != 0 {
+		t.Fatalf("expected no tool calls, got %#v", result.ToolCalls)
+	}
+}
+
+func TestParseDeepSeekOutputMalformedPlainToolCallsRemainVisibleText(t *testing.T) {
+	body := []byte(`{
+		"id": "chatcmpl_literal",
+		"choices": [{
+			"message": {
+				"role": "assistant",
+				"content": "Use the <tool_calls> syntax here"
+			}
+		}]
+	}`)
+
+	result, err := parseOpenAIGenerateOutput(EndpointChatCompletions, AdapterOpenAIChatCompletions, body, textEncodedToolCallsActive)
+	if err != nil {
+		t.Fatalf("parse malformed DeepSeek plain output: %v", err)
+	}
+	if result.Text != "Use the <tool_calls> syntax here" {
+		t.Fatalf("expected malformed plain text to remain visible, got %q", result.Text)
+	}
+	if len(result.ToolCalls) != 0 {
+		t.Fatalf("expected no tool calls, got %#v", result.ToolCalls)
+	}
+}
+
 func TestParseChatCompletionsDSMLToolCallsDecodesJSONParameters(t *testing.T) {
 	payload := mustDecodeObject(t, `{
 		"id": "chatcmpl_1",

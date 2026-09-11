@@ -941,7 +941,7 @@ func platformToolRegistry() map[string]platformToolEntry {
 		"update_agent_group": {
 			definition: llm.ToolDefinition{
 				Name: "update_agent_group",
-				Description: "Update the metadata of one of the user's agent groups (name, description, coordination prompt). " +
+				Description: "Update one of the user's agent groups (name, description, coordination prompt). " +
 					"All fields are optional; only provided fields are changed. " +
 					"Requires the agent group feature to be enabled. " +
 					"This is a WRITE operation: it may require user approval.",
@@ -957,6 +957,27 @@ func platformToolRegistry() map[string]platformToolEntry {
 			kind:        platformToolWrite,
 			handler:     (*Service).platformUpdateAgentGroup,
 			auditAction: "platform_tools.update_agent_group",
+		},
+		"update_agent_group_member": {
+			definition: llm.ToolDefinition{
+				Name: "update_agent_group_member",
+				Description: "Update one member's agent group settings: enabled, model override, reasoning effort, or duty instruction. " +
+					"Use list_agent_groups first to find the group_id and member_id. " +
+					"Requires the agent group feature to be enabled. This is a WRITE operation: it may require user approval.",
+				InputSchema: json.RawMessage(`{
+					"type":"object","properties":{
+						"group_id":{"type":"string","description":"Public group id from list_agent_groups"},
+						"member_id":{"type":"string","description":"Public member id from list_agent_groups"},
+						"enabled":{"type":"boolean","description":"Whether the member can be scheduled"},
+						"model_override":{"type":"string","description":"Model override; empty string restores the role default"},
+						"reasoning_effort":{"type":"string","description":"Reasoning effort: low, medium, high, xhigh, max; empty string unsets it"},
+						"duty_instruction":{"type":"string","description":"Member duty instruction"}
+					},"required":["group_id","member_id"]
+				}`),
+			},
+			kind:        platformToolWrite,
+			handler:     (*Service).platformUpdateAgentGroupMember,
+			auditAction: "platform_tools.update_agent_group_member",
 		},
 		"delete_skill": {
 			definition: llm.ToolDefinition{
@@ -1006,7 +1027,7 @@ func platformToolRegistry() map[string]platformToolEntry {
 		"delete_agent_group": {
 			definition: llm.ToolDefinition{
 				Name: "delete_agent_group",
-				Description: "Delete one of the user's agent groups. Groups with run history cannot be deleted. " +
+				Description: "Delete one of the user's agent groups; conversation and run history are preserved. " +
 					"Requires the agent group feature to be enabled. " +
 					"This is a WRITE operation: it may require user approval.",
 				InputSchema: json.RawMessage(`{

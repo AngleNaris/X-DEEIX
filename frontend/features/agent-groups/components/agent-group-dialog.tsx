@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, ChevronDown, ChevronUp, Crown, Plus, Sparkles, Trash2, Users } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Crown, Plus, Trash2, Users } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -42,7 +42,9 @@ import { listConversationRoles } from "@/shared/api/roles";
 import type { ConversationRoleDTO } from "@/shared/api/roles.types";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import { ReasoningEffortSelector } from "@/shared/components/reasoning-effort-selector";
+import { ModelSelect } from "@/shared/components/model-select";
 import { parseProtocolsJSON } from "@/shared/lib/model-protocols";
+import { resolveModelOptionIconUrl } from "@/shared/lib/model-option-display";
 import {
   isReasoningEffortLevel,
   REASONING_EFFORT_LEVELS,
@@ -279,24 +281,29 @@ function ModelOverrideSelector({
   models: PublicModelDTO[];
   onModelChange: (modelOverride: string) => void;
 }) {
-  const overrideOptions: SelectorOption[] = [
-    { value: "", label: `继承角色默认：${member.roleModel || "未设置"}` },
+  const overrideOptions = [
+    { value: "", label: `继承角色默认：${member.roleModel || "未设置"}`, iconUrl: null },
     ...models.map((model) => ({
       value: model.platformModelName,
       label: `${model.platformModelName}${model.vendor ? ` · ${model.vendor}` : ""}`,
+      iconUrl: resolveModelOptionIconUrl({
+        platformModelName: model.platformModelName,
+        vendor: model.vendor,
+        icon: model.icon,
+      }),
     })),
   ];
   const overridden = Boolean(member.modelOverride);
 
   return (
     <div className="min-w-0 flex-1">
-      <MemberSingleSelector
+      <ModelSelect
         value={member.modelOverride}
-        placeholder="模型覆盖…"
-        icon={Sparkles}
-        loading={false}
+        fallbackValue=""
         disabled={disabled}
         options={overrideOptions}
+        contentClassName="min-w-[min(28rem,calc(100vw-3rem))]"
+        triggerClassName="h-8 px-3 shadow-none"
         onChange={onModelChange}
       />
       <p className="mt-0.5 truncate text-[11px] text-muted-foreground">
@@ -828,11 +835,11 @@ async function saveExistingAgentGroup(
     }
     group = await updateAgentGroupMember(token, group.publicID, member.publicID, {
       enabled: member.enabled,
-      modelOverride: member.modelOverride || undefined,
-      dutyInstruction: member.dutyInstruction || undefined,
+      modelOverride: member.modelOverride,
+      dutyInstruction: member.dutyInstruction,
       reasoningEffort: isReasoningEffortLevel(member.reasoningEffort) && member.reasoningEffort
         ? member.reasoningEffort
-        : undefined,
+        : "",
     });
   }
 
@@ -976,7 +983,7 @@ export function AgentGroupDialog({
       setDraft(null);
       await onDeleted(publicID);
     } catch {
-      toast.error("删除群组失败：已有会话或运行历史的群组无法删除");
+      toast.error("删除群组失败，请刷新后重试");
     }
   }, [draft, onDeleted, setDraft]);
 

@@ -292,7 +292,8 @@ func toAttemptDomain(entity models.AgentGroupStepAttempt) domainagentgroup.Attem
 func memberQuery(db *gorm.DB) *gorm.DB {
 	return db.Table("chat_agent_group_members AS members").
 		Select("members.*, roles.public_id AS role_public_id, roles.name AS role_name, roles.icon AS role_icon, roles.color AS role_color, roles.model AS role_model, roles.provider AS role_provider").
-		Joins("JOIN chat_roles AS roles ON roles.id = members.role_id")
+		Joins("JOIN chat_roles AS roles ON roles.id = members.role_id").
+		Where("members.deleted_at IS NULL")
 }
 
 // loadMembersByGroupIDs 批量加载群组成员（含角色摘要）。
@@ -322,7 +323,8 @@ func now() time.Time {
 func groupQuery(db *gorm.DB) *gorm.DB {
 	return db.Table("chat_agent_groups AS groups").
 		Select("groups.*, projects.public_id AS project_public_id, projects.name AS project_name").
-		Joins("LEFT JOIN chat_conversation_projects AS projects ON projects.id = groups.project_id")
+		Joins("LEFT JOIN chat_conversation_projects AS projects ON projects.id = groups.project_id").
+		Where("groups.deleted_at IS NULL")
 }
 
 // runQuery 构造运行与群组摘要的联查。

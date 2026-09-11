@@ -9989,7 +9989,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "删除没有历史记录的 Agent 群组（存在会话或运行历史时拒绝）",
+                "description": "删除 Agent 群组；会话历史保留并解除群组绑定，运行历史保留",
                 "consumes": [
                     "application/json"
                 ],
@@ -10018,12 +10018,6 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
-                        "schema": {
-                            "$ref": "#/definitions/AgentgroupErrorDoc"
-                        }
-                    },
-                    "409": {
-                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/AgentgroupErrorDoc"
                         }

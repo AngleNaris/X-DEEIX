@@ -231,7 +231,7 @@ export function AgentGroupsPage() {
       setDeleteTarget(null);
       await loadGroups();
     } catch {
-      toast.error("删除群组失败：已有会话或运行历史的群组无法删除");
+      toast.error("删除群组失败，请刷新后重试");
     } finally {
       setDeletingGroupID(null);
     }
