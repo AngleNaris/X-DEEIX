@@ -39,6 +39,7 @@ type SidebarListProps = {
   onRenameCancel: () => void;
   onShareRequest: (item: FileObjectDTO) => void;
   onDeleteRequest: (item: FileObjectDTO) => void;
+  viewMode?: "list" | "thumbs" | "compact";
 };
 
 function SidebarListItem({
@@ -56,6 +57,7 @@ function SidebarListItem({
   onShareRequest,
   onDeleteRequest,
   duplicateName,
+  viewMode,
 }: {
   item: FileObjectDTO;
   selected: boolean;
@@ -71,6 +73,7 @@ function SidebarListItem({
   onShareRequest: (item: FileObjectDTO) => void;
   onDeleteRequest: (item: FileObjectDTO) => void;
   duplicateName: boolean;
+  viewMode: "list" | "thumbs" | "compact";
 }) {
   const t = useTranslations("files");
   const fileIcon = resolveFileIcon(item);
@@ -101,7 +104,7 @@ function SidebarListItem({
   }
 
   return (
-    <div className="group relative h-8 w-full max-w-full min-w-0 overflow-hidden rounded-md">
+    <div className={cn("group relative w-full max-w-full min-w-0 overflow-hidden rounded-md", viewMode === "thumbs" ? "h-24" : viewMode === "compact" ? "h-7" : "h-8")}>
       <Checkbox
         checked={checked}
         className="absolute left-1.5 top-1/2 z-20 size-3 -translate-y-1/2"
@@ -113,13 +116,14 @@ function SidebarListItem({
         type="button"
         variant="ghost"
         className={cn(
-          "h-8 w-full max-w-full justify-start gap-2 overflow-hidden rounded-md py-0 pl-7 pr-12 text-left text-xs font-normal shadow-none",
+          "w-full max-w-full justify-start gap-2 overflow-hidden rounded-md py-0 pl-7 pr-12 text-left text-xs font-normal shadow-none",
+          viewMode === "thumbs" ? "h-24 flex-col items-start justify-end pb-2 pt-2" : viewMode === "compact" ? "h-7" : "h-8",
           selected ? "bg-accent text-accent-foreground hover:bg-accent" : "text-foreground hover:bg-accent/65 hover:text-foreground",
         )}
         onClick={() => onSelect(item.fileID)}
       >
-        <span className="flex size-3 shrink-0 items-center justify-center">
-          {React.createElement(fileIcon, { className: "size-3 text-muted-foreground" })}
+        <span className={cn("flex shrink-0 items-center justify-center", viewMode === "thumbs" ? "size-10" : "size-3")}>
+          {React.createElement(fileIcon, { className: viewMode === "thumbs" ? "size-9 text-muted-foreground" : "size-3 text-muted-foreground" })}
         </span>
 
         <span className="min-w-0 flex-1 truncate text-xs" title={`${item.fileName} · ${item.fileID}`}>{resolveFileLabel(item.fileName, item.fileID, duplicateName)}</span>
@@ -231,6 +235,7 @@ export function SidebarList({
   onRenameCancel,
   onShareRequest,
   onDeleteRequest,
+  viewMode = "list",
 }: SidebarListProps) {
   const t = useTranslations("files");
   const scrollAreaRef = React.useRef<HTMLDivElement | null>(null);
@@ -267,7 +272,7 @@ export function SidebarList({
         ref={scrollAreaRef}
         className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden pr-2"
       >
-        <div className="w-full max-w-full min-w-0 space-y-1 px-1.5 py-2.5 pb-4">
+        <div className={cn("w-full max-w-full min-w-0 px-1.5 py-2.5 pb-4", viewMode === "thumbs" ? "grid grid-cols-2 gap-2" : "space-y-1")}>
           {items.length > 0 ? (
             items.map((item) => {
               const isSelected = item.fileID === selectedFileID;
@@ -291,6 +296,7 @@ export function SidebarList({
                   onShareRequest={onShareRequest}
                   onDeleteRequest={onDeleteRequest}
                   duplicateName={items.filter((candidate) => candidate.fileName === item.fileName).length > 1}
+                  viewMode={viewMode}
                 />
               );
             })
