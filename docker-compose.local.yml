@@ -1,0 +1,7 @@
+name: deeix-chat-local
+
+services:
+  app:
+    image: deeix-chat:local
+    ports:
+      - "127.0.0.1:18080:8080"
