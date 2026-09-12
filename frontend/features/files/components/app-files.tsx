@@ -85,6 +85,7 @@ export function AppFiles() {
     onConfirmBulkDelete,
     onBackToList,
     onToggleRagOptOut,
+    onToggleFavorite,
   } = useFilesPage();
   const stableDeleteTarget = useDialogSnapshot(deleteTarget);
   const selectedCount = selectedFileIDs.length;
@@ -160,6 +161,7 @@ export function AppFiles() {
                 onRenameCancel={onRenameCancel}
                 onShareRequest={setShareTarget}
                 onDeleteRequest={onDeleteRequest}
+                onToggleFavorite={onToggleFavorite}
                 viewMode={viewMode}
               />
             ) : null}

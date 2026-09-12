@@ -1,6 +1,6 @@
 "use client";
 
-import { Ellipsis, PencilLine, Share2, SquareCheckBig, Trash2, Zap } from "lucide-react";
+import { Ellipsis, PencilLine, Share2, SquareCheckBig, Star, Trash2, Zap } from "lucide-react";
 import { useTranslations } from "next-intl";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
@@ -17,6 +17,9 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import type { FileObjectDTO } from "@/shared/api/file.types";
+import { fetchFileContent } from "@/shared/api/file";
+import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
+import { isImageFile, isFileReady } from "@/shared/lib/file-display";
 import { useLoadMoreSentinel } from "@/shared/hooks/use-load-more-sentinel";
 import { resolveFileIcon, resolveFileLabel } from "@/shared/lib/file-display";
 
@@ -39,6 +42,7 @@ type SidebarListProps = {
   onRenameCancel: () => void;
   onShareRequest: (item: FileObjectDTO) => void;
   onDeleteRequest: (item: FileObjectDTO) => void;
+  onToggleFavorite: (fileID: string, current: boolean) => void;
   viewMode?: "list" | "thumbs" | "compact";
 };
 
@@ -56,6 +60,7 @@ function SidebarListItem({
   onRenameCancel,
   onShareRequest,
   onDeleteRequest,
+  onToggleFavorite,
   duplicateName,
   viewMode,
 }: {
@@ -72,11 +77,28 @@ function SidebarListItem({
   onRenameCancel: () => void;
   onShareRequest: (item: FileObjectDTO) => void;
   onDeleteRequest: (item: FileObjectDTO) => void;
+  onToggleFavorite: (fileID: string, current: boolean) => void;
   duplicateName: boolean;
   viewMode: "list" | "thumbs" | "compact";
 }) {
   const t = useTranslations("files");
   const fileIcon = resolveFileIcon(item);
+  const [thumbnailURL, setThumbnailURL] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    let disposed = false;
+    let url: string | null = null;
+    if (viewMode === "thumbs" && isImageFile(item) && isFileReady(item.status)) {
+      void (async () => {
+        const token = await resolveAccessToken();
+        if (!token) return;
+        try {
+          const result = await fetchFileContent(token, item.fileID);
+          if (!disposed) { url = URL.createObjectURL(result.blob); setThumbnailURL(url); }
+        } catch { /* fallback icon */ }
+      })();
+    }
+    return () => { disposed = true; if (url) URL.revokeObjectURL(url); setThumbnailURL(null); };
+  }, [item.fileID, item.status, viewMode]);
 
   if (renaming) {
     return (
@@ -123,7 +145,7 @@ function SidebarListItem({
         onClick={() => onSelect(item.fileID)}
       >
         <span className={cn("flex shrink-0 items-center justify-center", viewMode === "thumbs" ? "size-10" : "size-3")}>
-          {React.createElement(fileIcon, { className: viewMode === "thumbs" ? "size-9 text-muted-foreground" : "size-3 text-muted-foreground" })}
+          {thumbnailURL ? <img src={thumbnailURL} alt="" className="size-10 rounded object-cover" /> : React.createElement(fileIcon, { className: viewMode === "thumbs" ? "size-9 text-muted-foreground" : "size-3 text-muted-foreground" })}
         </span>
 
         <span className="min-w-0 flex-1 truncate text-xs" title={`${item.fileName} · ${item.fileID}`}>{resolveFileLabel(item.fileName, item.fileID, duplicateName)}</span>
@@ -148,6 +170,9 @@ function SidebarListItem({
           selected ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100",
         )}
       >
+        <Button type="button" variant="ghost" size="icon" className="size-5 rounded-md p-1" aria-label={item.favorite ? "取消收藏" : "收藏"} onClick={(event) => { event.preventDefault(); event.stopPropagation(); onToggleFavorite(item.fileID, Boolean(item.favorite)); }} tabIndex={-1}>
+          <Star className={cn("size-3", item.favorite ? "fill-yellow-400 text-yellow-500" : "text-muted-foreground")} />
+        </Button>
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <Button
@@ -235,6 +260,7 @@ export function SidebarList({
   onRenameCancel,
   onShareRequest,
   onDeleteRequest,
+  onToggleFavorite,
   viewMode = "list",
 }: SidebarListProps) {
   const t = useTranslations("files");
@@ -294,7 +320,8 @@ export function SidebarList({
                   onRenameCommit={onRenameCommit}
                   onRenameCancel={onRenameCancel}
                   onShareRequest={onShareRequest}
-                  onDeleteRequest={onDeleteRequest}
+                onDeleteRequest={onDeleteRequest}
+                onToggleFavorite={onToggleFavorite}
                   duplicateName={items.filter((candidate) => candidate.fileName === item.fileName).length > 1}
                   viewMode={viewMode}
                 />

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -23,6 +24,31 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 )
+
+var conversationReferencePattern = regexp.MustCompile(`\[会话引用:\s*.*?\(([A-Za-z0-9_-]{4,128})\)\]`)
+
+// resolveConversationReferences expands drag-and-dropped conversation IDs into a bounded prompt block.
+func (s *Service) resolveConversationReferences(ctx context.Context, userID uint, content string) []model.Message {
+	matches := conversationReferencePattern.FindAllStringSubmatch(content, 4)
+	if len(matches) == 0 { return nil }
+	seen := map[string]struct{}{}
+	var out []model.Message
+	for _, match := range matches {
+		publicID := strings.TrimSpace(match[1])
+		if _, ok := seen[publicID]; ok { continue }
+		seen[publicID] = struct{}{}
+		conversation, err := s.repo.GetConversationByPublicID(ctx, publicID, userID)
+		if err != nil { continue }
+		messages, err := s.repo.ListMessages(ctx, conversation.ID, 0, 20)
+		if err != nil { continue }
+		for _, message := range messages {
+			if strings.TrimSpace(message.Content) == "" || (message.Role != "user" && message.Role != "assistant") { continue }
+			message.Content = "[引用会话 " + publicID + "]\n" + message.Content
+			out = append(out, message)
+		}
+	}
+	return out
+}
 
 const (
 	reasoningContentPassbackSettingKey = "chat.reasoning_content_passback"
@@ -445,6 +471,7 @@ func (s *Service) sendMessageInternal(
 	contextMessages = s.expandContextMessagesToSnapshotBoundary(ctx, input.ConversationID, userMessage.ID, contextMessages, prefetch.snapshot, compactPolicy)
 	// 快照扩展可能重新加载数据库中的原始 error 状态；在最终分支路径上统一恢复可用的重试上下文。
 	contextMessages = recoverAssistantRetryUserStates(contextMessages)
+	contextMessages = append(s.resolveConversationReferences(ctx, input.UserID, input.Content), contextMessages...)
 	promptScope := buildPromptScope(contextMessages, prefetch.snapshot, compactPolicy)
 	promptMessages := s.applyContextTokenBudget(promptScope.activeMessages(), route.UpstreamModel, route.ModelCapabilitiesJSON, reasoningContentPassback)
 	ragQuery := buildRAGQuery(promptMessages, input.Content, cfg.RAGQueryHistoryTurns)

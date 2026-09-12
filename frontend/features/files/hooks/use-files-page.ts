@@ -17,6 +17,7 @@ import {
   listFiles,
   renameFile,
   updateFileRagOptOut,
+  updateFileFavorite,
   uploadFile,
 } from "@/shared/api/file";
 import type { FileObjectDTO, UploadFileResult, UserStorageQuotaDTO } from "@/shared/api/file.types";
@@ -92,6 +93,7 @@ type UseFilesPageResult = {
   onConfirmBulkDelete: () => Promise<void>;
   onBackToList: () => void;
   onToggleRagOptOut: (fileID: string, current: boolean) => Promise<void>;
+  onToggleFavorite: (fileID: string, current: boolean) => Promise<void>;
 };
 
 function normalizeContentTab(value: string | null): FileContentTab {
@@ -718,6 +720,18 @@ export function useFilesPage(): UseFilesPageResult {
     [ensureAccessToken, resolveErrorMessage, t],
   );
 
+  const onToggleFavorite = React.useCallback(async (fileID: string, current: boolean) => {
+    const previous = filesRef.current.find((item) => item.fileID === fileID);
+    const optimistic = patchByID(filesRef.current, fileID, (item) => item.fileID, { favorite: !current });
+    filesRef.current = optimistic; setFiles(optimistic);
+    const token = await ensureAccessToken();
+    if (!token) { if (previous) { const restored = replaceByID(filesRef.current, fileID, (item) => item.fileID, previous); filesRef.current = restored; setFiles(restored); } return; }
+    try {
+      const updated = await updateFileFavorite(token, fileID, !current);
+      setFiles((items) => { const next = replaceByID(items, fileID, (item) => item.fileID, updated); filesRef.current = next; return next; });
+    } catch { if (previous) { const restored = replaceByID(filesRef.current, fileID, (item) => item.fileID, previous); filesRef.current = restored; setFiles(restored); } }
+  }, [ensureAccessToken]);
+
   return {
     fileInputRef,
     mobileView,
@@ -773,5 +787,6 @@ export function useFilesPage(): UseFilesPageResult {
     onConfirmBulkDelete,
     onBackToList,
     onToggleRagOptOut,
+    onToggleFavorite,
   };
 }
