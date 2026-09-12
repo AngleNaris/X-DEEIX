@@ -343,6 +343,7 @@ type FileObject struct {
 	ProcessingStartedAt    *time.Time
 	ProcessingCompletedAt  *time.Time
 	RagOptOut              bool
+	Favorite               bool
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
 }

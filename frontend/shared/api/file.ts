@@ -163,6 +163,10 @@ export async function updateFileRagOptOut(
   );
 }
 
+export async function updateFileFavorite(accessToken: string, fileID: string, favorite: boolean): Promise<FileObjectDTO> {
+  return authedRequest<FileObjectDTO>(`/api/v1/files/${pathParam(fileID)}`, { method: "PATCH", accessToken, body: { favorite } }, true);
+}
+
 export async function fetchFileContent(accessToken: string, fileID: string): Promise<FileContentResult> {
   const response = await authedFetch(
     `/api/v1/files/${pathParam(fileID)}/content`,

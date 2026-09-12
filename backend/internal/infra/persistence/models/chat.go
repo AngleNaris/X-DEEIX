@@ -232,6 +232,7 @@ type FileObject struct {
 	ProcessingStartedAt    *time.Time `gorm:"comment:处理开始时间"`
 	ProcessingCompletedAt  *time.Time `gorm:"comment:处理完成时间"`
 	RagOptOut              bool       `gorm:"not null;default:false;comment:用户是否关闭此文件的RAG检索"`
+	Favorite               bool       `gorm:"not null;default:false;index:idx_file_objects_favorite;comment:用户是否收藏此文件"`
 }
 
 // TableName 指定表名。

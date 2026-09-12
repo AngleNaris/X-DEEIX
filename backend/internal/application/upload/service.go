@@ -564,6 +564,13 @@ func (s *Service) UpdateFileRagOptOut(ctx context.Context, userID uint, fileID s
 	return item, s.mapRepositoryError(err)
 }
 
+// UpdateFileFavorite 更新用户文件的收藏状态。
+func (s *Service) UpdateFileFavorite(ctx context.Context, userID uint, fileID string, favorite bool) (*domainconversation.FileObject, error) {
+	normalizedFileID := strings.TrimSpace(fileID)
+	if normalizedFileID == "" { return nil, s.errInvalidFileReference() }
+	return s.repo.UpdateFileObjectFavorite(ctx, userID, normalizedFileID, favorite)
+}
+
 // ValidateImageFile 确认文件属于当前用户且可作为图片头像使用。
 func (s *Service) ValidateImageFile(ctx context.Context, userID uint, fileID string) error {
 	normalizedFileID := strings.TrimSpace(fileID)

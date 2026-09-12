@@ -603,6 +603,8 @@ func (r *uploadTestRepo) UpdateFileObjectRagOptOut(context.Context, uint, string
 	return nil, nil
 }
 
+func (r *uploadTestRepo) UpdateFileObjectFavorite(context.Context, uint, string, bool) (*domainconversation.FileObject, error) { return nil, nil }
+
 func (r *uploadTestRepo) TouchFileObjectLastAccessedAt(_ context.Context, userID uint, fileID string, accessedAt time.Time) error {
 	for i := range r.files {
 		if r.files[i].UserID == userID && r.files[i].FileID == fileID && r.files[i].Status == "active" {

@@ -2956,6 +2956,19 @@ func (r *Repo) UpdateFileObjectRagOptOut(ctx context.Context, userID uint, fileI
 	return &result, nil
 }
 
+// UpdateFileObjectFavorite 更新文件收藏状态。
+func (r *Repo) UpdateFileObjectFavorite(ctx context.Context, userID uint, fileID string, favorite bool) (*domainconversation.FileObject, error) {
+	var item models.FileObject
+	if err := r.db.WithContext(ctx).Where("user_id = ? AND status = ? AND file_id = ?", userID, "active", fileID).First(&item).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) { return nil, ErrFileNotFound }
+		return nil, translateError(err)
+	}
+	item.Favorite = favorite
+	if err := r.db.WithContext(ctx).Save(&item).Error; err != nil { return nil, translateError(err) }
+	result := toFileObjectDomain(item)
+	return &result, nil
+}
+
 // TouchFileObjectLastAccessedAt 更新文件最近使用时间。
 func (r *Repo) TouchFileObjectLastAccessedAt(ctx context.Context, userID uint, fileID string, accessedAt time.Time) error {
 	return translateError(r.db.WithContext(ctx).
@@ -5071,6 +5084,7 @@ func toFileObjectDomain(item models.FileObject) domainconversation.FileObject {
 		ProcessingStartedAt:    item.ProcessingStartedAt,
 		ProcessingCompletedAt:  item.ProcessingCompletedAt,
 		RagOptOut:              item.RagOptOut,
+		Favorite:               item.Favorite,
 		CreatedAt:              item.CreatedAt,
 		UpdatedAt:              item.UpdatedAt,
 	}
@@ -5127,6 +5141,7 @@ func toFileObjectModel(item *domainconversation.FileObject) models.FileObject {
 		ProcessingStartedAt:    item.ProcessingStartedAt,
 		ProcessingCompletedAt:  item.ProcessingCompletedAt,
 		RagOptOut:              item.RagOptOut,
+		Favorite:               item.Favorite,
 	}
 }
 
