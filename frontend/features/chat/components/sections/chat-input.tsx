@@ -460,6 +460,7 @@ function ChatInputComponent({
   const [ragWarnDismissed, setRagWarnDismissed] = React.useState(false);
   const [previewAttachment, setPreviewAttachment] = React.useState<PendingAttachment | null>(null);
   const [markdownPreview, setMarkdownPreview] = React.useState(false);
+  const [conversationDropActive, setConversationDropActive] = React.useState(false);
   const stablePreviewAttachment = useDialogSnapshot(previewAttachment);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const inputGroupRef = React.useRef<HTMLDivElement | null>(null);
@@ -483,6 +484,23 @@ function ChatInputComponent({
           : tComposer("voiceInput")
         : tComposer("voiceUnsupported");
   const showMarkdownPreview = markdownPreview && hasDraftText;
+  const handleConversationDrop = React.useCallback((event: React.DragEvent<HTMLTextAreaElement>) => {
+    const raw = event.dataTransfer.getData("application/x-deeix-conversation");
+    if (!raw) return;
+    event.preventDefault();
+    try {
+      const reference = JSON.parse(raw) as { id?: string; title?: string };
+      const id = reference.id?.trim();
+      const title = reference.title?.trim();
+      if (!id || !title) return;
+      const prefix = `[会话引用: ${title} (${id})]\n\n`;
+      onDraftChange(draft.startsWith(prefix) ? draft : `${prefix}${draft}`);
+    } catch {
+      // Ignore malformed drag payloads.
+    } finally {
+      setConversationDropActive(false);
+    }
+  }, [draft, onDraftChange]);
   const inputHeightClassName =
     inputHeight === "compact" ? "max-h-32" : inputHeight === "loose" ? "max-h-64" : "max-h-44";
   const { onPreviewScroll, onSourceScroll } = useMarkdownPreviewSync({
@@ -1136,10 +1154,25 @@ function ChatInputComponent({
             className={cn(
               "rounded-3xl min-h-12 overflow-y-auto px-5 text-[15px] leading-6 placeholder:text-muted-foreground placeholder:font-[inherit] placeholder:leading-[inherit]",
               showSelectedSkills || hasComposerAttachments ? "pt-2" : "pt-4",
+              conversationDropActive && "ring-2 ring-primary/40",
               inputHeightClassName,
               speechInput.active ? "placeholder:font-normal placeholder:text-muted-foreground" : "",
             )}
             onFocus={handleMentionFocus}
+            onDragEnter={(event) => {
+              if (event.dataTransfer.types.includes("application/x-deeix-conversation")) {
+                event.preventDefault();
+                setConversationDropActive(true);
+              }
+            }}
+            onDragOver={(event) => {
+              if (event.dataTransfer.types.includes("application/x-deeix-conversation")) {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "copy";
+              }
+            }}
+            onDragLeave={() => setConversationDropActive(false)}
+            onDrop={handleConversationDrop}
             onBlur={handleMentionBlur}
             onChange={(event) => handleMentionChange(event.target.value)}
             onClick={handleMentionSelectionChange}
