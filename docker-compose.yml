@@ -2,6 +2,9 @@ name: deeix-chat
 
 services:
   app:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: ${DEEIX_CHAT_IMAGE:-ghcr.io/deeix-ai/deeix-chat:latest}
     container_name: deeix-chat-app
     ports:

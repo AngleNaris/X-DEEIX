@@ -39,7 +39,7 @@ func (s *Service) resolveConversationReferences(ctx context.Context, userID uint
 		seen[publicID] = struct{}{}
 		conversation, err := s.repo.GetConversationByPublicID(ctx, publicID, userID)
 		if err != nil { continue }
-		messages, err := s.repo.ListMessages(ctx, conversation.ID, 0, 20)
+		messages, _, err := s.repo.ListMessages(ctx, conversation.ID, 0, 20)
 		if err != nil { continue }
 		for _, message := range messages {
 			if strings.TrimSpace(message.Content) == "" || (message.Role != "user" && message.Role != "assistant") { continue }
