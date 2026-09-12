@@ -111,6 +111,10 @@ export function formatBytes(sizeBytes: number): string {
   return `${value >= 100 || exponent === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[exponent]}`;
 }
 
+export function resolveFileLabel(fileName: string, fileID: string, duplicate = false): string {
+  return duplicate ? `${fileName} · #${fileID.slice(-6)}` : fileName;
+}
+
 export function formatDateTime(value: string | null, locale = "en-US"): string {
   if (!value) {
     return "-";

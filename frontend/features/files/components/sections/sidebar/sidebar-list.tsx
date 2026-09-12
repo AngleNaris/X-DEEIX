@@ -18,7 +18,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import type { FileObjectDTO } from "@/shared/api/file.types";
 import { useLoadMoreSentinel } from "@/shared/hooks/use-load-more-sentinel";
-import { resolveFileIcon } from "@/shared/lib/file-display";
+import { resolveFileIcon, resolveFileLabel } from "@/shared/lib/file-display";
 
 type SidebarListProps = {
   items: FileObjectDTO[];
@@ -55,6 +55,7 @@ function SidebarListItem({
   onRenameCancel,
   onShareRequest,
   onDeleteRequest,
+  duplicateName,
 }: {
   item: FileObjectDTO;
   selected: boolean;
@@ -69,6 +70,7 @@ function SidebarListItem({
   onRenameCancel: () => void;
   onShareRequest: (item: FileObjectDTO) => void;
   onDeleteRequest: (item: FileObjectDTO) => void;
+  duplicateName: boolean;
 }) {
   const t = useTranslations("files");
   const fileIcon = resolveFileIcon(item);
@@ -120,7 +122,7 @@ function SidebarListItem({
           {React.createElement(fileIcon, { className: "size-3 text-muted-foreground" })}
         </span>
 
-        <span className="min-w-0 flex-1 truncate text-xs" title={item.fileName}>{item.fileName}</span>
+        <span className="min-w-0 flex-1 truncate text-xs" title={`${item.fileName} · ${item.fileID}`}>{resolveFileLabel(item.fileName, item.fileID, duplicateName)}</span>
       </Button>
 
       {item.fileCategory !== "image" && item.embedStatus === "ready" ? (
@@ -288,6 +290,7 @@ export function SidebarList({
                   onRenameCancel={onRenameCancel}
                   onShareRequest={onShareRequest}
                   onDeleteRequest={onDeleteRequest}
+                  duplicateName={items.filter((candidate) => candidate.fileName === item.fileName).length > 1}
                 />
               );
             })

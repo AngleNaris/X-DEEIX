@@ -311,12 +311,6 @@ export function ChatMessageBot({
       clearLiveGroupRun(item.runID);
     }
   }, [item.isStreaming, item.runID]);
-  React.useEffect(() => {
-    // 消息卸载时清理实时群组运行，避免跨会话泄漏。
-    return () => {
-      clearLiveGroupRun(item.runID);
-    };
-  }, [item.runID]);
   const upstreamThink = processTrace?.upstreamThink;
   const toolTrace = processTrace?.tools;
   const traceEvents = processTrace?.events ?? EMPTY_TRACE_EVENTS;

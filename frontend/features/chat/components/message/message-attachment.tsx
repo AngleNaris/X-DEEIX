@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/attachment";
 import type { MessageAttachment } from "@/features/chat/types/messages";
 import type { PreviewDialogFile } from "@/shared/components/file-preview/preview-dialog";
-import { formatBytes, resolveFileExtension, resolveFileIcon } from "@/shared/lib/file-display";
+import { formatBytes, resolveFileExtension, resolveFileIcon, resolveFileLabel } from "@/shared/lib/file-display";
 import type { FileContentResult } from "@/shared/api/file";
 
 const FilePreviewDialog = dynamic(
@@ -40,9 +40,11 @@ function resolveCardMeta(att: MessageAttachment): string {
 
 function AttachmentCard({
   att,
+  duplicateName,
   onClick,
 }: {
   att: MessageAttachment;
+  duplicateName: boolean;
   onClick: () => void;
 }) {
   const meta = resolveCardMeta(att);
@@ -58,7 +60,7 @@ function AttachmentCard({
       </AttachmentMedia>
       <AttachmentContent className="flex min-w-0 flex-1 flex-col justify-center px-0 py-0">
         <AttachmentTitle className="text-[12px] leading-4 text-foreground/90" title={att.fileName}>
-          {att.fileName}
+          {resolveFileLabel(att.fileName, att.fileID, duplicateName)}
         </AttachmentTitle>
         <AttachmentDescription className="mt-1 text-[11px] leading-none">
           {meta}
@@ -103,7 +105,7 @@ export function MessageAttachmentRow({
     <>
       <div className={`flex max-w-full flex-wrap gap-2 sm:max-w-[70%] ${align === "start" ? "justify-start" : "justify-end"}`}>
         {attachments.map((att) => (
-          <AttachmentCard key={att.fileID} att={att} onClick={() => handleClick(att)} />
+          <AttachmentCard key={att.fileID} att={att} duplicateName={attachments.filter((item) => item.fileName === att.fileName).length > 1} onClick={() => handleClick(att)} />
         ))}
       </div>
       {activeAtt ? (
