@@ -1404,6 +1404,7 @@ export interface FileObjectResponse {
   processingStatus: string;
   purpose: string;
   ragOptOut: boolean;
+  favorite: boolean;
   sizeBytes: number;
   status: string;
   updatedAt: string;
@@ -3419,8 +3420,9 @@ export interface UpdateCurrentSessionLocationResponseDoc {
 }
 
 export interface UpdateFileRequest {
-  fileName?: string;
-  ragOptOut?: boolean;
+	fileName?: string;
+	ragOptOut?: boolean;
+	favorite?: boolean;
 }
 
 export interface UpdateMessageRequest {

@@ -235,8 +235,8 @@ func (h *Handler) UpdateFile(c *gin.Context) {
 		response.InvalidRequestBody(c, err)
 		return
 	}
-	if req.FileName == nil && req.RagOptOut == nil {
-		response.Error(c, http.StatusBadRequest, "at least one of file_name or rag_opt_out is required")
+	if req.FileName == nil && req.RagOptOut == nil && req.Favorite == nil {
+		response.Error(c, http.StatusBadRequest, "at least one file property is required")
 		return
 	}
 
@@ -276,6 +276,10 @@ func (h *Handler) UpdateFile(c *gin.Context) {
 			return
 		}
 	}
+	if req.Favorite != nil {
+		item, err = h.service.UpdateFileFavorite(c.Request.Context(), userID, fileID, *req.Favorite)
+		if err != nil { if errors.Is(err, appconversation.ErrInvalidFileReference) { response.Error(c, http.StatusBadRequest, "invalid file id") } else if errors.Is(err, appconversation.ErrFileNotFound) { response.Error(c, http.StatusNotFound, "file not found") } else { response.Error(c, http.StatusInternalServerError, "update file failed") }; return }
+	}
 
 	auditDetail := map[string]interface{}{}
 	if req.FileName != nil {
@@ -284,6 +288,7 @@ func (h *Handler) UpdateFile(c *gin.Context) {
 	if req.RagOptOut != nil {
 		auditDetail["rag_opt_out"] = item.RagOptOut
 	}
+	if req.Favorite != nil { auditDetail["favorite"] = item.Favorite }
 	h.recordAudit(c, "update_file",
 		"file",
 		item.FileID,

@@ -89,6 +89,7 @@ type RenameFileRequest struct {
 type UpdateFileRequest struct {
 	FileName  *string `json:"fileName,omitempty"`
 	RagOptOut *bool   `json:"ragOptOut,omitempty"`
+	Favorite  *bool   `json:"favorite,omitempty"`
 }
 
 // SendMessageRequest 发送消息请求。

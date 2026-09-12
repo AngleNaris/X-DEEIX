@@ -445,6 +445,7 @@ type FileObjectResponse struct {
 	EmbedError             string     `json:"embedError"`
 	ChunkCount             int        `json:"chunkCount"`
 	RagOptOut              bool       `json:"ragOptOut"`
+	Favorite               bool       `json:"favorite"`
 	LastAccessedAt         *time.Time `json:"lastAccessedAt" extensions:"x-nullable,!x-omitempty"`
 	ExpiresAt              *time.Time `json:"expiresAt" extensions:"x-nullable,!x-omitempty"`
 	CreatedAt              time.Time  `json:"createdAt"`
@@ -471,6 +472,7 @@ func toFileObjectResponse(item *model.FileObject) FileObjectResponse {
 		EmbedError:             item.EmbedError,
 		ChunkCount:             item.ChunkCount,
 		RagOptOut:              item.RagOptOut,
+		Favorite:               item.Favorite,
 		LastAccessedAt:         item.LastAccessedAt,
 		ExpiresAt:              item.ExpiresAt,
 		CreatedAt:              item.CreatedAt,

@@ -81,6 +81,11 @@ func (s *Service) UpdateFileRagOptOut(ctx context.Context, userID uint, fileID s
 	return s.uploadSvc.UpdateFileRagOptOut(ctx, userID, fileID, ragOptOut)
 }
 
+// UpdateFileFavorite 更新文件收藏状态。
+func (s *Service) UpdateFileFavorite(ctx context.Context, userID uint, fileID string, favorite bool) (*model.FileObject, error) {
+	return s.uploadSvc.UpdateFileFavorite(ctx, userID, fileID, favorite)
+}
+
 // OpenFileContent 打开当前用户的文件内容。
 func (s *Service) OpenFileContent(ctx context.Context, userID uint, fileID string) (*appupload.FileContentResult, error) {
 	return s.uploadSvc.OpenFileContent(ctx, userID, fileID)
