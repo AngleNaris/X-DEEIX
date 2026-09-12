@@ -157,6 +157,14 @@ export function SidebarConversationItem({
     </div>
   ) : (
     <div
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData(
+          "application/x-deeix-conversation",
+          JSON.stringify({ id: item.publicID, title: item.title }),
+        );
+      }}
       className={cn(
         "group relative flex h-8 items-center rounded-md text-sm transition-colors",
         active
