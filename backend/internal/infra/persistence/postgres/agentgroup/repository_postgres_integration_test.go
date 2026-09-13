@@ -214,6 +214,7 @@ func TestPostgresAgentGroupDeleteRacesLeaveNoOrphans(t *testing.T) {
 func TestPostgresAgentGroupDeletePreservesConversationAndRunHistory(t *testing.T) {
 	db := openAgentGroupPostgresIntegrationDB(t)
 	group := seedPostgresAgentGroup(t, db, "delete_history")
+	repo := NewRepo(db)
 	conversation := models.Conversation{
 		UserID: group.UserID, AgentGroupID: &group.ID, PublicID: "conversation_delete_history",
 		Title: "history", LabelsJSON: "[]", SessionKey: "session_delete_history", Status: "active",
@@ -223,7 +224,7 @@ func TestPostgresAgentGroupDeletePreservesConversationAndRunHistory(t *testing.T
 	}
 	run := seedPostgresAgentGroupRun(t, db, group, "delete_history", domainagentgroup.RunStatusCompleted)
 
-	if err := NewRepo(db).DeleteAgentGroupByPublicID(context.Background(), group.UserID, group.PublicID); err != nil {
+	if err := repo.DeleteAgentGroupByPublicID(context.Background(), group.UserID, group.PublicID); err != nil {
 		t.Fatalf("delete group with history: %v", err)
 	}
 
@@ -241,7 +242,14 @@ func TestPostgresAgentGroupDeletePreservesConversationAndRunHistory(t *testing.T
 	if storedRun.GroupID != group.ID {
 		t.Fatalf("run group id changed: %d", storedRun.GroupID)
 	}
-	groups, err := NewRepo(db).ListAgentGroups(context.Background(), group.UserID, 0)
+	detail, err := repo.GetAgentGroupRunDetail(context.Background(), group.UserID, run.PublicID)
+	if err != nil {
+		t.Fatalf("load preserved run detail: %v", err)
+	}
+	if detail.Run.GroupPublicID != group.PublicID {
+		t.Fatalf("preserved run group public id = %q, want %q", detail.Run.GroupPublicID, group.PublicID)
+	}
+	groups, err := repo.ListAgentGroups(context.Background(), group.UserID, 0)
 	if err != nil {
 		t.Fatalf("list groups after delete: %v", err)
 	}
@@ -357,6 +365,7 @@ func openAgentGroupPostgresIntegrationDB(t *testing.T) *gorm.DB {
 	})
 	if err := db.AutoMigrate(
 		&models.Conversation{},
+		&models.ConversationProject{},
 		&models.ConversationRole{},
 		&models.AgentGroup{},
 		&models.AgentGroupMember{},
