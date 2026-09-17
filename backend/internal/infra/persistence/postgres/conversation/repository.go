@@ -1719,8 +1719,11 @@ func (r *Repo) ListMessagesBeforeID(ctx context.Context, conversationID uint, be
 		return nil, 0, translateError(err)
 	}
 
-	if err := r.db.WithContext(ctx).
-		Where("conversation_id = ? AND id < ?", conversationID, beforeID).
+	query := r.db.WithContext(ctx).Where("conversation_id = ?", conversationID)
+	if beforeID > 0 {
+		query = query.Where("id < ?", beforeID)
+	}
+	if err := query.
 		Order("id DESC").
 		Limit(limit).
 		Find(&items).Error; err != nil {

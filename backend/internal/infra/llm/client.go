@@ -938,7 +938,11 @@ func (c *Client) Generate(ctx context.Context, route RouteConfig, input Generate
 	if err != nil {
 		return nil, err
 	}
-	return adapter.Generate(ctx, route, input)
+	output, err := adapter.Generate(ctx, route, input)
+	if output != nil && isDeepSeekUsageRoute(route) {
+		output.Usage = normalizeDeepSeekUsage(output.Usage)
+	}
+	return output, err
 }
 
 // GenerateStream 调用上游适配器并实时回传增量文本。
@@ -952,7 +956,21 @@ func (c *Client) GenerateStream(
 	if err != nil {
 		return nil, err
 	}
-	return adapter.GenerateStream(ctx, route, input, onEvent)
+	if !isDeepSeekUsageRoute(route) {
+		return adapter.GenerateStream(ctx, route, input, onEvent)
+	}
+	callback := onEvent
+	if onEvent != nil {
+		callback = func(event GenerateStreamEvent) error {
+			event.Usage = normalizeDeepSeekUsage(event.Usage)
+			return onEvent(event)
+		}
+	}
+	output, err := adapter.GenerateStream(ctx, route, input, callback)
+	if output != nil {
+		output.Usage = normalizeDeepSeekUsage(output.Usage)
+	}
+	return output, err
 }
 
 // ListModels 调用上游 models 目录接口。

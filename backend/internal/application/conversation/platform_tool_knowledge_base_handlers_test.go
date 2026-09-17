@@ -2,10 +2,12 @@ package conversation
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 
 	appknowledgebase "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/knowledgebase"
+	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	domainknowledgebase "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/knowledgebase"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
@@ -16,6 +18,7 @@ func TestKnowledgeBasePlatformToolRegistry(t *testing.T) {
 	for name, kind := range map[string]platformToolKind{
 		"list_knowledge_bases":          platformToolRead,
 		"list_knowledge_base_contents":  platformToolRead,
+		"read_knowledge_base_content":   platformToolRead,
 		"create_knowledge_base_content": platformToolWrite,
 		"update_knowledge_base_content": platformToolWrite,
 		"delete_knowledge_base_content": platformToolWrite,
@@ -98,6 +101,16 @@ type knowledgeBaseToolStub struct {
 	updateCalls         int
 	lastUserID          uint
 	lastKnowledgeBaseID string
+	readText            string
+	readErr             error
+}
+
+func (s *knowledgeBaseToolStub) OpenVisibleFileContent(_ context.Context, userID uint, knowledgeBaseID, fileID string) (*appupload.FileContentResult, error) {
+	s.lastUserID, s.lastKnowledgeBaseID = userID, knowledgeBaseID
+	if s.readErr != nil {
+		return nil, s.readErr
+	}
+	return &appupload.FileContentResult{File: domainconversation.FileObject{UserID: 1, FileID: fileID, FileCategory: "text"}, Reader: io.NopCloser(strings.NewReader(s.readText))}, nil
 }
 
 func (s *knowledgeBaseToolStub) ListVisible(context.Context, uint, appknowledgebase.ListInput) ([]domainknowledgebase.KnowledgeBase, int64, error) {

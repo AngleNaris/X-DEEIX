@@ -56,6 +56,7 @@ func buildPromptStateFingerprint(input promptStateFingerprintInput) string {
 			writeFingerprintField(hasher, "tool_call_type", call.ToolType)
 			writeFingerprintField(hasher, "tool_call_name", call.ToolName)
 			writeFingerprintField(hasher, "tool_call_args", call.ArgumentsJSON)
+			writeFingerprintField(hasher, "tool_call_thought_signature", call.ThoughtSignature)
 			writeFingerprintField(hasher, "tool_call_status", call.Status)
 			writeFingerprintField(hasher, "tool_call_output", call.OutputJSON)
 			writeFingerprintField(hasher, "tool_call_error", call.ErrorJSON)
@@ -245,6 +246,7 @@ func buildNextStatefulPrefixMessages(messages []llm.Message, currentUserContent 
 		currentUser.Parts = append(currentUser.Parts, imageParts...)
 	}
 	result = append(result, currentUser)
+	result = append(result, cloneLLMMessages(messages[lastUserIndex+1:])...)
 	result = append(result, llm.Message{Role: "assistant", Content: assistantText, ReasoningContent: reasoningContent})
 	return result
 }

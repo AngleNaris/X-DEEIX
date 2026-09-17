@@ -98,6 +98,7 @@ type knowledgeBaseResolver interface {
 }
 
 type knowledgeBaseToolService interface {
+	OpenVisibleFileContent(ctx context.Context, userID uint, publicID string, fileID string) (*appupload.FileContentResult, error)
 	ListVisible(ctx context.Context, userID uint, input appknowledgebase.ListInput) ([]domainknowledgebase.KnowledgeBase, int64, error)
 	ListVisibleFiles(ctx context.Context, userID uint, publicID string, page int, pageSize int) ([]model.FileObject, int64, error)
 	CreateUserContent(ctx context.Context, userID uint, publicID string, input appknowledgebase.UserContentInput) (*model.FileObject, error)

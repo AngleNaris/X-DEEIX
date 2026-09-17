@@ -643,7 +643,40 @@ func budgetToolOutputForModel(value string, maxTokens int64) string {
 	if text == "" || estimateTokens(text) <= maxTokens {
 		return text
 	}
+	// A partial JSON page can skip unread bytes. Return the original cursor for a smaller retry.
+	if retry := pagedToolOutputRetry(text); retry != "" && estimateTokens(retry) <= maxTokens {
+		return retry
+	}
 	return headTailToolOutputByTokens(text, maxTokens)
+}
+
+func pagedToolOutputRetry(text string) string {
+	var page map[string]json.RawMessage
+	if json.Unmarshal([]byte(text), &page) != nil || page["has_more"] == nil {
+		return ""
+	}
+	args := make(map[string]json.RawMessage)
+	if page["offset"] != nil && page["next_offset"] != nil {
+		for _, key := range []string{"file_id", "knowledge_base_id", "content_id", "conversation_id", "message_id", "offset"} {
+			if page[key] != nil {
+				args[key] = page[key]
+			}
+		}
+	} else if page["messages"] != nil && page["conversation_id"] != nil && page["before_id"] != nil {
+		args["conversation_id"] = page["conversation_id"]
+		if string(page["before_id"]) != "0" {
+			args["before_id"] = page["before_id"]
+		}
+		args["limit"] = json.RawMessage("1")
+	} else {
+		return ""
+	}
+	args["max_bytes"] = json.RawMessage("256")
+	encoded, err := json.Marshal(map[string]interface{}{"budget_exceeded": true, "retry_same_tool_with": args})
+	if err != nil {
+		return ""
+	}
+	return string(encoded)
 }
 
 // sanitizeOpaqueToolOutputJSON 递归替换 JSON 内的 base64 等大块不透明字符串。

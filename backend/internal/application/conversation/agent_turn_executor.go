@@ -342,6 +342,7 @@ func (s *Service) ExecuteAgentTurn(ctx context.Context, input AgentTurnInput) (*
 		UserContent:             input.UserContent,
 		UserID:                  input.UserID,
 		AppendUserContent:       true,
+		ConversationID:          input.ConversationID,
 		ProjectSystemPrompt:     strings.TrimSpace(input.SystemPrompt),
 		HTMLVisualPromptEnabled: false,
 		DomainMessages:          input.DomainMessages,
@@ -523,7 +524,7 @@ func (s *Service) ExecuteAgentTurn(ctx context.Context, input AgentTurnInput) (*
 				generateErr = emitNonStreamingOutput(output)
 			}
 			if generateErr == nil {
-				usageAccumulator.finishCall(output != nil && output.Usage.InputTokens > 0)
+				usageAccumulator.finishCall(output != nil && hasObservedInputUsage(output.Usage))
 			}
 			platformtracing.RecordError(generationSpan, generateErr)
 			generationSpan.End()
@@ -619,7 +620,7 @@ func (s *Service) ExecuteAgentTurn(ctx context.Context, input AgentTurnInput) (*
 			}
 		}
 		if generateErr == nil {
-			usageAccumulator.finishCall((callStreamUsage.InputTokens > 0) || (output != nil && output.Usage.InputTokens > 0))
+			usageAccumulator.finishCall(hasObservedInputUsage(callStreamUsage) || (output != nil && hasObservedInputUsage(output.Usage)))
 		}
 		platformtracing.RecordError(generationSpan, generateErr)
 		generationSpan.End()

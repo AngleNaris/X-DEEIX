@@ -159,6 +159,8 @@ type MessageFeedbackRepository interface {
 
 // ConversationTraceRepository 封装附件、运行轨迹与工具调用能力。
 type ConversationTraceRepository interface {
+	SaveMessageToolHistory(ctx context.Context, userID, conversationID, messageID uint, runID, payload string) error
+	ListMessageToolHistories(ctx context.Context, userID uint, messageIDs []uint) (map[uint]string, error)
 	CreateAttachments(ctx context.Context, items []domainconversation.Attachment) error
 	CreateConversationRun(ctx context.Context, item *domainconversation.Run) error
 	// EnsureConversationRun inserts a mid-flight run row if absent (moderation / recovery).

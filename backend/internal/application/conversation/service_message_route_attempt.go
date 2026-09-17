@@ -13,6 +13,7 @@ type messageRoutePromptInput struct {
 	UserContent string
 	// UserID 用于解析系统提示词模板变量（{{language}}/{{username}}）。
 	UserID                   uint
+	ConversationID           uint
 	AppendUserContent        bool
 	ProjectSystemPrompt      string
 	RoleSystemPrompt         string
@@ -77,6 +78,11 @@ func (s *Service) buildMessageRoutePrompt(ctx context.Context, route *channel.Re
 			return PromptPlan{}, err
 		}
 	}
+	var replayErr error
+	historyMessages, replayErr = s.replayMessageToolHistory(ctx, input.UserID, input.ConversationID, routeMessages, historyMessages, input.ReasoningContentPassback)
+	if replayErr != nil {
+		return PromptPlan{}, replayErr
+	}
 	if len(historyMessages) == 0 || input.AppendUserContent {
 		historyMessages = append(historyMessages, llm.Message{Role: "user", Content: input.UserContent})
 	}
@@ -101,7 +107,7 @@ func (s *Service) buildMessageRoutePrompt(ctx context.Context, route *channel.Re
 		assembler.Add(ContextSlot{Kind: SlotPreference, Content: input.PreferencePrompt, Required: true})
 	}
 	baseMessages, _ := assembler.Assemble(historyMessages)
-	return buildPromptPlan(ctx, promptPlanInput{
+	plan := buildPromptPlan(ctx, promptPlanInput{
 		BaseMessages:      baseMessages,
 		StableAttachments: input.StableAttachments,
 		AttachmentImports: input.AttachmentImports,
@@ -110,5 +116,9 @@ func (s *Service) buildMessageRoutePrompt(ctx context.Context, route *channel.Re
 		ToolRuntime:       input.ToolRuntime,
 		Config:            input.Config,
 		StoreProvider:     s.storeProvider,
-	}), nil
+	})
+	// Include replayed tool payloads in the input budget; trim whole user turns, never half a tool pair.
+	plan.Messages, _ = trimToolFollowUpHistory(llm.GenerateInput{Tools: input.ToolRuntime.definitions}, plan.Messages, route.UpstreamModel, route.ModelCapabilitiesJSON)
+	plan.Trace.TotalTokenEstimate = estimatePromptTokens(plan.Messages)
+	return plan, nil
 }

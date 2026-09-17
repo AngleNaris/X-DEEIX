@@ -823,6 +823,8 @@ func (s *Service) sendMessageInternal(
 	}
 	routePromptInput := messageRoutePromptInput{
 		UserContent:             input.Content,
+		UserID:                  input.UserID,
+		ConversationID:          input.ConversationID,
 		ProjectSystemPrompt:     conversation.ProjectSystemPrompt,
 		RoleSystemPrompt:        conversation.RoleSystemPrompt,
 		HTMLVisualPromptEnabled: input.HTMLVisualPromptEnabled,
@@ -1094,7 +1096,7 @@ func (s *Service) sendMessageInternal(
 				}
 			}
 			if generateErr == nil {
-				usageAccumulator.finishCall(output != nil && output.Usage.InputTokens > 0)
+				usageAccumulator.finishCall(output != nil && hasObservedInputUsage(output.Usage))
 			}
 			return output, err
 		}
@@ -1255,7 +1257,7 @@ func (s *Service) sendMessageInternal(
 			}
 		}
 		if generateErr == nil {
-			usageAccumulator.finishCall((callStreamUsage.InputTokens > 0) || (output != nil && output.Usage.InputTokens > 0))
+			usageAccumulator.finishCall(hasObservedInputUsage(callStreamUsage) || (output != nil && hasObservedInputUsage(output.Usage)))
 		}
 		return output, generateErr
 	}
@@ -1544,6 +1546,11 @@ func (s *Service) sendMessageInternal(
 				credentialAttemptedForRun = true
 				credentialAttemptsForRun = mergeCredentialWrites(credentialAttemptsForRun, toolResult.CredentialAttempts)
 				credentialWritesForRun = mergeCredentialWrites(credentialWritesForRun, toolResult.CredentialWrites)
+				// Scrub earlier snapshots before any error path can leave this run.
+				if err := s.persistMessageToolHistory(toolCtx, input.UserID, input.ConversationID, assistantMessage.ID, runID, llmMessages, credentialAttemptsForRun, credentialWritesForRun); err != nil {
+					retErr = err
+					return nil, err
+				}
 				if scrubErr := s.scrubPersistedToolCalls(toolCtx, input.UserID, input.ConversationID, runID, false, credentialAttemptsForRun, credentialWritesForRun); scrubErr != nil {
 					retErr = scrubErr
 					return nil, scrubErr
@@ -1632,6 +1639,10 @@ func (s *Service) sendMessageInternal(
 			)
 			if toolResultsRebalanced {
 				sendSpan.SetAttributes(attribute.Bool("conversation.tool.results_rebalanced", true))
+			}
+			if err := s.persistMessageToolHistory(ctx, input.UserID, input.ConversationID, assistantMessage.ID, runID, llmMessages, credentialAttemptsForRun, credentialWritesForRun); err != nil {
+				retErr = err
+				return nil, err
 			}
 
 			if windowCallCount+1 >= maxLLMCalls {
@@ -1964,10 +1975,14 @@ func (s *Service) sendMessageInternal(
 		PlatformModelName: conversation.Model,
 		ContextConfig:     statefulContextConfig,
 		ContextState:      statefulContextState,
-		Messages:          buildNextStatefulPrefixMessages(fullLLMMessages, input.Content, assistantText, assistantReasoningContent),
+		Messages:          buildNextStatefulPrefixMessages(llmMessages, input.Content, assistantText, assistantReasoningContent),
 		Tools:             toolRuntime.definitions,
 		Options:           filteredOptions,
 	})
+	if err := s.persistMessageToolHistory(ctx, input.UserID, input.ConversationID, assistantMessage.ID, runID, llmMessages, credentialAttemptsForRun, credentialWritesForRun); err != nil {
+		retErr = err
+		return nil, err
+	}
 	responseIDForPersistence := upstreamOutput.ResponseID
 	// MCP 工具 schema 和凭据明文所在的 provider state 都不能泄漏到下一条消息。
 	if len(toolRuntime.mcpActivation.activeServerIDs()) > 0 || credentialAttemptedForRun {

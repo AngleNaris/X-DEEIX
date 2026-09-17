@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
@@ -171,11 +172,12 @@ func platformToolRegistry() map[string]platformToolEntry {
 				Name: "read_file",
 				Description: "Read the content of one of the user's uploaded files. " +
 					"Text files return raw content; other types return the extracted text. " +
-					"Output is truncated to 32KB per call; use offset to continue reading larger files.",
+					"Returns a UTF-8-safe page (default 8KB, max 32KB). While has_more is true, use next_offset to continue; lower max_bytes if the context budget is small.",
 				InputSchema: json.RawMessage(`{
 					"type":"object","properties":{
 						"file_id":{"type":"string","description":"file_id from list_files"},
-						"offset":{"type":"integer","description":"Byte offset to start reading from (default 0)"}
+						"offset":{"type":"integer","minimum":0,"description":"Byte offset from next_offset (default 0)"},
+						"max_bytes":{"type":"integer","minimum":4,"maximum":32768,"description":"Page size in bytes (default 8192)"}
 					},"required":["file_id"]
 				}`),
 			},
@@ -199,7 +201,7 @@ func platformToolRegistry() map[string]platformToolEntry {
 		"list_knowledge_base_contents": {
 			definition: llm.ToolDefinition{
 				Name:        "list_knowledge_base_contents",
-				Description: "List content files in a visible knowledge base, including processing and retrieval readiness. Use the returned content_id for update or delete operations on a personal knowledge base.",
+				Description: "List content files in a visible knowledge base, including processing and retrieval readiness. Use content_id with read_knowledge_base_content to read the document, or with update/delete on a personal knowledge base. This list contains metadata, not document text.",
 				InputSchema: json.RawMessage(`{
 					"type":"object","properties":{
 						"knowledge_base_id":{"type":"string","description":"Knowledge base id from list_knowledge_bases"},
@@ -209,6 +211,19 @@ func platformToolRegistry() map[string]platformToolEntry {
 			},
 			kind:    platformToolRead,
 			handler: (*Service).platformListKnowledgeBaseContents,
+		},
+		"read_knowledge_base_content": {
+			definition: llm.ToolDefinition{
+				Name:        "read_knowledge_base_content",
+				Description: "Read a document in a visible built-in or personal knowledge base. Obtain IDs from list_knowledge_bases and list_knowledge_base_contents. Returns original text or extracted document text in UTF-8-safe pages. While has_more is true, continue with next_offset; reduce max_bytes for small context budgets. Read all relevant content before replacing a document.",
+				InputSchema: json.RawMessage(`{"type":"object","properties":{
+					"knowledge_base_id":{"type":"string"},"content_id":{"type":"string"},
+					"offset":{"type":"integer","minimum":0,"description":"Byte offset from next_offset; default 0"},
+					"max_bytes":{"type":"integer","minimum":4,"maximum":32768,"description":"Page size; default 8192"}
+				},"required":["knowledge_base_id","content_id"]}`),
+			},
+			kind:    platformToolRead,
+			handler: (*Service).platformReadKnowledgeBaseContent,
 		},
 		"create_knowledge_base_content": {
 			definition: llm.ToolDefinition{
@@ -237,7 +252,7 @@ func platformToolRegistry() map[string]platformToolEntry {
 						"content_id":{"type":"string","description":"Content id from list_knowledge_base_contents"},
 						"title":{"type":"string","minLength":1,"maxLength":255,"description":"Optional new title or file name"},
 						"content":{"type":"string","maxLength":1048576,"description":"Optional full replacement Markdown content"}
-					},"required":["knowledge_base_id","content_id"],"anyOf":[{"required":["title"]},{"required":["content"]}]
+					},"required":["knowledge_base_id","content_id"],"oneOf":[{"required":["title"]},{"required":["content"]}]
 				}`),
 			},
 			kind:        platformToolWrite,
@@ -306,13 +321,16 @@ func platformToolRegistry() map[string]platformToolEntry {
 		},
 		"read_conversation": {
 			definition: llm.ToolDefinition{
-				Name: "read_conversation",
-				Description: "Read messages from one of the user's past conversations. " +
-					"Returns the most recent messages (default 20, max 50), each truncated to 4000 characters.",
+				Name:        "read_conversation",
+				Description: "Read conversation message bodies. Default returns the latest 20 messages (max 50), oldest first within each page. While has_more, pass next_before_id as before_id to read older pages. Message previews may be truncated: use message_id and next_offset as offset to continue that message until has_more is false. max_bytes limits text per page (default 8192); lower it if the context budget is small. parent_message_id identifies branches. Attachments and tool traces are not message bodies.",
 				InputSchema: json.RawMessage(`{
 					"type":"object","properties":{
 						"conversation_id":{"type":"integer","description":"Numeric conversation id from list_conversations"},
-						"limit":{"type":"integer","description":"Number of recent messages to read (default 20, max 50)"}
+						"limit":{"type":"integer","minimum":1,"maximum":50,"description":"Messages per page; default 20"},
+						"before_id":{"type":"integer","minimum":1,"description":"next_before_id from the previous page; omit for latest messages"},
+						"message_id":{"type":"integer","minimum":1,"description":"Read one message instead of a message list"},
+						"offset":{"type":"integer","minimum":0,"description":"Byte cursor for message_id, from next_offset; default 0"},
+						"max_bytes":{"type":"integer","minimum":4,"maximum":32768,"description":"Text bytes per page; default 8192"}
 					},"required":["conversation_id"]
 				}`),
 			},
@@ -1100,7 +1118,14 @@ func (s *Service) appendPlatformToolRuntime(ctx context.Context, result *selecte
 	if result.schemas == nil {
 		result.schemas = map[string]json.RawMessage{}
 	}
-	for name, entry := range platformToolRegistry() {
+	registry := platformToolRegistry()
+	names := make([]string, 0, len(registry))
+	for name := range registry {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		entry := registry[name]
 		isCredentialTool := strings.HasPrefix(name, "credential_")
 		if !toolsEnabled && !isCredentialTool {
 			continue
@@ -1266,7 +1291,7 @@ func platformToolGuidancePrompt() string {
 - Do not expose raw tool output or internal fields unless the user asks.
 - Memories: use save_memory only for stable facts about the user. Never save project, song, task, artifact, conversation, or other temporary work state. Before saving, call list_memories and update the existing entry with the same meaning instead of creating duplicates.
 - Memory categories: "preference" is injected into every message (use sparingly); "capability" and "experience" are recalled by relevance; "identity", "activity", and "context" must be read explicitly with list_memories when relevant. When the user asks to forget or change something remembered, use delete_memory / save_memory accordingly.
-- Knowledge bases: built-in knowledge bases are read-only. Only create, update, or delete content in a personal knowledge base returned by list_knowledge_bases; obtain content_id from list_knowledge_base_contents and never guess it.
+- Knowledge bases: built-in knowledge bases are read-only. Use list_knowledge_base_contents then read_knowledge_base_content to read documents, including built-in documents; metadata is not their content. Follow next_offset while has_more is true. Only create, update, or delete content in a personal knowledge base; read the original content before replacing it and never guess IDs.
 - JS execution: use execute_js to compute values on demand (random numbers, math, data transforms). The sandbox has no filesystem/network/process access; print results with console.log and rely on the returned stdout/result. For a script bundled in a skill, use execute_skill_script with the path from list_skills.
 - Credentials: the user may save named credentials (SSH connections, API keys). Call credential_list to see them (descriptions only). When a command/parameter needs a secret, reference it with the placeholder {{credential: name}} (e.g. sshpass -p '{{credential: vpsssh}}') — it is expanded to the real value at execution time and never appears in the conversation record, trace, or share snapshots. Never output secret values in your replies; if the user needs the raw value, point them to Settings → Credentials.
 - Secret references: during credential_create or credential_update, the runtime may replace a newly supplied secret with {{secret_ref:...}}. Treat that opaque reference as the exact original secret for the current run and pass it unchanged in the value field. Do not reveal, rewrite, parse, or use it outside credential_create/credential_update.

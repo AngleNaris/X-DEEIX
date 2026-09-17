@@ -133,6 +133,38 @@ func (s *Service) platformCreateKnowledgeBaseContent(ctx context.Context, call p
 	})
 }
 
+func (s *Service) platformReadKnowledgeBaseContent(ctx context.Context, call platformToolCallContext) (string, error) {
+	var args struct {
+		KnowledgeBaseID string `json:"knowledge_base_id"`
+		ContentID       string `json:"content_id"`
+		Offset          int    `json:"offset"`
+		MaxBytes        int    `json:"max_bytes"`
+	}
+	if err := decodePlatformArgs(call.Arguments, &args); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(args.KnowledgeBaseID) == "" || strings.TrimSpace(args.ContentID) == "" || args.Offset < 0 {
+		return "", fmt.Errorf("knowledge_base_id, content_id and a non-negative offset are required")
+	}
+	if s.knowledgeBaseTools == nil {
+		return "", fmt.Errorf("knowledge base service is unavailable")
+	}
+	// Knowledge-base visibility and membership must be checked before using the file owner's identity.
+	file, err := s.knowledgeBaseTools.OpenVisibleFileContent(ctx, call.UserID, args.KnowledgeBaseID, args.ContentID)
+	if err != nil {
+		return "", err
+	}
+	content, isText, more, err := s.readOpenedFileContent(ctx, file, args.Offset, platformReadPageBytes(args.MaxBytes))
+	if err != nil {
+		return "", err
+	}
+	return marshalPlatformResult(map[string]interface{}{
+		"knowledge_base_id": args.KnowledgeBaseID, "content_id": args.ContentID,
+		"content": content, "is_text": isText, "offset": args.Offset,
+		"next_offset": args.Offset + len(content), "has_more": more, "truncated": more,
+	})
+}
+
 func (s *Service) platformUpdateKnowledgeBaseContent(ctx context.Context, call platformToolCallContext) (string, error) {
 	var args struct {
 		KnowledgeBaseID string  `json:"knowledge_base_id"`

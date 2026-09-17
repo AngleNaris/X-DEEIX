@@ -1261,6 +1261,10 @@ func TestListMessagesBeforeIDReturnsPreviousWindowAscending(t *testing.T) {
 	if got[1].ParentPublicID != "msg_3" {
 		t.Fatalf("expected parent public id hydrated, got %q", got[1].ParentPublicID)
 	}
+	latest, total, err := repo.ListMessagesBeforeID(ctx, conversation.ID, 0, 2)
+	if err != nil || total != 5 || len(latest) != 2 || latest[0].PublicID != "msg_4" || latest[1].PublicID != "msg_5" {
+		t.Fatalf("latest window = %#v, total=%d, err=%v", latest, total, err)
+	}
 }
 
 func TestListMessageAncestorsUntilStopsAtBoundary(t *testing.T) {

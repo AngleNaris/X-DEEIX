@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode/utf8"
 
 	apppromptpreset "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/promptpreset"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/skill"
+	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 )
 
 // platformToolJSON 输出统一走 JSON 字符串，模型侧按工具结果解析。
@@ -67,8 +69,9 @@ func (s *Service) platformListFiles(ctx context.Context, call platformToolCallCo
 // 支持 offset 分页继续读取；单次输出上限 platformFileReadLimitBytes。
 func (s *Service) platformReadFile(ctx context.Context, call platformToolCallContext) (string, error) {
 	var args struct {
-		FileID string `json:"file_id"`
-		Offset int    `json:"offset"`
+		FileID   string `json:"file_id"`
+		Offset   int    `json:"offset"`
+		MaxBytes int    `json:"max_bytes"`
 	}
 	if err := decodePlatformArgs(call.Arguments, &args); err != nil {
 		return "", err
@@ -78,35 +81,36 @@ func (s *Service) platformReadFile(ctx context.Context, call platformToolCallCon
 		return "", fmt.Errorf("file_id is required")
 	}
 	if args.Offset < 0 {
-		args.Offset = 0
+		return "", fmt.Errorf("offset must be non-negative")
 	}
 	if s.uploadSvc == nil {
 		return "", fmt.Errorf("file service is unavailable")
 	}
 
-	content, isText, truncated, err := s.readUserFileContent(ctx, call.UserID, fileID, args.Offset)
+	result, err := s.uploadSvc.OpenFileContent(ctx, call.UserID, fileID)
+	if err != nil {
+		return "", err
+	}
+	content, isText, truncated, err := s.readOpenedFileContent(ctx, result, args.Offset, platformReadPageBytes(args.MaxBytes))
 	if err != nil {
 		return "", err
 	}
 	return marshalPlatformResult(map[string]interface{}{
-		"file_id":   fileID,
-		"is_text":   isText,
-		"content":   content,
-		"offset":    args.Offset,
-		"truncated": truncated,
+		"file_id":     fileID,
+		"is_text":     isText,
+		"content":     content,
+		"offset":      args.Offset,
+		"next_offset": args.Offset + len(content),
+		"has_more":    truncated,
+		"truncated":   truncated,
 	})
 }
 
-// readUserFileContent 读取用户文件内容（文本类读原文，非文本读提取文本），
-// 返回内容、是否原文、是否截断。单次最大 platformFileReadLimitBytes。
-func (s *Service) readUserFileContent(ctx context.Context, userID uint, fileID string, offset int) (string, bool, bool, error) {
-	result, err := s.uploadSvc.OpenFileContent(ctx, userID, fileID)
-	if err != nil {
-		return "", false, false, err
-	}
+// readOpenedFileContent accepts only an already-authorized file handle.
+func (s *Service) readOpenedFileContent(ctx context.Context, result *appupload.FileContentResult, offset, limit int) (string, bool, bool, error) {
 	defer func() { _ = result.Reader.Close() }()
 	if result.File.FileCategory == "text" {
-		buf := make([]byte, platformFileReadLimitBytes+1)
+		buf := make([]byte, limit+1)
 		if offset > 0 {
 			if _, skipErr := io.CopyN(io.Discard, result.Reader, int64(offset)); skipErr != nil && skipErr != io.EOF {
 				return "", true, false, skipErr
@@ -116,28 +120,41 @@ func (s *Service) readUserFileContent(ctx context.Context, userID uint, fileID s
 		if readErr != nil && readErr != io.EOF && readErr != io.ErrUnexpectedEOF {
 			return "", true, false, readErr
 		}
-		if n > platformFileReadLimitBytes {
-			return string(buf[:platformFileReadLimitBytes]), true, true, nil
-		}
-		return string(buf[:n]), true, false, nil
+		content, more, err := platformTextPage(string(buf[:n]), 0, limit)
+		return content, true, more, err
 	}
 
-	extract, extractErr := s.GetFileExtract(ctx, userID, fileID)
+	extract, extractErr := s.GetFileExtract(ctx, result.File.UserID, result.File.FileID)
 	if extractErr != nil {
 		return "", false, false, fmt.Errorf("file has no readable text: %w", extractErr)
 	}
-	text := extract.ExtractText
-	if offset > len(text) {
-		offset = len(text)
+	content, more, err := platformTextPage(extract.ExtractText, offset, limit)
+	return content, false, more, err
+}
+
+func platformReadPageBytes(requested int) int {
+	if requested <= 0 {
+		return 8 << 10
 	}
-	end := offset + platformFileReadLimitBytes
-	truncated := false
-	if end > len(text) {
-		end = len(text)
-	} else {
-		truncated = true
+	return max(4, min(requested, platformFileReadLimitBytes))
+}
+
+// Byte cursors remain exact while page boundaries never split UTF-8 characters.
+func platformTextPage(text string, offset, limit int) (string, bool, error) {
+	if offset < 0 {
+		return "", false, fmt.Errorf("offset must be non-negative")
 	}
-	return text[offset:end], false, truncated, nil
+	if offset >= len(text) {
+		return "", false, nil
+	}
+	if !utf8.RuneStart(text[offset]) {
+		return "", false, fmt.Errorf("offset must be a UTF-8 character boundary")
+	}
+	end := offset + min(limit, len(text)-offset)
+	for end < len(text) && end > offset && !utf8.RuneStart(text[end]) {
+		end--
+	}
+	return text[offset:end], end < len(text), nil
 }
 
 // platformReadSkillFile 读取技能包内文件（清单白名单文本文件）。
@@ -218,8 +235,8 @@ func (s *Service) platformListSkills(ctx context.Context, call platformToolCallC
 		summary = append(summary, entry)
 	}
 	return marshalPlatformResult(map[string]interface{}{
-		"total": total,
-		"page":  args.Page,
+		"total":  total,
+		"page":   args.Page,
 		"skills": summary,
 	})
 }
@@ -257,8 +274,8 @@ func (s *Service) platformListConversations(ctx context.Context, call platformTo
 		})
 	}
 	return marshalPlatformResult(map[string]interface{}{
-		"has_more": hasMore,
-		"page":     args.Page,
+		"has_more":      hasMore,
+		"page":          args.Page,
 		"conversations": summary,
 	})
 }
@@ -268,6 +285,10 @@ func (s *Service) platformReadConversation(ctx context.Context, call platformToo
 	var args struct {
 		ConversationID uint `json:"conversation_id"`
 		Limit          int  `json:"limit"`
+		BeforeID       uint `json:"before_id"`
+		MessageID      uint `json:"message_id"`
+		Offset         int  `json:"offset"`
+		MaxBytes       int  `json:"max_bytes"`
 	}
 	if err := decodePlatformArgs(call.Arguments, &args); err != nil {
 		return "", err
@@ -286,26 +307,63 @@ func (s *Service) platformReadConversation(ctx context.Context, call platformToo
 	if err != nil {
 		return "", err
 	}
-	messages, _, err := s.ListMessages(ctx, call.UserID, args.ConversationID, 1, limit)
+	pageBytes := platformReadPageBytes(args.MaxBytes)
+	if args.MessageID > 0 {
+		message, err := s.repo.GetMessageByID(ctx, args.ConversationID, args.MessageID)
+		if err != nil {
+			return "", err
+		}
+		content, more, err := platformTextPage(message.Content, args.Offset, pageBytes)
+		if err != nil {
+			return "", err
+		}
+		return marshalPlatformResult(map[string]interface{}{
+			"conversation_id": args.ConversationID, "message_id": message.ID, "role": message.Role,
+			"content": content, "offset": args.Offset, "next_offset": args.Offset + len(content),
+			"has_more": more, "truncated": more, "total_bytes": len(message.Content),
+		})
+	}
+	if args.Offset != 0 {
+		return "", fmt.Errorf("offset requires message_id")
+	}
+	// Ownership was checked above. Read directly to avoid hydrating UI traces and feedback.
+	messages, total, err := s.repo.ListMessagesBeforeID(ctx, args.ConversationID, args.BeforeID, limit+1)
 	if err != nil {
 		return "", err
 	}
+	hasMore := len(messages) > limit
+	if hasMore {
+		messages = messages[len(messages)-limit:]
+	}
 	type messageSummary struct {
-		Role    string `json:"role"`
-		Content string `json:"content"`
+		ID         uint   `json:"message_id"`
+		Role       string `json:"role"`
+		Content    string `json:"content"`
+		ParentID   *uint  `json:"parent_message_id,omitempty"`
+		Truncated  bool   `json:"truncated"`
+		NextOffset int    `json:"next_offset"`
+		TotalBytes int    `json:"total_bytes"`
 	}
 	summary := make([]messageSummary, 0, len(messages))
+	perMessageBytes := max(4, min(4000, pageBytes/max(1, len(messages))))
 	for _, msg := range messages {
-		content := strings.TrimSpace(msg.Content)
-		if len(content) > 4000 {
-			content = content[:4000] + "…[truncated]"
+		content, more, err := platformTextPage(msg.Content, 0, perMessageBytes)
+		if err != nil {
+			return "", err
 		}
-		summary = append(summary, messageSummary{Role: msg.Role, Content: content})
+		summary = append(summary, messageSummary{ID: msg.ID, Role: msg.Role, Content: content,
+			ParentID: msg.ParentMessageID, Truncated: more, NextOffset: len(content), TotalBytes: len(msg.Content)})
+	}
+	var nextBeforeID uint
+	if hasMore && len(messages) > 0 {
+		nextBeforeID = messages[0].ID
 	}
 	return marshalPlatformResult(map[string]interface{}{
 		"conversation_id": args.ConversationID,
+		"before_id":       args.BeforeID,
 		"title":           conversation.Title,
 		"messages":        summary,
+		"total":           total, "has_more": hasMore, "next_before_id": nextBeforeID,
 	})
 }
 

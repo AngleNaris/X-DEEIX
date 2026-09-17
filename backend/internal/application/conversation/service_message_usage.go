@@ -33,7 +33,7 @@ func (a *messageUsageAccumulator) addObservedUsage(delta llm.Usage) llm.Usage {
 		return a.observedUsage
 	}
 	a.observedUsage = addLLMUsage(a.observedUsage, delta)
-	if delta.InputTokens > 0 {
+	if hasObservedInputUsage(delta) {
 		a.currentCallEstimatedInputTokens = 0
 	}
 	return a.observedUsage
@@ -41,7 +41,7 @@ func (a *messageUsageAccumulator) addObservedUsage(delta llm.Usage) llm.Usage {
 
 func (a *messageUsageAccumulator) setObservedUsage(usage llm.Usage) {
 	a.observedUsage = usage
-	if usage.InputTokens > 0 {
+	if hasObservedInputUsage(usage) {
 		a.currentCallEstimatedInputTokens = 0
 	}
 }
@@ -56,13 +56,17 @@ func (a *messageUsageAccumulator) interruptedInputTokens() int64 {
 
 func (a *messageUsageAccumulator) effectiveInputTokens(promptFallback int64) int64 {
 	inputTokens := a.observedUsage.InputTokens + a.estimatedUnobservedInputTokens
-	if inputTokens > 0 {
+	if inputTokens > 0 || hasObservedInputUsage(a.observedUsage) {
 		return inputTokens
 	}
 	if promptFallback > 0 {
 		return promptFallback
 	}
 	return 0
+}
+
+func hasObservedInputUsage(usage llm.Usage) bool {
+	return usage.InputTokens > 0 || usage.CacheReadTokens > 0 || usage.CacheWriteTokens > 0
 }
 
 func resolveObservedOrEstimatedOutputTokens(observedTokens int64, assistantText string) int64 {
