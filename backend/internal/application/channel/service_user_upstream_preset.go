@@ -11,6 +11,16 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 )
 
+type userUpstreamPresetSetting struct {
+	ID                   string `json:"id"`
+	Name                 string `json:"name"`
+	BaseURL              string `json:"base_url"`
+	Compatible           string `json:"compatible"`
+	ProtocolDefaultsJSON string `json:"protocol_defaults"`
+	Enabled              bool   `json:"enabled"`
+	SortOrder            int    `json:"sort_order"`
+}
+
 const userUpstreamPresetsSettingKey = "user_upstream.presets"
 
 // ListUserUpstreamPresets returns all configured presets for administrators.
@@ -50,9 +60,13 @@ func (s *Service) loadUserUpstreamPresets(ctx context.Context) ([]domainchannel.
 	if strings.TrimSpace(item.Value) == "" {
 		return []domainchannel.UserUpstreamPreset{}, nil
 	}
-	var presets []domainchannel.UserUpstreamPreset
-	if err := json.Unmarshal([]byte(item.Value), &presets); err != nil {
+	var stored []userUpstreamPresetSetting
+	if err := json.Unmarshal([]byte(item.Value), &stored); err != nil {
 		return nil, ErrInvalidJSONConfig
+	}
+	presets := make([]domainchannel.UserUpstreamPreset, len(stored))
+	for i, item := range stored {
+		presets[i] = domainchannel.UserUpstreamPreset(item)
 	}
 	return presets, nil
 }
@@ -89,7 +103,11 @@ func (s *Service) ReplaceUserUpstreamPresets(ctx context.Context, presets []doma
 		}
 		preset.ProtocolDefaultsJSON = protocolDefaults
 	}
-	value, err := json.Marshal(presets)
+	stored := make([]userUpstreamPresetSetting, len(presets))
+	for i, item := range presets {
+		stored[i] = userUpstreamPresetSetting(item)
+	}
+	value, err := json.Marshal(stored)
 	if err != nil {
 		return err
 	}

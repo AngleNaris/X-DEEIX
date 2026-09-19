@@ -6,7 +6,6 @@ import (
 	"strconv"
 
 	appchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
 	"github.com/gin-gonic/gin"
@@ -91,9 +90,9 @@ func userRAGError(c *gin.Context, e error) {
 	switch {
 	case errors.Is(e, appchannel.ErrUserEmbeddingDisabled), errors.Is(e, appchannel.ErrUserRAGDisabled):
 		response.Error(c, http.StatusForbidden, e.Error())
-	case errors.Is(e, repository.ErrNotFound):
+	case errors.Is(e, appchannel.ErrNotFound):
 		response.Error(c, http.StatusNotFound, "resource not found")
-	case errors.Is(e, repository.ErrInvalidInput):
+	case errors.Is(e, appchannel.ErrInvalidInput):
 		response.Error(c, http.StatusBadRequest, "invalid embedding or RAG settings")
 	default:
 		response.Error(c, http.StatusInternalServerError, "embedding or RAG operation failed")

@@ -28,19 +28,19 @@ const (
 
 // MediaImageArtifactRetryAttachment 重试回收到的产物附件（供前端写入画布输出节点）。
 type MediaImageArtifactRetryAttachment struct {
-	FileID    string `json:"fileID"`
-	FileName  string `json:"fileName"`
-	MimeType  string `json:"mimeType"`
-	SizeBytes int64  `json:"sizeBytes"`
+	FileID    string
+	FileName  string
+	MimeType  string
+	SizeBytes int64
 }
 
 // MediaImageArtifactRetryResult 重试结果。
 type MediaImageArtifactRetryResult struct {
-	Status     MediaImageArtifactRetryStatus      `json:"status"`
-	Message    string                             `json:"message,omitempty"`
-	RunID      string                             `json:"runID"`
-	Index      int                                `json:"index"`
-	Attachment *MediaImageArtifactRetryAttachment `json:"attachment,omitempty"`
+	Status     MediaImageArtifactRetryStatus
+	Message    string
+	RunID      string
+	Index      int
+	Attachment *MediaImageArtifactRetryAttachment
 }
 
 // RetryMediaImageArtifact 对待保存的图像产物执行一次保存重试。

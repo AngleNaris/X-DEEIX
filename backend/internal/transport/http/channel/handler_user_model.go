@@ -7,7 +7,6 @@ import (
 
 	appchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
 	domainchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/channel"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
 	"github.com/gin-gonic/gin"
@@ -209,11 +208,11 @@ func (h *Handler) DeleteUserModel(c *gin.Context) {
 
 func userModelError(c *gin.Context, err error) {
 	switch {
-	case errors.Is(err, repository.ErrNotFound), errors.Is(err, repository.ErrModelNotFound), errors.Is(err, appchannel.ErrUpstreamNotFound):
+	case errors.Is(err, appchannel.ErrNotFound), errors.Is(err, appchannel.ErrModelNotFound), errors.Is(err, appchannel.ErrUpstreamNotFound):
 		response.Error(c, http.StatusNotFound, "user model or upstream not found")
-	case errors.Is(err, repository.ErrInvalidInput):
+	case errors.Is(err, appchannel.ErrInvalidInput):
 		response.Error(c, http.StatusBadRequest, "invalid user model")
-	case errors.Is(err, repository.ErrDuplicate):
+	case errors.Is(err, appchannel.ErrDuplicate):
 		response.Error(c, http.StatusConflict, "user model already exists")
 	default:
 		response.Error(c, http.StatusInternalServerError, "user model operation failed")

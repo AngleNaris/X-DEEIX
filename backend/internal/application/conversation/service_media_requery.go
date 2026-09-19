@@ -34,19 +34,19 @@ const (
 
 // MediaVideoRequeryAttachment 重查回收到的产物附件（供前端直接写入画布输出节点）。
 type MediaVideoRequeryAttachment struct {
-	FileID          string `json:"fileID"`
-	FileName        string `json:"fileName"`
-	MimeType        string `json:"mimeType"`
-	SizeBytes       int64  `json:"sizeBytes"`
-	DurationSeconds int64  `json:"durationSeconds,omitempty"`
+	FileID          string
+	FileName        string
+	MimeType        string
+	SizeBytes       int64
+	DurationSeconds int64
 }
 
 // MediaVideoRequeryResult 重查结果。
 type MediaVideoRequeryResult struct {
-	Status      MediaVideoRequeryStatus       `json:"status"`
-	Message     string                        `json:"message,omitempty"`
-	RunID       string                        `json:"runID"`
-	Attachments []MediaVideoRequeryAttachment `json:"attachments,omitempty"`
+	Status      MediaVideoRequeryStatus
+	Message     string
+	RunID       string
+	Attachments []MediaVideoRequeryAttachment
 }
 
 // requeryableVideoProtocols 支持任务重查的协议：具备异步任务 ID 的视频协议。

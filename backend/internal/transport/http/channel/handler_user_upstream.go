@@ -6,7 +6,6 @@ import (
 	"strconv"
 
 	appchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
 	"github.com/gin-gonic/gin"
@@ -86,10 +85,11 @@ func (h *Handler) CreateUserUpstream(c *gin.Context) {
 			response.Error(c, http.StatusForbidden, "user upstream quota exceeded")
 		case errors.Is(err, appchannel.ErrInvalidUpstreamName),
 			errors.Is(err, appchannel.ErrInvalidBaseURL),
+			errors.Is(err, appchannel.ErrInvalidUpstreamBaseURL),
 			errors.Is(err, appchannel.ErrAPIKeysRequired),
-			errors.Is(err, repository.ErrInvalidInput):
+			errors.Is(err, appchannel.ErrInvalidInput):
 			response.Error(c, http.StatusBadRequest, err.Error())
-		case errors.Is(err, repository.ErrDuplicate):
+		case errors.Is(err, appchannel.ErrDuplicate):
 			response.Error(c, http.StatusConflict, "user upstream name already exists")
 		default:
 			response.Error(c, http.StatusInternalServerError, "create user upstream failed")
@@ -97,7 +97,7 @@ func (h *Handler) CreateUserUpstream(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, toUserUpstreamResponse(*upstream))
+	c.JSON(http.StatusCreated, response.Envelope{ErrorMsg: "", Data: toUserUpstreamResponse(*upstream)})
 }
 
 // GetUserUpstream godoc
@@ -182,8 +182,12 @@ func (h *Handler) UpdateUserUpstream(c *gin.Context) {
 		switch {
 		case errors.Is(err, appchannel.ErrUserUpstreamDisabled):
 			response.Error(c, http.StatusForbidden, "user upstream feature is disabled")
-		case errors.Is(err, repository.ErrDuplicate):
+		case errors.Is(err, appchannel.ErrDuplicate):
 			response.Error(c, http.StatusConflict, "user upstream name already exists")
+		case errors.Is(err, appchannel.ErrInvalidUpstreamStatus), errors.Is(err, appchannel.ErrInvalidUpstreamBaseURL), errors.Is(err, appchannel.ErrInvalidUpstreamName), errors.Is(err, appchannel.ErrInvalidInput):
+			response.ErrorFrom(c, http.StatusBadRequest, err)
+		case errors.Is(err, appchannel.ErrNotFound), errors.Is(err, appchannel.ErrUpstreamNotFound):
+			response.Error(c, http.StatusNotFound, "user upstream not found")
 		default:
 			response.Error(c, http.StatusInternalServerError, "update user upstream failed")
 		}

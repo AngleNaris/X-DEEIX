@@ -6,7 +6,6 @@ import (
 
 	appchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
 	domainchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/channel"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/gin-gonic/gin"
 )
@@ -58,7 +57,7 @@ func (h *Handler) ReplaceUserUpstreamPresets(c *gin.Context) {
 			errors.Is(err, appchannel.ErrInvalidAdapter),
 			errors.Is(err, appchannel.ErrInvalidCompatible),
 			errors.Is(err, appchannel.ErrInvalidUpstreamBaseURL),
-			errors.Is(err, repository.ErrInvalidInput):
+			errors.Is(err, appchannel.ErrInvalidInput):
 			response.Error(c, http.StatusBadRequest, err.Error())
 		default:
 			response.ErrorFrom(c, http.StatusInternalServerError, err)

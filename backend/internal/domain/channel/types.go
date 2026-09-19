@@ -205,11 +205,11 @@ type LLMSetting struct {
 
 // UserUpstreamPreset 是管理员维护的用户自用渠道预设，不包含任何密钥。
 type UserUpstreamPreset struct {
-	ID                   string `json:"id"`
-	Name                 string `json:"name"`
-	BaseURL              string `json:"base_url"`
-	Compatible           string `json:"compatible"`
-	ProtocolDefaultsJSON string `json:"protocol_defaults"`
-	Enabled              bool   `json:"enabled"`
-	SortOrder            int    `json:"sort_order"`
+	ID                   string
+	Name                 string
+	BaseURL              string
+	Compatible           string
+	ProtocolDefaultsJSON string
+	Enabled              bool
+	SortOrder            int
 }
