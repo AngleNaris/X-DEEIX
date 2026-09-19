@@ -7,6 +7,7 @@ import (
 )
 
 var (
+	ErrProjectFileNotFound = repository.ErrNotFound
 	// ErrConversationNotFound 会话不存在或无权限。
 	ErrConversationNotFound = errors.New("conversation not found")
 	// ErrConversationEventNotFound 对话事件日志不存在。

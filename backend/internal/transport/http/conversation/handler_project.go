@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	appconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/conversation"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/filecontent"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
@@ -92,7 +91,7 @@ func (h *Handler) WriteProjectFile(c *gin.Context) {
 func (h *Handler) DeleteProjectFile(c *gin.Context) {
 	deleted, err := h.service.DeleteProjectFile(c.Request.Context(), middleware.MustUserID(c), c.Param("id"), c.Param("file_id"))
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) || errors.Is(err, appconversation.ErrConversationProjectNotFound) {
+		if errors.Is(err, appconversation.ErrProjectFileNotFound) || errors.Is(err, appconversation.ErrConversationProjectNotFound) {
 			response.Error(c, http.StatusNotFound, "project file not found")
 			return
 		}
