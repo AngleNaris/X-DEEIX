@@ -21,10 +21,16 @@ func Write(c *gin.Context, result *appupload.FileContentResult, public bool) err
 	c.Header("Content-Disposition", buildContentDisposition(result.File.FileName, isPassiveInlineContentType(contentType)))
 	if public {
 		c.Header("Cache-Control", "no-store")
+	} else if immutableGeneratedArtifact(result.File.Purpose) {
+		c.Header("Cache-Control", "private, max-age=31536000, immutable")
 	} else {
 		c.Header("Cache-Control", "private, max-age=60")
 	}
 	applySecurityHeaders(c, public)
+	if !public {
+		// 授权响应按凭证区分缓存条目，避免同浏览器多账号串缓存
+		c.Header("Vary", "Authorization")
+	}
 	if result.SizeBytes > 0 {
 		c.Header("Content-Length", strconv.FormatInt(result.SizeBytes, 10))
 	}
@@ -36,6 +42,17 @@ func Write(c *gin.Context, result *appupload.FileContentResult, public bool) err
 		return err
 	}
 	return nil
+}
+
+// immutableGeneratedArtifact 判断文件是否为生成产物：这类内容一经写入永不修改，
+// 后续生成/重查都会产生新的 fileID，因此可以放心长缓存。
+func immutableGeneratedArtifact(purpose string) bool {
+	switch strings.TrimSpace(purpose) {
+	case "generated_image", "generated_video":
+		return true
+	default:
+		return false
+	}
 }
 
 func buildContentDisposition(fileName string, inline bool) string {

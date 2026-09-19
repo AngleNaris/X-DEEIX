@@ -173,7 +173,6 @@ export async function fetchFileContent(accessToken: string, fileID: string): Pro
     {
       method: "GET",
       accessToken,
-      cache: "no-store",
     },
     true,
   );
