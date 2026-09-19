@@ -22,6 +22,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/objectstore"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/conv"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/filelink"
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
@@ -681,6 +682,13 @@ func (s *Service) resolveCapability(ctx context.Context) FileCapability {
 		return FileCapability{}
 	}
 	return s.hooks.ResolveCapability(ctx)
+}
+
+// BuildSignedFileContentURL 构建文件内容的限时签名访问 URL，供无登录态的上游按 URL 回源拉取；
+// 未配置公网 API 地址或签名密钥时返回空串，调用方应回退为内联传输文件字节。
+func (s *Service) BuildSignedFileContentURL(userID uint, fileID string) string {
+	cfg := s.snapshot()
+	return filelink.BuildContentURL(cfg.PublicAPIBaseURL, cfg.JWTSecret, userID, fileID, time.Now())
 }
 
 func (s *Service) initializeUploadedFile(ctx context.Context, file *domainconversation.FileObject) error {

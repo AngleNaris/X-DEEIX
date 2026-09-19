@@ -1,18 +1,17 @@
 "use client";
 
-import * as React from "react";
 import { useTranslations } from "next-intl";
+import * as React from "react";
 import { toast } from "sonner";
-
-import { canvasStore, type CanvasStoreLabels } from "@/features/canvas/model/canvas-store";
 import { parseCanvasState } from "@/features/canvas/model/canvas-persist";
+import { type CanvasStoreLabels, canvasStore } from "@/features/canvas/model/canvas-store";
 import {
   CANVAS_CLOUD_SETTING_KEY,
   type CanvasNodeReference,
 } from "@/features/canvas/model/canvas-types";
 import { uploadFile } from "@/shared/api/file";
-import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import { useAuthSession } from "@/shared/auth/auth-session-context";
+import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import {
   loadUserSettingsSnapshot,
   updateUserSettings,
@@ -49,18 +48,48 @@ export function useCanvasStore({
       statusQueued: tMediaStatus("mediaStatus.queued"),
       statusRunning: tMediaStatus("mediaStatus.running"),
       statusSavingArtifact: tMediaStatus("mediaStatus.savingArtifact"),
+      statusVideoQueued: tMediaStatus("mediaStatus.videoQueued"),
+      statusVideoRunning: tMediaStatus("mediaStatus.videoRunning"),
+      statusVideoSavingArtifact: tMediaStatus("mediaStatus.videoSavingArtifact"),
+      nodeProgress: t("nodeProgress"),
       generateFailed: t("generateFailed"),
       canceled: t("canceled"),
       moderationBlocked: t("moderationBlocked"),
       noImageOutput: t("noImageOutput"),
+      noVideoOutput: t("noVideoOutput"),
+      noVideoModels: t("noVideoModels"),
       editReferenceRequired: t("editReferenceRequired"),
       editUnsupported: t("editUnsupported"),
       imageUnsupported: t("generationUnsupported"),
+      videoUnsupported: t("videoUnsupported"),
+      videoTooManyReferences: t("videoTooManyReferences"),
       noImageModels: t("noImageModels"),
       missingPromptInput: t("missingPromptInput"),
+      videoPromptRequired: t("videoPromptRequired"),
+      nodeRequery: t("nodeRequery"),
+      requeryStarted: t("requeryStarted"),
+      requeryPending: t("requeryPending"),
+      requeryUnavailable: t("requeryUnavailable"),
+      requeryRecovered: t("requeryRecovered"),
+      artifactSavePending: t("artifactSavePending"),
+      artifactRetrySaving: t("artifactRetrySaving"),
+      artifactRetryFailed: t("artifactRetryFailed"),
+      artifactRecovered: t("artifactRecovered"),
+      artifactExpired: t("artifactExpired"),
     };
     canvasStore.setLabels(labels);
   }, [t, tMediaStatus]);
+
+  // 刷新恢复：对持久化了运行状态的节点走三层兜底（挂流 → 查消息 → 标记中断）
+  React.useEffect(() => {
+    if (!accessToken) {
+      return;
+    }
+    if (!canvasStore.getState().restored) {
+      canvasStore.restore();
+    }
+    void canvasStore.resumePendingGenerations();
+  }, [accessToken]);
 
   // 登录用户优先恢复云端状态；云端不可用或无有效状态时回退本地记录。
   React.useEffect(() => {
@@ -123,6 +152,8 @@ export function useCanvasStore({
           const cloudState = parseCanvasState(settings[CANVAS_CLOUD_SETTING_KEY] ?? "");
           if (cloudState) {
             canvasStore.seedPersistedState(cloudState);
+            // 云端快照采纳可能替换节点图：其中的运行中节点同样需要恢复
+            void canvasStore.resumePendingGenerations();
           }
         })
         .catch(() => {
@@ -160,9 +191,11 @@ export function useCanvasStore({
       const cloudState = parseCanvasState(settings[CANVAS_CLOUD_SETTING_KEY] ?? "");
       if (cloudState) {
         canvasStore.seedPersistedState(cloudState);
+        void canvasStore.resumePendingGenerations();
       } else {
         canvasStore.restore();
         canvasStore.pushCurrentStateToCloud();
+        void canvasStore.resumePendingGenerations();
       }
     });
 
@@ -185,9 +218,10 @@ export function useCanvasStore({
   const addGraphNode = React.useCallback((
     kind: Parameters<typeof canvasStore.addGraphNode>[0],
     point?: { x: number; y: number },
+    mediaType?: "image" | "video",
   ) => {
     // 调用方显式指定坐标时优先使用，否则回退到视口中心生成点
-    return canvasStore.addGraphNode(kind, point ?? spawnPointRef.current?.());
+    return canvasStore.addGraphNode(kind, point ?? spawnPointRef.current?.(), mediaType);
   }, []);
 
   const uploadReferenceFile = React.useCallback(
@@ -233,6 +267,8 @@ export function useCanvasStore({
     canUndo: state.canUndo,
     canRedo: state.canRedo,
     restoredModelName: state.restoredModelName,
+    restoredVideoModelName: state.restoredVideoModelName,
+    resumePendingGenerations: canvasStore.resumePendingGenerations,
     setViewportState: canvasStore.setViewport,
     resetViewport: canvasStore.resetViewport,
     fitViewport: canvasStore.fitViewport,
@@ -274,6 +310,8 @@ export function useCanvasStore({
     removeEdge: canvasStore.removeEdge,
     runGenerateNode: canvasStore.runGenerateNode,
     cancelNode: canvasStore.cancelNode,
+    requeryGenerateNode: canvasStore.requeryGenerateNode,
+    retryOutputNodeSave: canvasStore.retryOutputNodeSave,
     enqueueGraphEdit: canvasStore.enqueueGraphEdit,
     undo: canvasStore.undo,
     redo: canvasStore.redo,

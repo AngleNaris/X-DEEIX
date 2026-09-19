@@ -1,18 +1,8 @@
 "use client";
 
+import { Bot, Pencil, PlugZap, Plus, Route, Save, Server, Trash2 } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
-import { Bot, Plus, Trash2, Server, Route, Pencil, PlugZap, Save } from "lucide-react";
-
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
-import { Skeleton } from "@/components/ui/skeleton";
-import { SpinnerLabel } from "@/components/ui/spinner";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -23,13 +13,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -38,19 +23,35 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
-import { getUserSettings, patchUserSettings } from "@/shared/api/user-settings";
-import { COMPATIBLE_PRESETS } from "@/shared/lib/llm-presets";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
-  listUserUpstreams,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { SpinnerLabel } from "@/components/ui/spinner";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { getUserSettings, patchUserSettings } from "@/shared/api/user-settings";
+import {
   createUserUpstream,
-  updateUserUpstream,
   deleteUserUpstream,
+  listManagedUserModels,
+  listUserUpstreamPresets,
+  listUserUpstreams,
   testUserUpstream,
-  listUserModels,
-  type UserUpstreamDTO,
   type UserModelDTO,
+  type UserUpstreamDTO,
+  type UserUpstreamPresetDTO,
+  updateUserUpstream,
 } from "@/shared/api/user-upstream";
+import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
+import { COMPATIBLE_PRESETS } from "@/shared/lib/llm-presets";
 import { UserModelsDialog } from "./user-models-dialog";
 
 type UpstreamForm = {
@@ -108,6 +109,7 @@ function parseHeaders(raw: string): Record<string, string> | undefined {
 
 export function SettingsUpstreams() {
   const [items, setItems] = React.useState<UserUpstreamDTO[]>([]);
+  const [presets, setPresets] = React.useState<UserUpstreamPresetDTO[]>([]);
   const [models, setModels] = React.useState<UserModelDTO[]>([]);
   const [retrievalForm, setRetrievalForm] = React.useState<RetrievalForm>(EMPTY_RETRIEVAL_FORM);
   const [retrievalSaved, setRetrievalSaved] = React.useState<RetrievalForm>(EMPTY_RETRIEVAL_FORM);
@@ -120,6 +122,7 @@ export function SettingsUpstreams() {
   const [upstreamDialogOpen, setUpstreamDialogOpen] = React.useState(false);
   const [editingUpstream, setEditingUpstream] = React.useState<UserUpstreamDTO | null>(null);
   const [upstreamForm, setUpstreamForm] = React.useState<UpstreamForm>(EMPTY_UPSTREAM_FORM);
+  const [selectedPresetID, setSelectedPresetID] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
 
   const [modelsDialogOpen, setModelsDialogOpen] = React.useState(false);
@@ -131,10 +134,11 @@ export function SettingsUpstreams() {
     setLoading(true);
     try {
       const accessToken = await resolveAccessToken();
-      const [upstreams, userModels, userSettings] = await Promise.all([
+      const [upstreams, userModels, userSettings, upstreamPresets] = await Promise.all([
         listUserUpstreams(accessToken),
-        listUserModels(accessToken),
+        listManagedUserModels(accessToken),
         getUserSettings(accessToken),
+        listUserUpstreamPresets(accessToken),
       ]);
       const storedRetrieval = typeof window === "undefined" ? null : window.localStorage.getItem("deeix.user.rag.config");
       const parsedRetrieval = storedRetrieval ? JSON.parse(storedRetrieval) as Partial<RetrievalForm> : {};
@@ -147,11 +151,13 @@ export function SettingsUpstreams() {
       setRetrievalForm(nextRetrieval);
       setRetrievalSaved(nextRetrieval);
       setItems(upstreams);
+      setPresets(upstreamPresets);
       setModels(userModels);
       setDisabled(false);
     } catch {
       setDisabled(true);
       setItems([]);
+      setPresets([]);
       setModels([]);
     } finally {
       setLoading(false);
@@ -163,13 +169,25 @@ export function SettingsUpstreams() {
   }, [reload]);
 
   function openCreateUpstream() {
+    const preset = presets[0];
     setEditingUpstream(null);
-    setUpstreamForm(EMPTY_UPSTREAM_FORM);
+    setSelectedPresetID(preset?.id ?? "");
+    setUpstreamForm(
+      preset
+        ? {
+            ...EMPTY_UPSTREAM_FORM,
+            name: preset.name,
+            baseURL: preset.base_url,
+            compatible: preset.compatible,
+          }
+        : EMPTY_UPSTREAM_FORM,
+    );
     setUpstreamDialogOpen(true);
   }
 
   function openEditUpstream(item: UserUpstreamDTO) {
     setEditingUpstream(item);
+    setSelectedPresetID("");
     setUpstreamForm({
       name: item.name,
       baseURL: item.base_url,
@@ -183,8 +201,8 @@ export function SettingsUpstreams() {
   }
 
   async function handleSubmitUpstream() {
-    if (!upstreamForm.name.trim() || !upstreamForm.baseURL.trim()) {
-      toast.error("请填写渠道名称与接口地址");
+    if ((!selectedPresetID && (!upstreamForm.name.trim() || !upstreamForm.baseURL.trim())) || (!upstreamForm.compatible.trim())) {
+      toast.error("请填写渠道信息或选择预设");
       return;
     }
     if (!editingUpstream && !upstreamForm.apiKey.trim()) {
@@ -201,14 +219,23 @@ export function SettingsUpstreams() {
     setSubmitting(true);
     try {
       const accessToken = await resolveAccessToken();
-      const payload = {
-        name: upstreamForm.name.trim(),
-        base_url: upstreamForm.baseURL.trim(),
-        compatible: upstreamForm.compatible,
-        connect_timeout_ms: Number(upstreamForm.connectTimeoutMS) || 10000,
-        read_timeout_ms: Number(upstreamForm.readTimeoutMS) || 120000,
-        ...(headers ? { headers } : {}),
-      };
+      const payload = selectedPresetID
+        ? {
+            preset_id: selectedPresetID,
+            name: "",
+            base_url: "",
+            compatible: upstreamForm.compatible,
+            connect_timeout_ms: Number(upstreamForm.connectTimeoutMS) || 10000,
+            read_timeout_ms: Number(upstreamForm.readTimeoutMS) || 120000,
+          }
+        : {
+            name: upstreamForm.name.trim(),
+            base_url: upstreamForm.baseURL.trim(),
+            compatible: upstreamForm.compatible,
+            connect_timeout_ms: Number(upstreamForm.connectTimeoutMS) || 10000,
+            read_timeout_ms: Number(upstreamForm.readTimeoutMS) || 120000,
+            ...(headers ? { headers } : {}),
+          };
       if (editingUpstream) {
         await updateUserUpstream(accessToken, editingUpstream.id, {
           ...payload,
@@ -220,6 +247,7 @@ export function SettingsUpstreams() {
       } else {
         await createUserUpstream(accessToken, {
           ...payload,
+          ...(selectedPresetID ? { preset_id: selectedPresetID } : {}),
           api_keys: [{ key: upstreamForm.apiKey.trim(), status: "active" }],
         });
         toast.success("渠道已创建，请继续导入模型");
@@ -462,83 +490,128 @@ export function SettingsUpstreams() {
             <DialogDescription>密钥仅用于你自己的请求，加密存储</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="user-upstream-name">渠道名称</Label>
-              <Input
-                id="user-upstream-name"
-                value={upstreamForm.name}
-                onChange={(event) => setUpstreamForm((prev) => ({ ...prev, name: event.target.value }))}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="user-upstream-base-url">接口地址</Label>
-              <Input
-                id="user-upstream-base-url"
-                placeholder="https://api.openai.com/v1"
-                value={upstreamForm.baseURL}
-                onChange={(event) => setUpstreamForm((prev) => ({ ...prev, baseURL: event.target.value }))}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>兼容协议</Label>
-              <Select
-                value={upstreamForm.compatible}
-                onValueChange={(value) => setUpstreamForm((prev) => ({ ...prev, compatible: value }))}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {COMPATIBLE_PRESETS.map((preset) => (
-                    <SelectItem key={preset.value} value={preset.value}>
-                      {preset.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {!editingUpstream && presets.length > 0 ? (
+              <div className="space-y-1.5">
+                <Label>渠道预设</Label>
+                <Select
+                  value={selectedPresetID || "__custom__"}
+                  onValueChange={(value) => {
+                    if (value === "__custom__") {
+                      setSelectedPresetID("");
+                      setUpstreamForm(EMPTY_UPSTREAM_FORM);
+                      return;
+                    }
+                    setSelectedPresetID(value);
+                    const preset = presets.find((item) => item.id === value);
+                    if (preset) {
+                      setUpstreamForm((prev) => ({
+                        ...prev,
+                        name: preset.name,
+                        baseURL: preset.base_url,
+                        compatible: preset.compatible,
+                      }));
+                    }
+                  }}
+                >
+                  <SelectTrigger className="w-full"><SelectValue placeholder="选择渠道预设" /></SelectTrigger>
+                  <SelectContent>
+                    {presets.map((preset) => <SelectItem key={preset.id} value={preset.id}>{preset.name}</SelectItem>)}
+                    <SelectItem value="__custom__">自定义渠道</SelectItem>
+                  </SelectContent>
+                </Select>
+                {selectedPresetID ? (
+                  <div className="rounded-md border bg-muted/30 px-3 py-2">
+                    <p className="text-xs font-medium">{upstreamForm.name}</p>
+                    <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{upstreamForm.baseURL}</p>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {!selectedPresetID ? (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="user-upstream-name">渠道名称</Label>
+                  <Input
+                    id="user-upstream-name"
+                    value={upstreamForm.name}
+                    onChange={(event) => setUpstreamForm((prev) => ({ ...prev, name: event.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="user-upstream-base-url">接口地址</Label>
+                  <Input
+                    id="user-upstream-base-url"
+                    placeholder="https://api.openai.com/v1"
+                    value={upstreamForm.baseURL}
+                    onChange={(event) => setUpstreamForm((prev) => ({ ...prev, baseURL: event.target.value }))}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>兼容协议</Label>
+                  <Select
+                    value={upstreamForm.compatible}
+                    onValueChange={(value) => setUpstreamForm((prev) => ({ ...prev, compatible: value }))}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {COMPATIBLE_PRESETS.map((preset) => (
+                        <SelectItem key={preset.value} value={preset.value}>
+                          {preset.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            ) : null}
             <div className="space-y-1.5">
               <Label htmlFor="user-upstream-key">API 密钥</Label>
               <Input
                 id="user-upstream-key"
                 type="password"
-                placeholder={editingUpstream ? "留空表示不修改" : ""}
+                placeholder={editingUpstream ? "留空表示不修改" : "填写该服务商的 API 密钥"}
                 value={upstreamForm.apiKey}
                 onChange={(event) => setUpstreamForm((prev) => ({ ...prev, apiKey: event.target.value }))}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="user-upstream-connect">连接超时（毫秒）</Label>
-                <Input
-                  id="user-upstream-connect"
-                  type="number"
-                  min={1000}
-                  value={upstreamForm.connectTimeoutMS}
-                  onChange={(event) => setUpstreamForm((prev) => ({ ...prev, connectTimeoutMS: event.target.value }))}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="user-upstream-read">读取超时（毫秒）</Label>
-                <Input
-                  id="user-upstream-read"
-                  type="number"
-                  min={1000}
-                  value={upstreamForm.readTimeoutMS}
-                  onChange={(event) => setUpstreamForm((prev) => ({ ...prev, readTimeoutMS: event.target.value }))}
-                />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="user-upstream-headers">自定义请求头</Label>
-              <Textarea
-                id="user-upstream-headers"
-                rows={3}
-                placeholder='{"X-Custom-Header": "value"}'
-                value={upstreamForm.headers}
-                onChange={(event) => setUpstreamForm((prev) => ({ ...prev, headers: event.target.value }))}
-              />
-            </div>
+            {!selectedPresetID ? (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="user-upstream-connect">连接超时（毫秒）</Label>
+                    <Input
+                      id="user-upstream-connect"
+                      type="number"
+                      min={1000}
+                      value={upstreamForm.connectTimeoutMS}
+                      onChange={(event) => setUpstreamForm((prev) => ({ ...prev, connectTimeoutMS: event.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="user-upstream-read">读取超时（毫秒）</Label>
+                    <Input
+                      id="user-upstream-read"
+                      type="number"
+                      min={1000}
+                      value={upstreamForm.readTimeoutMS}
+                      onChange={(event) => setUpstreamForm((prev) => ({ ...prev, readTimeoutMS: event.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="user-upstream-headers">自定义请求头</Label>
+                  <Textarea
+                    id="user-upstream-headers"
+                    rows={3}
+                    placeholder='{"X-Custom-Header": "value"}'
+                    value={upstreamForm.headers}
+                    onChange={(event) => setUpstreamForm((prev) => ({ ...prev, headers: event.target.value }))}
+                  />
+                </div>
+              </>
+            ) : null}
           </div>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setUpstreamDialogOpen(false)}>

@@ -57,6 +57,8 @@ type routeResolver interface {
 	ResolveRoute(ctx context.Context, input channel.ResolveRouteInput) (*channel.ResolvedRoute, error)
 	MarkRouteFailure(ctx context.Context, route *channel.ResolvedRoute, cause error)
 	MarkRouteSuccess(ctx context.Context, route *channel.ResolvedRoute)
+	// BuildRouteForUpstream 按上游 ID 定点重建路由，供异步媒体任务重查使用。
+	BuildRouteForUpstream(ctx context.Context, upstreamID uint, protocol string, upstreamModel string) (*channel.ResolvedRoute, error)
 }
 
 // defaultRouteResolver 表示按任务类型解析默认路由的可选能力。

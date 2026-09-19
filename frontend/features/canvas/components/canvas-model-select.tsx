@@ -1,19 +1,18 @@
 "use client";
 
-import * as React from "react";
+import { Check, ChevronsUpDown, Sparkles } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { ChevronsUpDown, Check, Sparkles } from "lucide-react";
-
-import type { ChatModelOption } from "@/features/chat/types/chat-runtime";
-import { modelSupportsImageEditRoute } from "@/features/canvas/model/canvas-image-options";
-import { ModelIcon } from "@/shared/components/model-icon";
-import { resolveModelIconURL, resolveModelIdentity } from "@/shared/lib/model-identity";
+import * as React from "react";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { modelSupportsImageEditRoute, modelSupportsVideoRoute } from "@/features/canvas/model/canvas-image-options";
+import type { ChatModelOption } from "@/features/chat/types/chat-runtime";
 import { cn } from "@/lib/utils";
+import { ModelIcon } from "@/shared/components/model-icon";
+import { resolveModelIconURL, resolveModelIdentity } from "@/shared/lib/model-identity";
 
 export function CanvasModelSelect({
   imageModels,
@@ -69,7 +68,11 @@ export function CanvasModelSelect({
           <>
             <ModelIcon iconUrl={selectedIconURL} label={selectedModel.platformModelName} size={14} />
             <span className="max-w-40 truncate">{selectedModel.platformModelName}</span>
-            {modelSupportsImageEditRoute(selectedModel) ? (
+            {modelSupportsVideoRoute(selectedModel) ? (
+              <span className="hidden shrink-0 rounded-sm bg-violet-500/10 px-1 py-0.5 text-[10px] font-semibold text-violet-600 sm:inline dark:text-violet-300">
+                {t("modelVideoCapable")}
+              </span>
+            ) : modelSupportsImageEditRoute(selectedModel) ? (
               <span className="hidden shrink-0 rounded-sm bg-primary/10 px-1 py-0.5 text-[10px] font-semibold text-primary sm:inline">
                 {t("modelEditCapable")}
               </span>
@@ -113,7 +116,11 @@ export function CanvasModelSelect({
                   <span className="min-w-0 flex-1 truncate font-medium">
                     {model.platformModelName}
                   </span>
-                  {modelSupportsImageEditRoute(model) ? (
+                  {modelSupportsVideoRoute(model) ? (
+                    <span className="shrink-0 rounded-sm bg-violet-500/10 px-1 py-0.5 text-[10px] font-semibold text-violet-600 dark:text-violet-300">
+                      {t("modelVideoCapable")}
+                    </span>
+                  ) : modelSupportsImageEditRoute(model) ? (
                     <span className="shrink-0 rounded-sm bg-primary/10 px-1 py-0.5 text-[10px] font-semibold text-primary">
                       {t("modelEditCapable")}
                     </span>

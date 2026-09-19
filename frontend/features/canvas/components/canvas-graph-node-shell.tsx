@@ -1,10 +1,9 @@
 "use client";
 
-import * as React from "react";
 import { X } from "lucide-react";
-
+import * as React from "react";
+import { type GraphPortDefinition, graphNodePorts } from "@/features/canvas/model/canvas-graph";
 import type { GraphNodeKind } from "@/features/canvas/model/canvas-types";
-import { graphNodePorts, type GraphPortDefinition } from "@/features/canvas/model/canvas-graph";
 import { cn } from "@/lib/utils";
 
 // 各类节点的主题色：用于标题栏点缀、端口与选中态的层次区分
@@ -14,6 +13,9 @@ export const GRAPH_NODE_ACCENTS: Record<GraphNodeKind, { dot: string; soft: stri
   generate: { dot: "bg-amber-500", soft: "text-amber-500", ring: "ring-amber-500/40" },
   output: { dot: "bg-emerald-500", soft: "text-emerald-500", ring: "ring-emerald-500/40" },
 };
+
+// 视频节点的紫色主题变体：与图像节点在同一画布上可一眼区分
+export const VIDEO_NODE_ACCENT = { dot: "bg-violet-500", soft: "text-violet-500", ring: "ring-violet-500/40" };
 
 // 节点端口：出入方向决定左右位置，纵向偏移按端口定义固定
 function GraphPort({
@@ -66,6 +68,7 @@ export function GraphNodeShell({
   compatible,
   onRemove,
   removeLabel,
+  variant,
   children,
 }: {
   nodeID: string;
@@ -78,9 +81,11 @@ export function GraphNodeShell({
   compatible?: boolean;
   onRemove: () => void;
   removeLabel: string;
+  // "video" 时使用视频主题色变体
+  variant?: "video";
   children: React.ReactNode;
 }) {
-  const accent = GRAPH_NODE_ACCENTS[kind];
+  const accent = variant === "video" ? VIDEO_NODE_ACCENT : GRAPH_NODE_ACCENTS[kind];
   const ports = graphNodePorts(kind);
   return (
     <div

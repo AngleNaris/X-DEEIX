@@ -41,7 +41,7 @@ const (
 // 超时默认值。
 const (
 	defaultConnectTimeoutMS    = 10000  // TCP 建连超时 10s
-	defaultReadTimeoutMS       = 120000 // 非流式/首字节超时 120s（含 LLM 推理）
+	defaultReadTimeoutMS       = 180000 // 非流式/首字节超时 180s（含 LLM 推理）
 	defaultStreamIdleTimeoutMS = 60000  // 流式 chunk 间隔超时 60s
 	maxUpstreamBodyBytes       = 64 * 1024 * 1024
 )
@@ -105,6 +105,7 @@ const (
 
 // ContentPart 表示多模态消息中的一个内容片段。
 type ContentPart struct {
+ URL string
 	Kind         string        // text | image | video | file
 	Text         string        // Kind=text 或 Kind=file 时的文本内容
 	MimeType     string        // 媒体 MIME 类型（如 "image/jpeg"）
@@ -133,6 +134,8 @@ type Message struct {
 
 // GenerateInput 定义上游推理请求入参。
 type GenerateInput struct {
+ OnProgress func(percent int)
+ OnTaskStarted func(upstreamTaskID string)
 	RequestID              string
 	ConversationID         uint
 	ConversationPublicID   string
@@ -675,6 +678,7 @@ type GeneratedImage struct {
 
 // GeneratedVideo 表示视频生成接口返回的一个视频结果。
 type GeneratedVideo struct {
+ FallbackURL string
 	URL             string
 	B64JSON         string
 	MIMEType        string
@@ -871,6 +875,7 @@ func NewClient(outboundPolicy security.OutboundPolicy) *Client {
 		AdapterGoogleGenerateContent:  &geminiGenerateContentAdapter{client: client},
 		AdapterGoogleImageGeneration:  &geminiImageGenerationAdapter{client: client},
 		AdapterGeminiInteractions:     &geminiInteractionsAdapter{client: client},
+		AdapterOpenAIVideo: &openAIVideoAdapter{client: client},
 	}
 	return client
 }
@@ -944,6 +949,76 @@ func (c *Client) Generate(ctx context.Context, route RouteConfig, input Generate
 		output.Usage = normalizeDeepSeekUsage(output.Usage)
 	}
 	return output, err
+}
+
+// RetrieveVideoTask 回查一次异步媒体任务（如视频生成）的上游状态，不重新提交任务。
+// 仅支持具备异步任务 ID 的协议（openai_video_generations / xai_video / xai_video_extensions）。
+func (c *Client) RetrieveVideoTask(ctx context.Context, route RouteConfig, taskID string) (*VideoTaskRetrieval, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil, fmt.Errorf("empty upstream task id")
+	}
+	adapterName := NormalizeAdapter(route.Protocol)
+	var requestURL string
+	switch adapterName {
+	case AdapterOpenAIVideo:
+		requestURL = buildOpenAIVideoResultURL(route.BaseURL, taskID)
+	case AdapterXAIVideo, AdapterXAIVideoExtensions:
+		requestURL = buildXAIVideoResultURL(route.BaseURL, taskID)
+	default:
+		return nil, fmt.Errorf("%w: %s does not support async task requery", ErrUnsupportedAdapter, adapterName)
+	}
+	if requestURL == "" {
+		return nil, fmt.Errorf("invalid upstream task url")
+	}
+
+	requestCtx, cancel := context.WithTimeout(ctx, resolveReadTimeout(route.ReadTimeoutMS))
+	defer cancel()
+	req, err := newXAIMediaRequest(requestCtx, http.MethodGet, requestURL, nil, route)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.doRouteRequest(route, req)
+	if err != nil {
+		return nil, err
+	}
+	body, readErr := readUpstreamBody(resp.Body)
+	_ = resp.Body.Close()
+	debug := upstreamDebugSnapshot(req, nil, resp, body)
+	if readErr != nil {
+		return nil, readErr
+	}
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+		return nil, parseUpstreamError(resp.StatusCode, body, debug)
+	}
+
+	switch adapterName {
+	case AdapterOpenAIVideo:
+		output, pending, _, err := parseOpenAIVideoResult(body, taskID, 0, buildOpenAIVideoContentURL(route.BaseURL, taskID))
+		if err != nil {
+			// 上游明确上报 failed 时 parse 返回错误，这里转成 failed 状态而不是传输错误
+			if isOpenAIVideoTaskFailedError(err) {
+				return &VideoTaskRetrieval{Status: "failed", Message: err.Error()}, nil
+			}
+			return nil, err
+		}
+		if pending {
+			return &VideoTaskRetrieval{Status: "pending"}, nil
+		}
+		return &VideoTaskRetrieval{Status: "completed", Output: output}, nil
+	default: // xai
+		output, pending, err := parseXAIVideoResult(body, taskID, 0)
+		if err != nil {
+			if strings.HasPrefix(err.Error(), "xAI video generation failed:") {
+				return &VideoTaskRetrieval{Status: "failed", Message: err.Error()}, nil
+			}
+			return nil, err
+		}
+		if pending {
+			return &VideoTaskRetrieval{Status: "pending"}, nil
+		}
+		return &VideoTaskRetrieval{Status: "completed", Output: output}, nil
+	}
 }
 
 // GenerateStream 调用上游适配器并实时回传增量文本。
@@ -1882,4 +1957,10 @@ func firstNonZero(values ...int64) int64 {
 		}
 	}
 	return 0
+}
+
+type VideoTaskRetrieval struct {
+ Status string
+ Output *GenerateOutput
+ Message string
 }

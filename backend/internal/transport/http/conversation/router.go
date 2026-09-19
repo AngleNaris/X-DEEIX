@@ -57,6 +57,7 @@ func (m *Module) RegisterRoutes(authRequired *gin.RouterGroup) {
 	authRequired.GET("/context-artifacts/:id", m.Handler.GetContextArtifact)
 	authRequired.GET("/conversation-runs/:run_id/stream", m.Handler.ResumeMessageGenerationStream)
 	authRequired.POST("/conversation-runs/:run_id/cancel", m.Handler.CancelMessageGeneration)
+	authRequired.POST("/conversation-runs/:run_id/media/requery", m.Handler.RequeryMediaVideoRun)
 	authRequired.PATCH("/messages/:id", m.Handler.UpdateMessage)
 	authRequired.DELETE("/messages/:id", m.Handler.DeleteMessage)
 	authRequired.PUT("/messages/:id/feedback", m.Handler.SetMessageFeedback)
@@ -79,4 +80,5 @@ func (m *Module) RegisterPublicRoutes(public *gin.RouterGroup) {
 	public.GET("/shared-conversations/:share_id/files/:file_id/content", m.Handler.GetPublicSharedFileContent)
 	public.GET("/shared-files/:share_id", m.Handler.GetPublicFileShare)
 	public.GET("/shared-files/:share_id/content", m.Handler.GetPublicFileShareContent)
+	public.GET("/files/:file_id/signed-content", m.Handler.GetSignedFileContent)
 }

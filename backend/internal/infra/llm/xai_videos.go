@@ -16,6 +16,10 @@ import (
 
 const defaultXAIVideoPollInterval = time.Second
 
+// defaultXAIVideoPollTotalDuration 是视频任务提交+轮询的总预算：长耗时任务不应被
+// 渠道读超时（单请求语义）掐死，统一给 10 分钟，取消信号照常传播。
+const defaultXAIVideoPollTotalDuration = 10 * time.Minute
+
 // xAIVideoAdapter 实现 xAI 异步视频生成协议。
 type xAIVideoAdapter struct {
 	client *Client
@@ -91,10 +95,12 @@ func (c *Client) generateXAIVideo(ctx context.Context, route RouteConfig, input 
 		return nil, fmt.Errorf("invalid base url")
 	}
 
-	requestCtx, cancel := context.WithTimeout(ctx, resolveReadTimeout(route.ReadTimeoutMS))
+	requestCtx, cancel := context.WithTimeout(ctx, defaultXAIVideoPollTotalDuration)
 	defer cancel()
 
-	req, err := newXAIMediaRequest(requestCtx, http.MethodPost, requestURL, payload, route)
+	submitCtx, submitCancel := context.WithTimeout(requestCtx, resolveReadTimeout(route.ReadTimeoutMS))
+	defer submitCancel()
+	req, err := newXAIMediaRequest(submitCtx, http.MethodPost, requestURL, payload, route)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +124,9 @@ func (c *Client) generateXAIVideo(ctx context.Context, route RouteConfig, input 
 	requestID, err := parseXAIVideoRequestID(body)
 	if err != nil {
 		return nil, acceptedXAIVideoResponseError(err, upstreamDebugSnapshot(req, debugBody, resp, body))
+	}
+	if input.OnTaskStarted != nil {
+		input.OnTaskStarted(requestID)
 	}
 	return c.pollXAIVideoResult(requestCtx, route, requestID, generatedMediaDurationSeconds(requestBody["duration"]))
 }
@@ -190,7 +199,11 @@ func buildXAIVideoRequestBody(model string, input GenerateInput) (map[string]int
 		payload["prompt"] = strings.TrimSpace(prompt)
 	}
 	if len(images) == 1 {
-		payload["image"] = xAIVideoImagePayload(images[0])
+		if url := strings.TrimSpace(images[0].URL); url != "" {
+			payload["image"] = url
+		} else {
+			payload["image"] = xAIVideoImagePayload(images[0])
+		}
 	}
 	applyXAIVideoParams(payload, input.Options)
 
@@ -205,16 +218,21 @@ func buildXAIVideoRequestBody(model string, input GenerateInput) (map[string]int
 	return payload, debugBody, nil
 }
 
-func xAIVideoImagePayload(image ContentPart) map[string]interface{} {
+func xAIVideoImagePayload(image ContentPart) map[string]any {
+	return map[string]any{
+		"url": xAIVideoImageDataURL(image),
+	}
+}
+
+// xAIVideoImageDataURL 将图片输入编码为 data URL 字符串，供接受字符串图片的协议负载复用。
+func xAIVideoImageDataURL(image ContentPart) string {
 	mimeType := strings.ToLower(strings.TrimSpace(image.MimeType))
 	switch mimeType {
 	case "image/png", "image/webp", "image/jpeg":
 	default:
 		mimeType = "image/jpeg"
 	}
-	return map[string]interface{}{
-		"url": "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(image.Data),
-	}
+	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(image.Data)
 }
 
 func applyXAIVideoParams(payload map[string]interface{}, options map[string]interface{}) {
@@ -315,12 +333,15 @@ func (c *Client) pollXAIVideoResult(ctx context.Context, route RouteConfig, requ
 		return nil, MarkRequestAccepted(fmt.Errorf("invalid xAI video result url"))
 	}
 
+	perRequestTimeout := resolveReadTimeout(route.ReadTimeoutMS)
 	for {
-		req, err := newXAIMediaRequest(ctx, http.MethodGet, requestURL, nil, route)
+		reqCtx, reqCancel := context.WithTimeout(ctx, perRequestTimeout)
+		req, err := newXAIMediaRequest(reqCtx, http.MethodGet, requestURL, nil, route)
 		if err != nil {
 			return nil, MarkRequestAccepted(err)
 		}
 		resp, err := c.doRouteRequest(route, req)
+		reqCancel()
 		if err != nil {
 			return nil, MarkRequestAccepted(err)
 		}

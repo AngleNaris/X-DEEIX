@@ -115,6 +115,7 @@ type ModelResponse struct {
 	UpstreamNamesJSON  string `json:"upstreamNamesJSON"`
 	CreatedAt          string `json:"createdAt"`
 	UpdatedAt          string `json:"updatedAt"`
+	DefaultTaskTypes   []string `json:"defaultTaskTypes"`
 }
 
 func toModelResponse(v appchannel.ModelView) ModelResponse {
@@ -145,6 +146,7 @@ func toModelResponse(v appchannel.ModelView) ModelResponse {
 		UpstreamNamesJSON:  v.UpstreamNamesJSON,
 		CreatedAt:          v.CreatedAt,
 		UpdatedAt:          v.UpdatedAt,
+		DefaultTaskTypes:   v.DefaultTaskTypes,
 	}
 }
 

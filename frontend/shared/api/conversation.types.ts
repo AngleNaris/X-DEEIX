@@ -292,6 +292,8 @@ export type MediaImageRequest = {
 export type MediaVideoRequest = {
   prompt: string;
   model?: string;
+  modelScope?: "platform" | "user";
+  userModelID?: number;
   options?: ConversationOptions;
   clientRunID?: string;
   fileIDs?: string[];

@@ -1,33 +1,30 @@
 import { toast } from "sonner";
-
-import { parseAttachments } from "@/features/chat/model/chat-thread";
-import type { ChatModelOption } from "@/features/chat/types/chat-runtime";
 import {
   canvasChatImageSourceToFile,
   resolveCanvasChatImageSource,
 } from "@/features/canvas/model/canvas-chat-image";
 import {
+  canConnectGraphNodes,
+  type GraphConnectionAttempt,
+  gatherGraphGenerateInputs,
+  graphGenerateHasInputs,
+} from "@/features/canvas/model/canvas-graph";
+import {
   chatImagePromptSuffix,
   isChatRouteImageModel,
   mergeCanvasOptions,
-  resolveCanvasRoute,
+  modelCanvasMediaType,
+  resolveCanvasMediaRoute,
 } from "@/features/canvas/model/canvas-image-options";
 import {
   arrangeCanvasElements,
+  type CanvasArrangeAction,
   canvasElementIDsCarriedByFrame,
+  type FrameRefitElement,
   frameUnionBounds,
   refitFrameDecorations,
   stableFrameIDForElement,
-  type CanvasArrangeAction,
-  type FrameRefitElement,
 } from "@/features/canvas/model/canvas-interactions";
-import {
-  gatherGraphGenerateInputs,
-  graphGenerateHasInputs,
-  canConnectGraphNodes,
-  type GraphConnectionAttempt,
-} from "@/features/canvas/model/canvas-graph";
-import type { GraphNodeUpdate } from "@/features/canvas/model/canvas-types";
 import {
   clearCanvasState,
   loadCanvasState,
@@ -38,39 +35,52 @@ import {
   toPersistedEdges,
   toPersistedGraphNodes,
 } from "@/features/canvas/model/canvas-persist";
+import type { GraphNodeUpdate } from "@/features/canvas/model/canvas-types";
 import {
   CANVAS_MAX_SCALE,
   CANVAS_MIN_SCALE,
   type CanvasBookmark,
   type CanvasDecoration,
+  type CanvasMediaType,
   type CanvasNodeReference,
   type CanvasOperation,
   type CanvasPointerMode,
   type CanvasVersion,
   type CanvasViewport,
   type GenerateGraphNode,
+  GRAPH_NODE_SIZES,
   type GraphEdge,
   type GraphNode,
   type GraphNodeKind,
+  graphNodeSize,
   type ImageGraphNode,
   type OutputGraphNode,
+  type OutputPendingRetry,
   type PersistedCanvasPage,
   type PersistedCanvasState,
   type PromptGraphNode,
-  GRAPH_NODE_SIZES,
-  graphNodeSize,
 } from "@/features/canvas/model/canvas-types";
+import { parseAttachments } from "@/features/chat/model/chat-thread";
+import type { ChatModelOption } from "@/features/chat/types/chat-runtime";
+import type { ConversationStreamOptions } from "@/shared/api/conversation";
 import {
   createConversation,
   deleteConversation,
+  getConversationRunStatuses,
+  listMessages,
+  requeryMediaVideoRun,
+  resumeMessageGenerationStream,
+  retryMediaImageArtifact,
   streamImageEdit,
   streamImageGeneration,
   streamMessage,
+  streamVideoGeneration,
 } from "@/shared/api/conversation";
-import type { ConversationStreamOptions } from "@/shared/api/conversation";
 import type {
   ConversationOptions,
   MediaImageRequest,
+  MediaVideoRequest,
+  MessageDTO,
   SendMessageRequest,
 } from "@/shared/api/conversation.types";
 import { fetchFileContent, uploadFile } from "@/shared/api/file";
@@ -88,15 +98,34 @@ export type CanvasStoreLabels = {
   statusQueued: string;
   statusRunning: string;
   statusSavingArtifact: string;
+  statusVideoQueued: string;
+  statusVideoRunning: string;
+  statusVideoSavingArtifact: string;
+  nodeProgress: string;
   generateFailed: string;
   canceled: string;
   moderationBlocked: string;
   noImageOutput: string;
+  noVideoOutput: string;
+  noVideoModels: string;
   editReferenceRequired: string;
   editUnsupported: string;
   imageUnsupported: string;
+  videoUnsupported: string;
+  videoTooManyReferences: string;
   noImageModels: string;
   missingPromptInput: string;
+  videoPromptRequired: string;
+  nodeRequery: string;
+  requeryStarted: string;
+  requeryPending: string;
+  requeryUnavailable: string;
+  requeryRecovered: string;
+  artifactSavePending: string;
+  artifactRetrySaving: string;
+  artifactRetryFailed: string;
+  artifactRecovered: string;
+  artifactExpired: string;
 };
 
 export type CanvasState = {
@@ -115,6 +144,7 @@ export type CanvasState = {
   selectedDecorationIDs: string[];
   selectedEdgeIDs: string[];
   restoredModelName: string | null;
+  restoredVideoModelName: string | null;
   generatingCount: number;
   restored: boolean;
   canUndo: boolean;
@@ -137,6 +167,7 @@ const initialState: CanvasState = {
   selectedDecorationIDs: [],
   selectedEdgeIDs: [],
   restoredModelName: null,
+  restoredVideoModelName: null,
   generatingCount: 0,
   restored: false,
   canUndo: false,
@@ -147,6 +178,8 @@ let state: CanvasState = initialState;
 const listeners = new Set<() => void>();
 const objectURLCache = new Map<string, string>();
 const abortControllers = new Map<string, AbortController>();
+// 尚未注册 AbortController 的启动窗口（取 token/创建会话期间）收到的取消请求
+const startAborts = new Set<string>();
 let labels: CanvasStoreLabels | null = null;
 let modelCatalog: ChatModelOption[] = [];
 let persistTimer: number | null = null;
@@ -253,7 +286,8 @@ function getPersistedState(): PersistedCanvasState {
   return {
     version: 4, savedAt: Date.now(), projectName: state.projectName, activeCanvasID: state.activeCanvasID,
     canvases: allPages(state), versions: state.versions,
-    conversationID: null, selectedModelName: state.restoredModelName, pointerMode: state.pointerMode,
+    conversationID: null, selectedModelName: state.restoredModelName,
+    selectedVideoModelName: state.restoredVideoModelName, pointerMode: state.pointerMode,
     viewport: state.viewport, graphNodes: toPersistedGraphNodes(state.nodes), edges: toPersistedEdges(state.edges),
     decorations: state.decorations, bookmarks: state.bookmarks, imageOptions: {},
   };
@@ -309,14 +343,22 @@ function updateNode(nodeID: string, updater: (node: GraphNode) => GraphNode): vo
   }));
 }
 
-function resolveStatusLabel(status: string, fallback: string): string {
+function resolveStatusLabel(status: string, fallback: string, mediaType: CanvasMediaType = "image"): string {
+  const video = mediaType === "video";
   switch (status.trim()) {
     case "queued":
-      return labels?.statusQueued ?? fallback;
+      return (video ? labels?.statusVideoQueued : labels?.statusQueued) ?? fallback;
     case "running":
-      return labels?.statusRunning ?? fallback;
+      return (video ? labels?.statusVideoRunning : labels?.statusRunning) ?? fallback;
     case "saving_artifact":
-      return labels?.statusSavingArtifact ?? fallback;
+      return (video ? labels?.statusVideoSavingArtifact : labels?.statusSavingArtifact) ?? fallback;
+    case "progress": {
+      const percent = fallback.match(/(\d+)\s*%/)?.[1];
+      if (percent !== undefined && labels?.nodeProgress) {
+        return labels.nodeProgress.replaceAll("{percent}", percent);
+      }
+      return fallback.trim() || status.trim();
+    }
     default:
       return fallback.trim() || status.trim();
   }
@@ -335,6 +377,8 @@ function markGenerateNodeError(nodeID: string, errorMessage: string, errorDetail
       previewURL: undefined,
       errorMessage,
       errorDetail,
+      // 保留任务会话与运行 ID：错误节点可通过「重新查询」回查上游结果
+      progress: undefined,
     };
     return next;
   });
@@ -483,7 +527,9 @@ function restoreFromPersisted(persisted: PersistedCanvasState): void {
     projectName: persisted.projectName ?? "Untitled project", versions: persisted.versions ?? [],
     viewport: { ...(active?.viewport ?? persisted.viewport), scale: clampScale((active?.viewport ?? persisted.viewport).scale) },
     conversationID: null, pointerMode: persisted.pointerMode,
-    restoredModelName: persisted.selectedModelName, selectedNodeIDs: [], selectedDecorationIDs: [], selectedEdgeIDs: [],
+    restoredModelName: persisted.selectedModelName,
+    restoredVideoModelName: persisted.selectedVideoModelName ?? null,
+    selectedNodeIDs: [], selectedDecorationIDs: [], selectedEdgeIDs: [],
     restored: true, canUndo: false, canRedo: false,
   };
   lastPersistedRaw = stringifyCanvasState(persisted);
@@ -500,13 +546,26 @@ async function createTaskConversation(token: string): Promise<string> {
   return conversation.publicID;
 }
 
+// 生成结果落位条目：成功产物携带文件信息，保存待重试产物携带输出节点的重试引用。
+type GenerateResultEntry = {
+  fileID?: string;
+  fileName?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  durationSeconds?: number;
+  pendingRetry?: OutputPendingRetry;
+};
+
 // 将生成结果写入下游输出节点：优先复用已连接的输出节点（重复生成时覆盖写入同一节点，
-// 不再派生新节点），连接数量不足时才在生成节点右侧派生新的输出节点并连线
+// 不再派生新节点），连接数量不足时才在生成节点右侧派生新的输出节点并连线。
+// 视频结果只能写入视频/中立输出节点，图像结果只能写入图像/中立输出节点。
+// 保存待重试的产物同样落位为输出节点（error 态 + 重试引用），保存职责归输出节点自治。
 function writeGenerateResults(
   generateNode: GenerateGraphNode,
-  attachments: { fileID: string; fileName: string; mimeType: string; sizeBytes: number }[],
-  context: { prompt: string; modelName: string; durationMs: number },
+  entries: GenerateResultEntry[],
+  context: { prompt: string; modelName: string; durationMs?: number; durationSeconds?: number; savePendingLabel?: string },
 ): void {
+  const mediaType = generateNode.mediaType ?? "image";
   const size = GRAPH_NODE_SIZES.output;
   const generateSize = graphNodeSize(generateNode);
   setState((current) => {
@@ -514,24 +573,28 @@ function writeGenerateResults(
       .filter((edge) => edge.fromNodeID === generateNode.id && edge.toPort === "result")
       .map((edge) => current.nodes.find((node) => node.id === edge.toNodeID))
       .filter((node): node is OutputGraphNode => node?.kind === "output")
+      .filter((node) => !node.mediaType || node.mediaType === mediaType)
       .sort((a, b) => a.y - b.y || a.id.localeCompare(b.id));
 
     const nodes: GraphNode[] = [...current.nodes];
     const edges: GraphEdge[] = [...current.edges];
     const completedAt = Date.now();
 
-    // 按纵向顺序复用已连接的输出节点承接本次结果，不足时继续派生
-    const targets: OutputGraphNode[] = connectedTargets.slice(0, attachments.length);
+    // 只复用仍为空的输出节点承接本次结果；已有结果的输出节点保留原内容不覆盖，
+    // 不足的结果派生新的输出节点，让多次生成的结果在画布上共存。
+    const reusableTargets = connectedTargets.filter((node) => !(node.status === "done" && node.fileID));
+    const targets: OutputGraphNode[] = reusableTargets.slice(0, entries.length);
     const outputX = generateNode.x + generateSize.width + 96;
     const bottomY = connectedTargets.length > 0
       ? Math.max(...connectedTargets.map((target) => target.y + size.height))
       : generateNode.y + Math.round((generateSize.height - size.height) / 2);
     let nextSpawnY = bottomY;
     const spawned: OutputGraphNode[] = [];
-    while (targets.length < attachments.length) {
+    while (targets.length < entries.length) {
       const outputID = createNodeID();
       const outputNode: OutputGraphNode = {
-        id: outputID, kind: "output", x: outputX,
+        id: outputID, kind: "output", mediaType,
+        x: outputX,
         y: nextSpawnY,
         createdAt: Date.now(), status: "empty",
       };
@@ -566,17 +629,31 @@ function writeGenerateResults(
         return node;
       }
       const targetIndex = targets.findIndex((target) => target.id === node.id);
-      const attachment = attachments[targetIndex];
-      const next: OutputGraphNode = attachment
+      const entry = entries[targetIndex];
+      const next: OutputGraphNode = entry?.pendingRetry
+        // 保存待重试：生成已成功，本节点持有重试引用，保存失败不占用生成节点状态
         ? {
-          ...node, status: "done", fileID: attachment.fileID, fileName: attachment.fileName,
-          mimeType: attachment.mimeType, sizeBytes: attachment.sizeBytes, objectURL: undefined,
-          imageLoadFailed: false, prompt: context.prompt, model: context.modelName,
-          sourceGenerateID: generateNode.id, errorMessage: undefined, errorDetail: undefined,
-          completedAt, durationMs: context.durationMs,
+          ...node, status: "error", mediaType, fileID: undefined, fileName: undefined,
+          mimeType: undefined, sizeBytes: undefined, objectURL: undefined, imageLoadFailed: false,
+          prompt: context.prompt, model: context.modelName,
+          sourceGenerateID: generateNode.id,
+          errorMessage: context.savePendingLabel ?? "",
+          errorDetail: undefined, completedAt,
+          durationMs: context.durationMs, durationSeconds: undefined,
+          pendingRetry: entry.pendingRetry,
         }
-        // 输出节点多于结果时重置为空状态
-        : { ...node, status: "empty", fileID: undefined, fileName: undefined, mimeType: undefined, sizeBytes: undefined, objectURL: undefined, imageLoadFailed: false, errorMessage: undefined, errorDetail: undefined, sourceGenerateID: generateNode.id };
+        : entry
+          ? {
+            ...node, status: "done", mediaType, fileID: entry.fileID, fileName: entry.fileName,
+            mimeType: entry.mimeType, sizeBytes: entry.sizeBytes, objectURL: undefined,
+            imageLoadFailed: false, prompt: context.prompt, model: context.modelName,
+            sourceGenerateID: generateNode.id, errorMessage: undefined, errorDetail: undefined,
+            completedAt, durationMs: context.durationMs,
+            durationSeconds: entry.durationSeconds ?? context.durationSeconds,
+            pendingRetry: undefined,
+          }
+          // 输出节点多于结果时重置为空状态
+          : { ...node, status: "empty", fileID: undefined, fileName: undefined, mimeType: undefined, sizeBytes: undefined, objectURL: undefined, imageLoadFailed: false, errorMessage: undefined, errorDetail: undefined, sourceGenerateID: generateNode.id, pendingRetry: undefined };
       return next;
     });
 
@@ -598,6 +675,55 @@ function writeGenerateResults(
       void loadOutputImage(node.id, node.fileID);
     }
   }
+}
+
+// 流事件回调构建：媒体状态（含视频进度百分比）与图像增量预览在图像/视频两条链路间复用。
+function buildStreamOptions(
+  generateNodeID: string,
+  mediaType: CanvasMediaType,
+  signal: AbortSignal | undefined,
+  extra: {
+    onDelta?: (delta: string) => void;
+    onMediaArtifactPending?: ConversationStreamOptions["onMediaArtifactPending"];
+  } = {},
+): ConversationStreamOptions {
+  return {
+    signal,
+    onMediaArtifactPending: extra.onMediaArtifactPending,
+    onMediaStatus: (event) => {
+      const label = resolveStatusLabel(event.status, event.message, mediaType);
+      updateNode(generateNodeID, (node) => {
+        if (node.kind !== "generate" || (node.runStatus !== "pending" && node.runStatus !== "streaming")) {
+          return node;
+        }
+        const percent = event.status === "progress" ? Number(event.message.match(/(\d+)\s*%/)?.[1] ?? NaN) : NaN;
+        return {
+          ...node,
+          runStatus: "streaming",
+          statusLabel: label,
+          progress: Number.isFinite(percent) ? percent : node.progress,
+        };
+      });
+    },
+    onMediaImageDelta: (event) => {
+      const b64 = event.b64_json.trim();
+      if (!b64) {
+        return;
+      }
+      const source = b64.startsWith("data:")
+        ? b64
+        : `data:${event.mime_type?.trim() || "image/png"};base64,${b64}`;
+      updateNode(generateNodeID, (node) =>
+        node.kind === "generate" && (node.runStatus === "pending" || node.runStatus === "streaming")
+          ? { ...node, runStatus: "streaming", previewURL: source }
+          : node,
+      );
+    },
+    onDelta: extra.onDelta,
+    onModerationBlocked: () => {
+      markGenerateNodeError(generateNodeID, labels?.moderationBlocked ?? "");
+    },
+  };
 }
 
 const canvasStoreImplementation = {
@@ -642,12 +768,14 @@ const canvasStoreImplementation = {
     modelCatalog = models;
   },
 
-  resolveModel(modelName: string | null): ChatModelOption | null {
+  resolveModel(modelName: string | null, mediaType: CanvasMediaType = "image"): ChatModelOption | null {
     if (modelCatalog.length === 0) {
       return null;
     }
-    const exact = modelName ? modelCatalog.find((item) => item.platformModelName === modelName) : null;
-    return exact ?? modelCatalog[0];
+    const scoped = modelCatalog.filter((item) => modelCanvasMediaType(item) === mediaType);
+    const candidates = scoped.length > 0 ? scoped : modelCatalog;
+    const exact = modelName ? candidates.find((item) => item.platformModelName === modelName) : null;
+    return exact ?? candidates[0];
   },
 
   seedPersistedState(persisted: PersistedCanvasState): void {
@@ -989,19 +1117,24 @@ const canvasStoreImplementation = {
   },
 
   // 仅在模型确实选中时记录，避免目录加载完成前把持久化模型名清空
-  setModelName(modelName: string | null): void {
+  setModelName(modelName: string | null, mediaType: CanvasMediaType = "image"): void {
     if (!modelName) {
       return;
     }
-    setState((current) =>
-      current.restoredModelName === modelName ? current : { ...current, restoredModelName: modelName },
-    );
+    setState((current) => {
+      if (mediaType === "video") {
+        return current.restoredVideoModelName === modelName
+          ? current
+          : { ...current, restoredVideoModelName: modelName };
+      }
+      return current.restoredModelName === modelName ? current : { ...current, restoredModelName: modelName };
+    });
   },
 
   // -------------------------------------------------------------------------
   // 图节点 CRUD
   // -------------------------------------------------------------------------
-  addGraphNode(kind: GraphNodeKind, point?: { x: number; y: number }): string {
+  addGraphNode(kind: GraphNodeKind, point?: { x: number; y: number }, mediaType: CanvasMediaType = "image"): string {
     const nodeID = createNodeID();
     const position = nextNodePosition(kind, point);
     const base = { id: nodeID, kind, x: position.x, y: position.y, createdAt: Date.now() };
@@ -1012,11 +1145,13 @@ const canvasStoreImplementation = {
       node = { ...base, kind: "image", reference: null } satisfies ImageGraphNode;
     } else if (kind === "generate") {
       node = {
-        ...base, kind: "generate", model: state.restoredModelName, options: {}, resultCount: 1,
+        ...base, kind: "generate", mediaType,
+        model: mediaType === "video" ? state.restoredVideoModelName : state.restoredModelName,
+        options: {}, resultCount: 1,
         operation: "generate", maskReference: null, runStatus: "idle",
       } satisfies GenerateGraphNode;
     } else {
-      node = { ...base, kind: "output", status: "empty" } satisfies OutputGraphNode;
+      node = { ...base, kind: "output", mediaType: mediaType !== "image" ? mediaType : undefined, status: "empty" } satisfies OutputGraphNode;
     }
     recordGraphHistory(currentSnapshot());
     setState((current) => {
@@ -1238,7 +1373,13 @@ const canvasStoreImplementation = {
   },
 
   cancelNode(nodeID: string): void {
-    abortControllers.get(nodeID)?.abort();
+    const controller = abortControllers.get(nodeID);
+    if (controller) {
+      controller.abort();
+      return;
+    }
+    // 启动窗口期（尚未注册 controller）的取消：记录后由 runGenerateNode 在启动流前落地
+    startAborts.add(nodeID);
   },
 
   clearCanvas(): void {
@@ -1246,6 +1387,7 @@ const canvasStoreImplementation = {
       controller.abort();
     }
     abortControllers.clear();
+    startAborts.clear();
     for (const objectURL of objectURLCache.values()) {
       URL.revokeObjectURL(objectURL);
     }
@@ -1279,28 +1421,55 @@ const canvasStoreImplementation = {
     if (!generateNode || generateNode.kind !== "generate" || !labels) {
       return;
     }
-    if (abortControllers.has(generateNodeID)) {
+    // 防重入：除已注册的请求外，同步检查节点运行状态，
+    // 覆盖取 token/创建会话这段尚未注册 AbortController 的异步窗口
+    if (abortControllers.has(generateNodeID) || generateNode.runStatus === "pending" || generateNode.runStatus === "streaming") {
       return;
     }
+    startAborts.delete(generateNodeID);
+    // 点击即进入准备态：按钮立刻切换为「取消」，后续校验失败由 markGenerateNodeError 复位为错误态
+    updateNode(generateNodeID, (node) =>
+      node.kind === "generate"
+        ? {
+          ...node,
+          runStatus: "pending",
+          statusLabel: labels?.nodePreparing ?? "",
+          previewURL: undefined,
+          errorMessage: undefined,
+          errorDetail: undefined,
+          progress: undefined,
+        }
+        : node,
+    );
+    const mediaType = generateNode.mediaType ?? "image";
     const inputs = gatherGraphGenerateInputs(generateNodeID, state.nodes, state.edges);
-    const model = canvasStore.resolveModel(generateNode.model);
+    const model = canvasStore.resolveModel(generateNode.model, mediaType);
     if (!model) {
-      markGenerateNodeError(generateNodeID, labels.noImageModels);
-      toast.error(labels.noImageModels);
+      const message = mediaType === "video" ? (labels.noVideoModels ?? labels.noImageModels) : labels.noImageModels;
+      markGenerateNodeError(generateNodeID, message);
+      toast.error(message);
       return;
     }
-    if (!graphGenerateHasInputs(inputs)) {
-      markGenerateNodeError(generateNodeID, labels.missingPromptInput);
+    if (!graphGenerateHasInputs(inputs) || (mediaType === "video" && !inputs.prompt.trim())) {
+      // 视频生成的 prompt 为上游必填项，单独提示
+      const message = mediaType === "video" && !inputs.prompt.trim()
+        ? labels.videoPromptRequired
+        : labels.missingPromptInput;
+      markGenerateNodeError(generateNodeID, message);
       return;
     }
     const references = inputs.references;
-    const decision = resolveCanvasRoute(model, references.length > 0);
+    const decision = resolveCanvasMediaRoute(model, mediaType, references.length);
     if (decision.blockedReason) {
       const message = decision.blockedReason === "edit_reference_required"
         ? labels.editReferenceRequired
         : decision.blockedReason === "edit_unsupported"
           ? labels.editUnsupported
-          : labels.imageUnsupported;
+          : decision.blockedReason === "video_unsupported"
+            ? labels.videoUnsupported
+            : decision.blockedReason === "video_too_many_references"
+              ? labels.videoTooManyReferences
+              : labels.imageUnsupported;
       markGenerateNodeError(generateNodeID, message);
       toast.error(message);
       return;
@@ -1326,6 +1495,10 @@ const canvasStoreImplementation = {
       ? "edit"
       : generateNode.operation;
     const startedAt = Date.now();
+    // 每次运行生成唯一 runID：后端 conversation_runs 以 run_id 做唯一约束，
+    // 复用确定性 ID 会让同节点的第二次运行撞 409 already_exists。
+    // 恢复引擎读取节点上持久化的 runID，不依赖 ID 的确定性。
+    const runID = `canvas-${generateNodeID}-${startedAt.toString(36)}`;
 
     updateNode(generateNodeID, (node) => {
       if (node.kind !== "generate") {
@@ -1334,27 +1507,39 @@ const canvasStoreImplementation = {
       return {
         ...node,
         model: model.platformModelName,
+        mediaType,
         operation,
         runStatus: "pending",
         statusLabel: labels?.nodePreparing ?? "",
         previewURL: undefined,
         errorMessage: undefined,
         errorDetail: undefined,
+        conversationID,
+        runID,
+        progress: undefined,
       };
     });
+
+    // 准备期（取 token/创建会话）收到的取消：不启动生成流，直接落地为取消态
+    if (startAborts.has(generateNodeID)) {
+      startAborts.delete(generateNodeID);
+      markGenerateNodeError(generateNodeID, labels.canceled ?? "");
+      void deleteConversation(token, conversationID).catch(() => {});
+      return;
+    }
 
     await canvasStore.runGeneration({
       generateNodeID,
       prompt,
       model,
       options: generateNode.options,
-      resultCount: generateNode.resultCount,
+      resultCount: mediaType === "video" ? 1 : generateNode.resultCount,
       references,
       maskReference: generateNode.maskReference ?? null,
-      operation,
-      outputEdges: inputs.outputEdges,
+      mediaType,
       route: decision.route,
       conversationID,
+      runID,
       token,
       startedAt,
     });
@@ -1368,10 +1553,10 @@ const canvasStoreImplementation = {
     resultCount,
     references,
     maskReference,
-    operation,
-    outputEdges,
+    mediaType,
     route,
     conversationID,
+    runID,
     token,
     startedAt,
   }: {
@@ -1382,10 +1567,10 @@ const canvasStoreImplementation = {
     resultCount: number;
     references: CanvasNodeReference[];
     maskReference: CanvasNodeReference | null;
-    operation: CanvasOperation;
-    outputEdges: GraphEdge[];
-    route: "image_generation" | "image_edit" | "chat";
+    mediaType: CanvasMediaType;
+    route: "image_generation" | "image_edit" | "chat" | "video_generation";
     conversationID: string;
+    runID: string;
     token: string;
     startedAt: number;
   }): Promise<void> {
@@ -1395,31 +1580,9 @@ const canvasStoreImplementation = {
 
     const mergedOptions = mergeCanvasOptions(model.defaultOptions ?? {}, options);
     let assistantText = "";
-
-    const streamOptions: ConversationStreamOptions = {
-      signal: controller.signal,
-      onMediaStatus: (event) => {
-        const label = resolveStatusLabel(event.status, event.message);
-        updateNode(generateNodeID, (node) =>
-          node.kind === "generate" && (node.runStatus === "pending" || node.runStatus === "streaming")
-            ? { ...node, runStatus: "streaming", statusLabel: label }
-            : node,
-        );
-      },
-      onMediaImageDelta: (event) => {
-        const b64 = event.b64_json.trim();
-        if (!b64) {
-          return;
-        }
-        const source = b64.startsWith("data:")
-          ? b64
-          : `data:${event.mime_type?.trim() || "image/png"};base64,${b64}`;
-        updateNode(generateNodeID, (node) =>
-          node.kind === "generate" && (node.runStatus === "pending" || node.runStatus === "streaming")
-            ? { ...node, runStatus: "streaming", previewURL: source }
-            : node,
-        );
-      },
+    // 保存待重试产物收集：上游生成已成功但产物保存瞬时失败，落位为输出节点的重试引用
+    const pendingArtifacts: OutputPendingRetry[] = [];
+    const streamOptions = buildStreamOptions(generateNodeID, mediaType, controller.signal, {
       onDelta: (delta) => {
         assistantText += delta;
         updateNode(generateNodeID, (node) =>
@@ -1428,10 +1591,13 @@ const canvasStoreImplementation = {
             : node,
         );
       },
-      onModerationBlocked: () => {
-        markGenerateNodeError(generateNodeID, labels?.moderationBlocked ?? "");
+      onMediaArtifactPending: (event) => {
+        const eventMediaType = event.media_type === "video" ? "video" : "image";
+        for (const index of event.indexes ?? []) {
+          pendingArtifacts.push({ mediaType: eventMediaType, runID: event.run_id, index });
+        }
       },
-    };
+    });
 
     try {
       const completed = await (route === "chat"
@@ -1448,83 +1614,53 @@ const canvasStoreImplementation = {
             modelScope: model.modelScope === "user" ? "user" : undefined,
             userModelID: model.modelScope === "user" ? model.userModelID : undefined,
             options: Object.keys(mergedOptions).length > 0 ? mergedOptions : undefined,
-            clientRunID: `canvas-${generateNodeID}`,
+            clientRunID: runID,
             fileIDs: references.length > 0 ? references.map((item) => item.fileID) : undefined,
           } satisfies SendMessageRequest,
           streamOptions,
         )
-        : (() => {
-          const payload: MediaImageRequest = {
-            prompt,
-            model: model.platformModelName,
-            modelScope: model.modelScope === "user" ? "user" : undefined,
-            userModelID: model.modelScope === "user" ? model.userModelID : undefined,
-            options: Object.keys(mergedOptions).length > 0 ? mergedOptions : undefined,
-            clientRunID: `canvas-${generateNodeID}`,
-            fileIDs: references.length > 0 ? references.map((item) => item.fileID) : undefined,
-            maskFileID: maskReference?.fileID,
-          };
-          return route === "image_edit"
-            ? streamImageEdit(token, conversationID, payload, streamOptions)
-            : streamImageGeneration(token, conversationID, payload, streamOptions);
-        })());
+        : route === "video_generation"
+          ? streamVideoGeneration(
+            token,
+            conversationID,
+            {
+              prompt,
+              model: model.platformModelName,
+              modelScope: model.modelScope === "user" ? "user" : undefined,
+              userModelID: model.modelScope === "user" ? model.userModelID : undefined,
+              options: Object.keys(mergedOptions).length > 0 ? mergedOptions : undefined,
+              clientRunID: runID,
+              fileIDs: references.length > 0 ? references.map((item) => item.fileID) : undefined,
+            } satisfies MediaVideoRequest,
+            streamOptions,
+          )
+          : (() => {
+            const payload: MediaImageRequest = {
+              prompt,
+              model: model.platformModelName,
+              modelScope: model.modelScope === "user" ? "user" : undefined,
+              userModelID: model.modelScope === "user" ? model.userModelID : undefined,
+              options: Object.keys(mergedOptions).length > 0 ? mergedOptions : undefined,
+              clientRunID: runID,
+              fileIDs: references.length > 0 ? references.map((item) => item.fileID) : undefined,
+              maskFileID: maskReference?.fileID,
+            };
+            return route === "image_edit"
+              ? streamImageEdit(token, conversationID, payload, streamOptions)
+              : streamImageGeneration(token, conversationID, payload, streamOptions);
+          })());
 
-      updateNode(generateNodeID, (node) =>
-        node.kind === "generate" && (node.runStatus === "pending" || node.runStatus === "streaming")
-          ? { ...node, runStatus: "streaming", statusLabel: labels?.nodeSavingLocal ?? "" }
-          : node,
-      );
-
-      const attachments = parseAttachments(completed.assistantMessage.attachments);
-      const imageAttachments = attachments.filter((item) => item.kind === "image");
-      const rawResponse = completed.assistantMessage.content?.trim() || assistantText.trim();
-
-      // 部分上游会在任意生成路由中把图片放进 Markdown 文本，而不是 attachments。
-      // 提取 URL / Data URL / Base64 后上传到文件服务，使输出节点仍可持久化、下载和继续编辑。
-      if (imageAttachments.length === 0 && rawResponse) {
-        const imageSource = resolveCanvasChatImageSource(rawResponse);
-        if (imageSource) {
-          const sourceFile = await canvasChatImageSourceToFile(imageSource, controller.signal);
-          const uploaded = await uploadFile(token, sourceFile, { purpose: "generated_image" });
-          imageAttachments.push({
-            fileID: uploaded.file.fileID,
-            fileName: uploaded.file.fileName,
-            mimeType: uploaded.file.mimeType,
-            sizeBytes: uploaded.file.sizeBytes,
-            kind: "image",
-          });
-        }
-      }
-
-      const sourceNode = state.nodes.find((node) => node.id === generateNodeID);
-      if (!sourceNode || sourceNode.kind !== "generate") {
-        return;
-      }
-
-      if (imageAttachments.length === 0) {
-        markGenerateNodeError(
-          generateNodeID,
-          completed.assistantMessage.errorMessage?.trim() || labels?.noImageOutput || "",
-          rawResponse || undefined,
-        );
-        return;
-      }
-
-      // 生成数量约束：仅保留前 N 张结果
-      const limitedAttachments = imageAttachments.slice(0, Math.max(1, resultCount));
-      const durationMs = Math.max(0, Date.now() - startedAt);
-      writeGenerateResults(sourceNode, limitedAttachments, {
+      await canvasStore.completeGeneration({
+        generateNodeID,
         prompt,
         modelName: model.platformModelName,
-        durationMs,
+        resultCount,
+        mediaType,
+        completed,
+        assistantText,
+        startedAt,
+        pendingArtifacts,
       });
-
-      // 运行完成：生成节点回到空闲态
-      updateNode(generateNodeID, (node) =>
-        node.kind === "generate"
-          ? { ...node, runStatus: "idle", statusLabel: undefined, previewURL: undefined, errorMessage: undefined, errorDetail: undefined }
-          : node,
-      );
     } catch (error) {
       if (controller.signal.aborted) {
         markGenerateNodeError(generateNodeID, labels?.canceled ?? "");
@@ -1549,6 +1685,427 @@ const canvasStoreImplementation = {
       } catch {
         // 会话清理失败不影响已经完成的画布节点。
       }
+    }
+  },
+
+  // 生成完成的收尾：解析结果附件、写入输出节点并复位生成节点。
+  // 正常运行与刷新恢复共用，保证两条路径的产物落位一致。
+  // pendingArtifacts 为保存待重试产物：生成已成功，落位为输出节点的重试引用。
+  async completeGeneration({
+    generateNodeID,
+    prompt,
+    modelName,
+    resultCount,
+    mediaType,
+    completed,
+    assistantText = "",
+    startedAt,
+    pendingArtifacts = [],
+  }: {
+    generateNodeID: string;
+    prompt: string;
+    modelName: string;
+    resultCount: number;
+    mediaType: CanvasMediaType;
+    completed: { assistantMessage: MessageDTO };
+    assistantText?: string;
+    startedAt?: number;
+    pendingArtifacts?: OutputPendingRetry[];
+  }): Promise<void> {
+    updateNode(generateNodeID, (node) =>
+      node.kind === "generate" && (node.runStatus === "pending" || node.runStatus === "streaming")
+        ? { ...node, runStatus: "streaming", statusLabel: labels?.nodeSavingLocal ?? "" }
+        : node,
+    );
+
+    const attachments = parseAttachments(completed.assistantMessage.attachments);
+    const mediaAttachments = mediaType === "video"
+      ? attachments.filter((item) => item.mimeType.startsWith("video/"))
+      : attachments.filter((item) => item.kind === "image");
+    const rawResponse = completed.assistantMessage.content?.trim() || assistantText.trim();
+
+    // 部分图像上游会把图片放进 Markdown 文本，而不是 attachments。
+    // 提取 URL / Data URL / Base64 后上传到文件服务，使输出节点仍可持久化、下载和继续编辑。
+    if (mediaType === "image" && mediaAttachments.length === 0 && rawResponse) {
+      const imageSource = resolveCanvasChatImageSource(rawResponse);
+      if (imageSource) {
+        const token = await resolveAccessToken();
+        if (!token) {
+          return;
+        }
+        const sourceFile = await canvasChatImageSourceToFile(imageSource, new AbortController().signal);
+        const uploaded = await uploadFile(token, sourceFile, { purpose: "generated_image" });
+        mediaAttachments.push({
+          fileID: uploaded.file.fileID,
+          fileName: uploaded.file.fileName,
+          mimeType: uploaded.file.mimeType,
+          detectedMime: "",
+          fileCategory: "",
+          sizeBytes: uploaded.file.sizeBytes,
+          durationSeconds: undefined,
+          kind: "image",
+          processingStatus: "",
+          processingReady: false,
+          processingErrorCode: "",
+          processingErrorMessage: "",
+        });
+      }
+    }
+
+    const sourceNode = state.nodes.find((node) => node.id === generateNodeID);
+    if (!sourceNode || sourceNode.kind !== "generate") {
+      return;
+    }
+
+    if (mediaAttachments.length === 0 && pendingArtifacts.length === 0) {
+      const emptyLabel = mediaType === "video" ? (labels?.noVideoOutput ?? labels?.noImageOutput) : labels?.noImageOutput;
+      markGenerateNodeError(
+        generateNodeID,
+        completed.assistantMessage.errorMessage?.trim() || emptyLabel || "",
+        rawResponse || undefined,
+      );
+      return;
+    }
+
+    // 生成数量约束：仅保留前 N 个结果（视频固定 1 个）；保存待重试产物不受限（上游已生成）
+    const limitedAttachments = mediaAttachments.slice(0, Math.max(1, resultCount));
+    const durationMs = startedAt ? Math.max(0, Date.now() - startedAt) : undefined;
+    const videoDuration = mediaType === "video"
+      ? limitedAttachments.find((item) => item.durationSeconds && item.durationSeconds > 0)?.durationSeconds
+      : undefined;
+    const entries: GenerateResultEntry[] = limitedAttachments.map((attachment) => ({
+      fileID: attachment.fileID,
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      durationSeconds: attachment.durationSeconds,
+    }));
+    for (const pending of pendingArtifacts) {
+      entries.push({ pendingRetry: pending });
+    }
+    writeGenerateResults(sourceNode, entries, {
+      prompt,
+      modelName,
+      durationMs,
+      durationSeconds: videoDuration,
+      savePendingLabel: labels?.artifactSavePending,
+    });
+
+    // 运行完成：生成节点回到空闲态
+    updateNode(generateNodeID, (node) =>
+      node.kind === "generate"
+        ? {
+          ...node,
+          runStatus: "idle",
+          statusLabel: undefined,
+          previewURL: undefined,
+          errorMessage: undefined,
+          errorDetail: undefined,
+          conversationID: undefined,
+          runID: undefined,
+          progress: undefined,
+        }
+        : node,
+    );
+  },
+
+  // -------------------------------------------------------------------------
+  // 刷新恢复引擎（三层兜底）：
+  // ① 批量查询运行状态后对运行中的节点挂断点续传流；
+  // ② 挂流不可得（任务已结束/事件缓存释放）时查任务会话消息附件捞回结果；
+  // ③ 均不可得才标记错误。
+  // -------------------------------------------------------------------------
+  async resumePendingGenerations(): Promise<void> {
+    const pendingNodes = state.nodes.filter(
+      (node): node is GenerateGraphNode =>
+        node.kind === "generate" && node.runStatus === "pending" && Boolean(node.runID) && Boolean(node.conversationID),
+    );
+    if (pendingNodes.length === 0) {
+      return;
+    }
+    const token = await resolveAccessToken();
+    if (!token) {
+      return;
+    }
+    let statuses: Map<string, string> | null = null;
+    try {
+      const rows = await getConversationRunStatuses(
+        token,
+        pendingNodes.map((node) => node.runID ?? "").filter(Boolean),
+      );
+      statuses = new Map(rows.map((row) => [row.runID, row.status]));
+    } catch {
+      // 状态查询失败不阻断：挂流本身会给出结论
+    }
+    for (const node of pendingNodes) {
+      if (abortControllers.has(node.id)) {
+        continue;
+      }
+      const status = node.runID && statuses ? statuses.get(node.runID)?.trim().toLowerCase() : undefined;
+      if (status === "running" || status === "pending" || status === undefined || status === "") {
+        await canvasStore.resumeGenerateNode(node.id, token);
+      } else {
+        await canvasStore.restoreGenerateNodeFromConversation(node.id, token);
+      }
+    }
+  },
+
+  // 第①层：按运行 ID 重新订阅生成流，收完剩余事件后走统一收尾
+  async resumeGenerateNode(generateNodeID: string, token: string): Promise<void> {
+    const node = state.nodes.find((item) => item.id === generateNodeID);
+    if (!node || node.kind !== "generate" || !node.runID || !node.conversationID) {
+      return;
+    }
+    const mediaType = node.mediaType ?? "image";
+    const controller = new AbortController();
+    abortControllers.set(generateNodeID, controller);
+    setGeneratingDelta(1);
+    try {
+      const completed = await resumeMessageGenerationStream(token, node.runID, {
+        signal: controller.signal,
+        ...buildStreamOptions(generateNodeID, mediaType, controller.signal, {}),
+      });
+      if (completed) {
+        await canvasStore.completeGeneration({
+          generateNodeID,
+          prompt: completed.userMessage.content?.trim() || node.model || "",
+          modelName: node.model ?? "",
+          resultCount: mediaType === "video" ? 1 : node.resultCount,
+          mediaType,
+          completed,
+        });
+        try {
+          await deleteConversation(token, node.conversationID);
+        } catch {
+          // 会话清理失败不影响恢复结果。
+        }
+      } else {
+        await canvasStore.restoreGenerateNodeFromConversation(generateNodeID, token);
+      }
+    } catch {
+      if (!controller.signal.aborted) {
+        // 第②层兜底：事件流不可得（任务已结束/缓存释放），改查任务会话消息
+        await canvasStore.restoreGenerateNodeFromConversation(generateNodeID, token);
+      }
+    } finally {
+      abortControllers.delete(generateNodeID);
+      setGeneratingDelta(-1);
+    }
+  },
+
+  // 第②层兜底：任务会话未及清理（页面关闭期完成），从消息附件直接捞回结果文件
+  async restoreGenerateNodeFromConversation(generateNodeID: string, token: string): Promise<void> {
+    const node = state.nodes.find((item) => item.id === generateNodeID);
+    if (!node || node.kind !== "generate" || !node.conversationID) {
+      return;
+    }
+    const mediaType = node.mediaType ?? "image";
+    try {
+      const messages = await listMessages(token, node.conversationID, 1, 20);
+      const assistant = [...messages]
+        .reverse()
+        .find((item) => item.role === "assistant" && (item.runID === node.runID || item.status === "success"));
+      if (!assistant) {
+        // 第③层：消息也不可得（会话丢失），标记中断
+        markGenerateNodeError(generateNodeID, labels?.nodeGenerationInterrupted ?? "");
+        await deleteConversation(token, node.conversationID).catch(() => undefined);
+        return;
+      }
+      await canvasStore.completeGeneration({
+        generateNodeID,
+        prompt: assistant.content?.trim() || "",
+        modelName: node.model || "",
+        resultCount: mediaType === "video" ? 1 : node.resultCount,
+        mediaType,
+        completed: { assistantMessage: assistant },
+      });
+      try {
+        await deleteConversation(token, node.conversationID);
+      } catch {
+        // 会话清理失败不影响恢复结果。
+      }
+    } catch {
+      // 第③层：连消息都拿不到（网络失效/会话丢失），标记中断
+      markGenerateNodeError(generateNodeID, labels?.nodeGenerationInterrupted ?? "");
+    }
+  },
+
+
+  // 任务重查：对失败节点按 run 记录的上游任务 ID 回查上游结果并回收产物
+  async requeryGenerateNode(generateNodeID: string): Promise<void> {
+    const node = state.nodes.find((item) => item.id === generateNodeID);
+    if (!node || node.kind !== "generate" || !labels) {
+      return;
+    }
+    // 优先用持久化的运行 ID；旧版本错误节点未保存运行引用时，
+    // 回退到旧版确定性 runID（canvas-<节点ID>）尝试定位运行记录
+    const runID = node.runID?.trim() || `canvas-${generateNodeID}`;
+    if (!node.errorMessage) {
+      return;
+    }
+    if (abortControllers.has(generateNodeID)) {
+      return;
+    }
+    const controller = new AbortController();
+    abortControllers.set(generateNodeID, controller);
+    updateNode(generateNodeID, (item) =>
+      item.kind === "generate" ? { ...item, statusLabel: labels?.requeryStarted ?? item.statusLabel } : item,
+    );
+    toast.info(labels.requeryStarted);
+    try {
+      const token = await resolveAccessToken();
+      if (!token) {
+        markGenerateNodeError(generateNodeID, labels.needLogin);
+        return;
+      }
+      const mediaType = node.mediaType ?? "image";
+      if (mediaType !== "video") {
+        markGenerateNodeError(generateNodeID, node.errorMessage, node.errorDetail);
+        return;
+      }
+      const result = await requeryMediaVideoRun(token, runID);
+      if (result.status === "completed" && result.attachments && result.attachments.length > 0 && labels) {
+        // 回收成功：复用统一收尾写回输出节点并复位
+        const attachmentsJSON = JSON.stringify(result.attachments.map((item) => ({
+          file_id: item.fileID,
+          file_name: item.fileName,
+          mime_type: item.mimeType,
+          file_size: item.sizeBytes,
+          duration_seconds: item.durationSeconds,
+          kind: "file",
+        })));
+        await canvasStore.completeGeneration({
+          generateNodeID,
+          prompt: "",
+          modelName: node.model ?? "",
+          resultCount: 1,
+          mediaType,
+          completed: { assistantMessage: { attachments: attachmentsJSON } as unknown as MessageDTO },
+        });
+        toast.success(labels.requeryRecovered);
+        return;
+      }
+      if (result.status === "pending") {
+        // 上游仍在执行：保持错误态但更新提示，用户可稍后再次重查
+        const message = labels?.requeryPending ?? "";
+        updateNode(generateNodeID, (item) =>
+          item.kind === "generate"
+            ? { ...item, statusLabel: undefined, errorMessage: message || item.errorMessage }
+            : item,
+        );
+        toast.info(message);
+        return;
+      }
+      const message = result.message?.trim() || labels.requeryUnavailable;
+      markGenerateNodeError(generateNodeID, message, node.errorDetail);
+      toast.error(message);
+    } catch (error) {
+      const message = error instanceof ApiError && error.message
+        ? error.message
+        : labels.requeryUnavailable;
+      markGenerateNodeError(generateNodeID, message, node.errorDetail);
+      toast.error(message);
+    } finally {
+      abortControllers.delete(generateNodeID);
+      updateNode(generateNodeID, (item) =>
+        item.kind === "generate" && item.runStatus === "idle" ? { ...item, statusLabel: undefined } : item,
+      );
+    }
+  },
+
+  // 输出节点保存重试：产物保存待重试的输出节点自行重新保存（图像重下载 / 视频重查上游任务），
+  // 成功后本节点转为完成态并加载预览；失败保持可重试状态，不占用生成节点。
+  async retryOutputNodeSave(nodeID: string): Promise<void> {
+    const node = state.nodes.find((item) => item.id === nodeID);
+    if (!node || node.kind !== "output" || !node.pendingRetry || !labels) {
+      return;
+    }
+    if (abortControllers.has(nodeID)) {
+      return;
+    }
+    const controller = new AbortController();
+    abortControllers.set(nodeID, controller);
+    updateNode(nodeID, (item) =>
+      item.kind === "output" ? { ...item, errorMessage: labels?.artifactRetrySaving ?? "", retrySaving: true } : item,
+    );
+    try {
+      const token = await resolveAccessToken();
+      if (!token) {
+        updateNode(nodeID, (item) =>
+          item.kind === "output" ? { ...item, errorMessage: labels?.needLogin ?? "" } : item,
+        );
+        return;
+      }
+      const retry = node.pendingRetry;
+      if (retry.mediaType === "video") {
+        // 视频重试复用任务重查：按上游任务 ID 回查并回收产物
+        const result = await requeryMediaVideoRun(token, retry.runID);
+        if (result.status === "completed" && result.attachments && result.attachments.length > 0) {
+          const attachment = result.attachments[retry.index] ?? result.attachments[0];
+          updateNode(nodeID, (item) =>
+            item.kind === "output"
+              ? {
+                ...item, status: "done", fileID: attachment.fileID, fileName: attachment.fileName,
+                mimeType: attachment.mimeType, sizeBytes: attachment.sizeBytes,
+                durationSeconds: attachment.durationSeconds, objectURL: undefined, imageLoadFailed: false,
+                errorMessage: undefined, errorDetail: undefined, pendingRetry: undefined,
+                completedAt: Date.now(),
+              }
+              : item,
+          );
+          void loadOutputImage(nodeID, attachment.fileID);
+          toast.success(labels.requeryRecovered);
+          return;
+        }
+        if (result.status === "pending") {
+          const message = labels.requeryPending;
+          updateNode(nodeID, (item) => item.kind === "output" ? { ...item, errorMessage: message } : item);
+          toast.info(message);
+          return;
+        }
+        const message = result.message?.trim() || labels.requeryUnavailable;
+        updateNode(nodeID, (item) => item.kind === "output" ? { ...item, errorMessage: message } : item);
+        toast.error(message);
+        return;
+      }
+      // 图像重试：按 runID + 产物序号重新下载保存
+      const result = await retryMediaImageArtifact(token, retry.runID, retry.index);
+      if (result.status === "recovered" && result.attachment) {
+        const attachment = result.attachment;
+        updateNode(nodeID, (item) =>
+          item.kind === "output"
+            ? {
+              ...item, status: "done", fileID: attachment.fileID, fileName: attachment.fileName,
+              mimeType: attachment.mimeType, sizeBytes: attachment.sizeBytes,
+              objectURL: undefined, imageLoadFailed: false,
+              errorMessage: undefined, errorDetail: undefined, pendingRetry: undefined,
+              completedAt: Date.now(),
+            }
+            : item,
+        );
+        void loadOutputImage(nodeID, attachment.fileID);
+        toast.success(labels.artifactRecovered);
+        return;
+      }
+      // 引用过期：产物无法找回，移除重试引用并提示重新生成
+      const message = result.message?.trim() || labels.artifactExpired;
+      updateNode(nodeID, (item) =>
+        item.kind === "output" ? { ...item, errorMessage: message, pendingRetry: undefined } : item,
+      );
+      toast.error(message);
+    } catch (error) {
+      // 保存仍失败：保留重试引用，输出节点可继续重试
+      const message = error instanceof ApiError && error.message
+        ? error.message
+        : labels?.artifactRetryFailed ?? "";
+      updateNode(nodeID, (item) => item.kind === "output" ? { ...item, errorMessage: message } : item);
+      toast.error(message);
+    } finally {
+      abortControllers.delete(nodeID);
+      // 统一清除重试中的瞬态标记（成功/失败分支的字段展开会携带旧值）
+      updateNode(nodeID, (item) =>
+        item.kind === "output" ? { ...item, retrySaving: false } : item,
+      );
     }
   },
 
@@ -1586,7 +2143,7 @@ const canvasStoreImplementation = {
 
     if (!existingGenerate) {
       const generateNode: GenerateGraphNode = {
-        id: generateNodeID, kind: "generate",
+        id: generateNodeID, kind: "generate", mediaType: "image",
         x: Math.round(sourceNode.x + sourceSize.width + 96),
         y: sourceNode.y + Math.round((sourceSize.height - generateSize.height) / 2),
         createdAt: Date.now(), model: input.model.platformModelName,
@@ -1644,6 +2201,7 @@ const canvasStoreImplementation = {
             return {
               ...node,
               model: input.model.platformModelName,
+              mediaType: "image",
               operation: input.operation,
               // 复用节点时编辑器同步的分辨率参数覆盖同名配置，其余参数保留
               options: input.sizeOptions ? mergeCanvasOptions(node.options, input.sizeOptions) : node.options,

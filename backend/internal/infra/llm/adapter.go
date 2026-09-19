@@ -9,6 +9,7 @@ import (
 
 // 已支持的协议常量。每个协议固定对应一个 HTTP 端点，任务能力由模型类别和路由规则约束。
 const (
+ AdapterOpenAIVideo = "openai_video_generations"
 	AdapterOpenAIResponses        = "openai_responses"            // POST /v1/responses
 	AdapterOpenRouterChat         = "openrouter_chat_completions" // POST /v1/chat/completions（OpenRouter）
 	AdapterOpenRouterResponses    = "openrouter_responses"        // POST /v1/responses（OpenRouter Responses Beta）
@@ -66,7 +67,7 @@ func IsKnownAdapter(raw string) bool {
 		AdapterXAIResponses,
 		AdapterXAIImage,
 		AdapterXAIImageEdits, AdapterImageEditsJSON,
-		AdapterXAIVideo,
+		AdapterXAIVideo, AdapterOpenAIVideo,
 		AdapterXAIVideoExtensions:
 		return true
 	default:
@@ -78,7 +79,7 @@ func IsKnownAdapter(raw string) bool {
 func IsImplementedAdapter(raw string) bool {
 	switch NormalizeAdapter(raw) {
 	case AdapterOpenAIResponses, AdapterOpenRouterChat, AdapterOpenRouterResponses, AdapterOpenAIChatCompletions, AdapterOpenAIImageGenerations, AdapterOpenAIImageEdits, AdapterXAIResponses,
-		AdapterAnthropicMessages, AdapterGoogleGenerateContent, AdapterGoogleImageGeneration, AdapterGeminiInteractions, AdapterXAIImage, AdapterXAIImageEdits, AdapterImageEditsJSON, AdapterXAIVideo, AdapterXAIVideoExtensions:
+		AdapterAnthropicMessages, AdapterGoogleGenerateContent, AdapterGoogleImageGeneration, AdapterGeminiInteractions, AdapterXAIImage, AdapterXAIImageEdits, AdapterImageEditsJSON, AdapterXAIVideo, AdapterOpenAIVideo, AdapterXAIVideoExtensions:
 		return true
 	default:
 		return false
@@ -178,7 +179,7 @@ func IsImageEditAdapter(raw string) bool {
 // IsVideoGenerationAdapter 返回协议是否属于独立视频生成链路。
 func IsVideoGenerationAdapter(raw string) bool {
 	switch NormalizeAdapter(raw) {
-	case AdapterGeminiInteractions, AdapterXAIVideo, AdapterXAIVideoExtensions:
+	case AdapterGeminiInteractions, AdapterXAIVideo, AdapterOpenAIVideo, AdapterXAIVideoExtensions:
 		return true
 	default:
 		return false
@@ -194,7 +195,7 @@ func DefaultEndpointForAdapter(adapter string) string {
 		return EndpointImageGenerations
 	case AdapterOpenAIImageEdits, AdapterXAIImageEdits, AdapterImageEditsJSON:
 		return EndpointImageEdits
-	case AdapterXAIVideo:
+	case AdapterXAIVideo, AdapterOpenAIVideo:
 		return EndpointVideoGenerations
 	case AdapterXAIVideoExtensions:
 		return EndpointVideoExtensions

@@ -3,6 +3,8 @@ import type { ConversationOptions } from "@/shared/api/conversation.types";
 export type CanvasPointerMode = "pan" | "select";
 export type CanvasNodeReference = { fileID: string; fileName: string; mimeType: string; sizeBytes: number };
 export type CanvasOperation = "generate" | "edit" | "inpaint" | "outpaint" | "crop";
+// 创作画布媒体类型：生成/输出节点区分图像与视频工作流
+export type CanvasMediaType = "image" | "video";
 export type CanvasElementMeta = { locked?: boolean; groupID?: string | null; frameID?: string | null; zIndex?: number };
 
 // ---------------------------------------------------------------------------
@@ -40,6 +42,8 @@ export type ImageGraphNode = GraphNodeBase & {
 // 生成节点：模型选择、模型参数、生成数量与运行状态都配置在节点内
 export type GenerateGraphNode = GraphNodeBase & {
   kind: "generate";
+  // 媒体类型决定路由（图像 media 路由 / 视频生成路由）、参数面板与输出形态
+  mediaType: CanvasMediaType;
   model: string | null;
   options: ConversationOptions;
   resultCount: number;
@@ -51,11 +55,24 @@ export type GenerateGraphNode = GraphNodeBase & {
   previewURL?: string;
   errorMessage?: string;
   errorDetail?: string;
+  // 运行中的任务会话与运行 ID：刷新后据此走三层恢复兜底；完成后清除
+  conversationID?: string;
+  runID?: string;
+  progress?: number;
 };
 
-// 输出节点：展示生成结果图像，可通过出端口链式接入下一个生成节点
+// 输出节点的待重试保存引用：上游生成已成功但产物保存瞬时失败，
+// 输出节点持有运行与产物序号，可自行重试保存而不占用生成节点状态。
+export type OutputPendingRetry = {
+  mediaType: CanvasMediaType;
+  runID: string;
+  index: number;
+};
+
+// 输出节点：展示生成结果图像/视频，可通过出端口链式接入下一个生成节点
 export type OutputGraphNode = GraphNodeBase & {
   kind: "output";
+  mediaType?: CanvasMediaType;
   status: "empty" | "done" | "error";
   fileID?: string;
   fileName?: string;
@@ -70,6 +87,11 @@ export type OutputGraphNode = GraphNodeBase & {
   errorDetail?: string;
   completedAt?: number;
   durationMs?: number;
+  durationSeconds?: number;
+  // 产物保存待重试：生成已成功，保存失败后由本节点重试（图像重下载 / 视频重查）
+  pendingRetry?: OutputPendingRetry;
+  // 保存重试进行中（瞬态标记，不持久化）：UI 显示加载态并隐藏重试按钮
+  retrySaving?: boolean;
 };
 
 export type GraphNode = PromptGraphNode | ImageGraphNode | GenerateGraphNode | OutputGraphNode;
@@ -124,14 +146,17 @@ export type PersistedImageGraphNode = PersistedGraphNodeBase & {
   kind: "image"; reference: CanvasNodeReference | null; uploading?: boolean;
 };
 export type PersistedGenerateGraphNode = PersistedGraphNodeBase & {
-  kind: "generate"; model: string | null; options?: ConversationOptions; resultCount: number;
+  kind: "generate"; mediaType?: CanvasMediaType; model: string | null; options?: ConversationOptions; resultCount: number;
   operation: CanvasOperation; maskReference?: CanvasNodeReference | null; errorMessage?: string; errorDetail?: string;
+  // 运行中任务恢复所需的会话与运行 ID（仅运行期间存在）
+  conversationID?: string; runID?: string;
 };
 export type PersistedOutputGraphNode = PersistedGraphNodeBase & {
-  kind: "output"; status: "empty" | "done" | "error";
+  kind: "output"; mediaType?: CanvasMediaType; status: "empty" | "done" | "error";
   fileID?: string; fileName?: string; mimeType?: string; sizeBytes?: number;
   prompt?: string; model?: string; sourceGenerateID?: string | null;
-  errorMessage?: string; errorDetail?: string; completedAt?: number; durationMs?: number;
+  errorMessage?: string; errorDetail?: string; completedAt?: number; durationMs?: number; durationSeconds?: number;
+  pendingRetry?: OutputPendingRetry;
 };
 export type PersistedGraphNode =
   | PersistedPromptGraphNode
@@ -168,6 +193,7 @@ export type PersistedCanvasState = {
   versions?: CanvasVersion[];
   conversationID: string | null;
   selectedModelName: string | null;
+  selectedVideoModelName?: string | null;
   pointerMode: CanvasPointerMode;
   viewport: CanvasViewport;
   // 顶层 nodes 仅作旧版兼容读取；v4 数据存于 canvases[].graphNodes

@@ -1361,6 +1361,21 @@ type CancelMessageGenerationResponse struct {
 	Canceled bool `json:"canceled"`
 }
 
+type RequeryMediaVideoAttachmentResponse struct {
+	FileID          string `json:"fileID"`
+	FileName        string `json:"fileName"`
+	MimeType        string `json:"mimeType"`
+	SizeBytes       int64  `json:"sizeBytes"`
+	DurationSeconds int64  `json:"durationSeconds,omitempty"`
+}
+
+type RequeryMediaVideoRunResponse struct {
+	Status      string                               `json:"status"`
+	RunID       string                               `json:"runID"`
+	Message     *string                              `json:"message,omitempty"`
+	Attachments []RequeryMediaVideoAttachmentResponse `json:"attachments,omitempty"`
+}
+
 func toSendMessageResponse(r *appconversation.SendMessageResult) SendMessageResponse {
 	run := model.Run{
 		PlatformModelName: r.PlatformModelName,

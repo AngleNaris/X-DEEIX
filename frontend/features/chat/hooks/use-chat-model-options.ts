@@ -382,7 +382,7 @@ function toChatModelOption(
   nativeToolCatalog: ModelOptionPolicy["nativeTools"] = [],
 ): ChatModelOption {
   const isUserModel = "upstreamModelId" in item;
-  const capabilitiesJSON = isUserModel ? "{}" : item.capabilitiesJSON;
+  const capabilitiesJSON = isUserModel ? item.capabilities || "{}" : item.capabilitiesJSON;
   const protocolsJSON = isUserModel ? JSON.stringify([item.protocol]) : item.protocolsJSON;
   const protocols = parseProtocolsJSON(protocolsJSON);
   const nativeTools = resolveNativeTools(capabilitiesJSON);

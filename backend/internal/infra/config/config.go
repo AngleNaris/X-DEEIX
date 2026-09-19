@@ -171,6 +171,13 @@ func DefaultModelOptionAllowedPathsJSON() string {
   ],
   "xai_video_extensions": [
     "duration"
+  ],
+  "openai_video_generations": [
+    "aspect_ratio",
+    "duration",
+    "resolution",
+    "seconds",
+    "size"
   ]
 }`
 }

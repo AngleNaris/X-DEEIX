@@ -110,10 +110,11 @@ func (s *Service) StreamMediaImage(ctx context.Context, input MediaImageInput) (
 	}
 
 	platformModelName := strings.TrimSpace(input.PlatformModelName)
-	if platformModelName == "" {
+	useDefaultRoute := platformModelName == "" && input.UserModelID == 0 && !strings.EqualFold(strings.TrimSpace(input.ModelScope), "user")
+	if !useDefaultRoute && platformModelName == "" {
 		platformModelName = strings.TrimSpace(conversation.Model)
 	}
-	if platformModelName == "" {
+	if !useDefaultRoute && platformModelName == "" {
 		return nil, ErrModelRouteNotConfigured
 	}
 	taskRouteType := channel.TaskTypeImageGeneration
