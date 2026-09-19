@@ -30,6 +30,7 @@ type NavigationLinkItem = NavigationItemBase & {
     | "artifacts"
     | "knowledgeBases"
     | "skillsPrompt"
+    | "canvasStudio"
     | "agentGroups";
   kind: "link";
   href: string;

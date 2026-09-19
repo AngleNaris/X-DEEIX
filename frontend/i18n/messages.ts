@@ -16,6 +16,7 @@ import enAdminTools from "@/i18n/messages/en-US/admin-tools.json";
 import enAdminUpstreams from "@/i18n/messages/en-US/admin-upstreams.json";
 import enAdminUsers from "@/i18n/messages/en-US/admin-users.json";
 import enAnnouncements from "@/i18n/messages/en-US/announcements.json";
+import enCanvas from "@/i18n/messages/en-US/canvas.json";
 import enChat from "@/i18n/messages/en-US/chat.json";
 import enCommon from "@/i18n/messages/en-US/common.json";
 import enConversation from "@/i18n/messages/en-US/conversation.json";
@@ -38,6 +39,7 @@ const ENGLISH_MESSAGES = {
   prompts: enPrompts,
   guide: enGuide,
   chat: enChat,
+  canvas: enCanvas,
   announcements: enAnnouncements,
   recent: enRecent,
   share: enShare,
@@ -124,6 +126,7 @@ export async function loadLocaleMessages(locale: AppLocale): Promise<AppMessages
     prompts,
     guide,
     chat,
+    canvas,
     announcements,
     recent,
     share,
@@ -154,6 +157,7 @@ export async function loadLocaleMessages(locale: AppLocale): Promise<AppMessages
     import("@/i18n/messages/zh-CN/prompts.json"),
     import("@/i18n/messages/zh-CN/guide.json"),
     import("@/i18n/messages/zh-CN/chat.json"),
+    import("@/i18n/messages/zh-CN/canvas.json"),
     import("@/i18n/messages/zh-CN/announcements.json"),
     import("@/i18n/messages/zh-CN/recent.json"),
     import("@/i18n/messages/zh-CN/share.json"),
@@ -186,6 +190,7 @@ export async function loadLocaleMessages(locale: AppLocale): Promise<AppMessages
     prompts: prompts.default,
     guide: guide.default,
     chat: chat.default,
+    canvas: canvas.default,
     announcements: announcements.default,
     recent: recent.default,
     share: share.default,
