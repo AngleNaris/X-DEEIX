@@ -46,6 +46,7 @@ const PROTOCOL_DISPLAY_ORDER = new Map<string, number>(
 
 const IMAGE_ROUTE_PROTOCOL_PAIRS: ReadonlyArray<readonly [AdminLLMAdapter, AdminLLMAdapter]> = [
   ["openai_image_generations", "openai_image_edits"],
+  ["openai_image_generations", "image_edits_json"],
   ["xai_image", "xai_image_edits"],
 ];
 
