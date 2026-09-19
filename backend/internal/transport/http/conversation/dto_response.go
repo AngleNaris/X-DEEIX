@@ -615,13 +615,42 @@ type FileObjectResponse struct {
 	ChunkCount             int        `json:"chunkCount"`
 	RagOptOut              bool       `json:"ragOptOut"`
 	Favorite               bool       `json:"favorite"`
+	ContentURL             string     `json:"contentURL,omitempty"`
+	ThumbnailURL           string     `json:"thumbnailURL,omitempty"`
 	LastAccessedAt         *time.Time `json:"lastAccessedAt" extensions:"x-nullable,!x-omitempty"`
 	ExpiresAt              *time.Time `json:"expiresAt" extensions:"x-nullable,!x-omitempty"`
 	CreatedAt              time.Time  `json:"createdAt"`
 	UpdatedAt              time.Time  `json:"updatedAt"`
 }
 
-func toFileObjectResponse(item *model.FileObject) FileObjectResponse {
+// FileMediaURLs 汇总文件对象可内嵌的签名媒体直连地址。
+type FileMediaURLs struct {
+	ContentURL   string
+	ThumbnailURL string
+}
+
+// buildFileMediaURLs 按文件用途生成签名直连：生成媒体给原件直连，图片给缩略图直连；
+// 上传原件不签发内容直连，保持鉴权 fetch + ETag/304。
+func buildFileMediaURLs(uploadSvc *appupload.Service, userID uint, item *model.FileObject) FileMediaURLs {
+	if uploadSvc == nil || item == nil {
+		return FileMediaURLs{}
+	}
+	switch strings.TrimSpace(item.Purpose) {
+	case "generated_image", "generated_video":
+		return FileMediaURLs{ContentURL: uploadSvc.SignedContentPath(userID, item.FileID)}
+	default:
+		if item.FileCategory == "image" {
+			return FileMediaURLs{ThumbnailURL: uploadSvc.SignedThumbnailPath(userID, item.FileID, appupload.ThumbnailVariantThumb)}
+		}
+	}
+	return FileMediaURLs{}
+}
+
+func toFileObjectResponse(item *model.FileObject, urls ...FileMediaURLs) FileObjectResponse {
+	var mediaURLs FileMediaURLs
+	if len(urls) > 0 {
+		mediaURLs = urls[0]
+	}
 	return FileObjectResponse{
 		FileID:                 item.FileID,
 		Purpose:                item.Purpose,
@@ -642,6 +671,8 @@ func toFileObjectResponse(item *model.FileObject) FileObjectResponse {
 		ChunkCount:             item.ChunkCount,
 		RagOptOut:              item.RagOptOut,
 		Favorite:               item.Favorite,
+		ContentURL:             mediaURLs.ContentURL,
+		ThumbnailURL:           mediaURLs.ThumbnailURL,
 		LastAccessedAt:         item.LastAccessedAt,
 		ExpiresAt:              item.ExpiresAt,
 		CreatedAt:              item.CreatedAt,
@@ -1370,10 +1401,25 @@ type RequeryMediaVideoAttachmentResponse struct {
 }
 
 type RequeryMediaVideoRunResponse struct {
-	Status      string                               `json:"status"`
-	RunID       string                               `json:"runID"`
-	Message     *string                              `json:"message,omitempty"`
+	Status      string                                `json:"status"`
+	RunID       string                                `json:"runID"`
+	Message     *string                               `json:"message,omitempty"`
 	Attachments []RequeryMediaVideoAttachmentResponse `json:"attachments,omitempty"`
+}
+
+type RetryMediaImageArtifactResponse struct {
+	Status     string                                   `json:"status"`
+	RunID      string                                   `json:"runID"`
+	Index      int                                      `json:"index"`
+	Message    *string                                  `json:"message,omitempty"`
+	Attachment *RetryMediaImageArtifactAttachmentResult `json:"attachment,omitempty"`
+}
+
+type RetryMediaImageArtifactAttachmentResult struct {
+	FileID    string `json:"fileID"`
+	FileName  string `json:"fileName"`
+	MimeType  string `json:"mimeType"`
+	SizeBytes int64  `json:"sizeBytes"`
 }
 
 func toSendMessageResponse(r *appconversation.SendMessageResult) SendMessageResponse {

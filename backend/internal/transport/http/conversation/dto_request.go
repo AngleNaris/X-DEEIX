@@ -201,6 +201,8 @@ type MediaVideoRequest struct {
 
 // MediaVideoExtensionRequest 视频扩展请求。
 type MediaVideoExtensionRequest struct {
+	ModelScope            string                 `json:"modelScope,omitempty" binding:"omitempty,oneof=platform user"`
+	UserModelID           uint                   `json:"userModelID,omitempty"`
 	Prompt                string                 `json:"prompt" binding:"required"`
 	Model                 string                 `json:"model,omitempty" binding:"omitempty,max=128"`
 	Options               map[string]interface{} `json:"options,omitempty"`

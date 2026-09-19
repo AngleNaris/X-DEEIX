@@ -66,7 +66,7 @@ import type { ConversationStreamOptions } from "@/shared/api/conversation";
 import {
   createConversation,
   deleteConversation,
-  getConversationRunStatuses,
+  listConversationRuns,
   listMessages,
   requeryMediaVideoRun,
   resumeMessageGenerationStream,
@@ -1829,10 +1829,11 @@ const canvasStoreImplementation = {
     }
     let statuses: Map<string, string> | null = null;
     try {
-      const rows = await getConversationRunStatuses(
-        token,
-        pendingNodes.map((node) => node.runID ?? "").filter(Boolean),
+      const pages = await Promise.all(
+        [...new Set(pendingNodes.map((node) => node.conversationID!))]
+          .map((id) => listConversationRuns(token, id, { pageSize: 100 })),
       );
+      const rows = pages.flatMap((page) => page.results);
       statuses = new Map(rows.map((row) => [row.runID, row.status]));
     } catch {
       // 状态查询失败不阻断：挂流本身会给出结论

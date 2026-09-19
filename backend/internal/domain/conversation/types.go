@@ -45,8 +45,7 @@ type Conversation struct {
 	LastShareAccessedAt    *time.Time
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
-	ProjectSystemPrompt   string
-	SystemPrompt          string
+	SystemPrompt           string
 }
 
 // ConversationProject 表示用户会话项目分组。
@@ -426,24 +425,24 @@ type StorageQuota struct {
 
 // Run 表示对话运行日志。
 type Run struct {
-	ID                       uint
-	RunID                    string
-	RequestID                string
-	UserID                   uint
-	ConversationID           uint
-	TaskType                 string
-	Endpoint                 string
-	Provider                 string
-	ProviderProtocol         string
-	UpstreamID               uint
-	UpstreamModelID          uint
-	UpstreamName             string
-	RequestedModelName       string
-	PlatformModelName        string
-	RoutedBindingCode        string
-	ModelVendor              string
-	ModelIcon                string
-	UpstreamModelName        string
+	ID                 uint
+	RunID              string
+	RequestID          string
+	UserID             uint
+	ConversationID     uint
+	TaskType           string
+	Endpoint           string
+	Provider           string
+	ProviderProtocol   string
+	UpstreamID         uint
+	UpstreamModelID    uint
+	UpstreamName       string
+	RequestedModelName string
+	PlatformModelName  string
+	RoutedBindingCode  string
+	ModelVendor        string
+	ModelIcon          string
+	UpstreamModelName  string
 	// UpstreamTaskID 是异步媒体任务在上游的任务编号（如 Sora 兼容视频的 video.id），
 	// 供失败后的任务重查定位上游结果；同步协议为空。
 	UpstreamTaskID           string

@@ -81,7 +81,6 @@ import {
   type ChatMentionMenuKind,
   useChatMentionMenu,
 } from "@/features/chat/hooks/use-chat-mention-menu";
-import { useChatPreviewSync } from "@/features/chat/hooks/use-chat-preview-sync";
 import {
   type SpeechInputErrorCode,
   useChatSpeechInput,
@@ -1308,6 +1307,7 @@ function ChatInputComponent({
 
               {!modelOptionPolicyDisabled ? (
                 <ChatModelConfig
+                  selectedModelKinds={selectedModel?.kinds ?? []}
                   disabled={loading || uploading || modelLoading}
                   options={modelConfigOptions}
                   defaultOptions={taskOptionConfig?.defaultOptions ?? defaultOptions}
@@ -1458,6 +1458,7 @@ function ChatInputComponent({
             <div className="flex shrink-0 items-center justify-end gap-1 sm:gap-1.5">
               {!modelOptionPolicyDisabled ? (
                 <ChatModelConfig
+                  selectedModelKinds={selectedModel?.kinds ?? []}
                   disabled={loading || uploading || modelLoading}
                   options={modelConfigOptions}
                   defaultOptions={taskOptionConfig?.defaultOptions ?? defaultOptions}
@@ -1468,7 +1469,6 @@ function ChatInputComponent({
                   modelOptionPolicy={modelOptionPolicy}
                   selectedProtocols={selectedProtocols}
                   selectedModelName={selectedModelName}
-                  selectedModelKinds={selectedModel?.kinds ?? []}
                   promptImageOptions={promptImageOptions}
                   onOptionsChange={onOptionsChange}
                   onOptionsReset={onOptionsReset}

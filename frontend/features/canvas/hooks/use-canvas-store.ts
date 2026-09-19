@@ -13,9 +13,9 @@ import { uploadFile } from "@/shared/api/file";
 import { useAuthSession } from "@/shared/auth/auth-session-context";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import {
-  loadUserSettingsSnapshot,
-  updateUserSettings,
-} from "@/shared/model/user-settings-store";
+  getUserSettings as loadUserSettingsSnapshot,
+  patchUserSettings as updateUserSettings,
+} from "@/shared/api/user-settings";
 
 export type CanvasReferenceImage = CanvasNodeReference & {
   previewURL?: string;
@@ -147,7 +147,7 @@ export function useCanvasStore({
         return;
       }
       lastPullAt = now;
-      void loadUserSettingsSnapshot(accessToken, { refresh: true })
+      void loadUserSettingsSnapshot(accessToken)
         .then((settings) => {
           const cloudState = parseCanvasState(settings[CANVAS_CLOUD_SETTING_KEY] ?? "");
           if (cloudState) {
@@ -184,7 +184,7 @@ export function useCanvasStore({
     window.addEventListener("focus", handleWindowFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
     // 初始加载强制取新鲜快照：认证层的缓存快照可能滞后，误判云端新旧会导致错误采纳
-    void loadUserSettingsSnapshot(accessToken, { refresh: true }).then((settings) => {
+    void loadUserSettingsSnapshot(accessToken).then((settings) => {
       if (!active) {
         return;
       }

@@ -9,6 +9,7 @@ import (
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/filecontent"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
 	"github.com/gin-gonic/gin"
 )
@@ -92,7 +93,7 @@ func (h *Handler) UploadFile(c *gin.Context) {
 	)
 
 	response.Success(c, FileUploadResponse{
-		File:   toFileObjectResponse(&result.File),
+		File:   toFileObjectResponse(&result.File, buildFileMediaURLs(h.service.UploadService(), userID, &result.File)),
 		Quota:  toStorageQuotaResponse(result.Quota),
 		Reused: result.Reused,
 	})
@@ -139,7 +140,7 @@ func (h *Handler) ListFiles(c *gin.Context) {
 	}
 	results := make([]FileObjectResponse, 0, len(result.Items))
 	for i := range result.Items {
-		results = append(results, toFileObjectResponse(&result.Items[i]))
+		results = append(results, toFileObjectResponse(&result.Items[i], buildFileMediaURLs(h.service.UploadService(), userID, &result.Items[i])))
 	}
 	response.Success(c, FileListResponse{
 		Total:   result.Total,
@@ -277,7 +278,16 @@ func (h *Handler) UpdateFile(c *gin.Context) {
 	}
 	if req.Favorite != nil {
 		item, err = h.service.UpdateFileFavorite(c.Request.Context(), userID, fileID, *req.Favorite)
-		if err != nil { if errors.Is(err, appconversation.ErrInvalidFileReference) { response.Error(c, http.StatusBadRequest, "invalid file id") } else if errors.Is(err, appconversation.ErrFileNotFound) { response.Error(c, http.StatusNotFound, "file not found") } else { response.Error(c, http.StatusInternalServerError, "update file failed") }; return }
+		if err != nil {
+			if errors.Is(err, appconversation.ErrInvalidFileReference) {
+				response.Error(c, http.StatusBadRequest, "invalid file id")
+			} else if errors.Is(err, appconversation.ErrFileNotFound) {
+				response.Error(c, http.StatusNotFound, "file not found")
+			} else {
+				response.Error(c, http.StatusInternalServerError, "update file failed")
+			}
+			return
+		}
 	}
 
 	auditDetail := map[string]interface{}{}
@@ -287,7 +297,9 @@ func (h *Handler) UpdateFile(c *gin.Context) {
 	if req.RagOptOut != nil {
 		auditDetail["rag_opt_out"] = item.RagOptOut
 	}
-	if req.Favorite != nil { auditDetail["favorite"] = item.Favorite }
+	if req.Favorite != nil {
+		auditDetail["favorite"] = item.Favorite
+	}
 	h.recordAudit(c, "update_file",
 		"file",
 		item.FileID,
@@ -368,5 +380,39 @@ func (h *Handler) GetFileContent(c *gin.Context) {
 		return
 	}
 
-	h.serveFileContent(c, userID, fileID)
+	h.serveFileContent(c, userID, fileID, false)
+}
+
+// GetFileThumbnail godoc
+// @Summary 获取图片缩略图变体
+// @Description 按当前登录用户权限读取图片的缩略图（thumb ≤400px / preview ≤1280px），缺失时惰性生成
+// @Tags chat
+// @Produce image/jpeg
+// @Security BearerAuth
+// @Param file_id path string true "文件ID"
+// @Param variant query string false "变体档位: thumb | preview，默认 thumb"
+// @Success 200 {file} binary
+// @Failure 404 {object} ErrorDoc
+// @Failure 500 {object} ErrorDoc
+// @Router /files/{file_id}/thumbnail [get]
+func (h *Handler) GetFileThumbnail(c *gin.Context) {
+	fileID := c.Param("file_id")
+	if strings.TrimSpace(fileID) == "" {
+		response.ErrorFrom(c, http.StatusBadRequest, errInvalidFileID)
+		return
+	}
+	result, err := h.service.UploadService().OpenThumbnail(c.Request.Context(), middleware.MustUserID(c), fileID, c.Query("variant"))
+	if err != nil {
+		switch {
+		case errors.Is(err, appconversation.ErrFileNotFound),
+			errors.Is(err, appupload.ErrThumbnailUnsupported):
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrFileNotFound)
+		case errors.Is(err, appconversation.ErrInvalidFileReference):
+			response.ErrorFrom(c, http.StatusBadRequest, errInvalidFileID)
+		default:
+			response.Error(c, http.StatusInternalServerError, "file content unavailable")
+		}
+		return
+	}
+	_ = filecontent.Write(c, result, false)
 }

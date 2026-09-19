@@ -133,8 +133,8 @@ func TestResolveDefaultModelSkipsStructurallyUnusableCandidate(t *testing.T) {
 	}
 }
 
-func (r *routeResolutionRepositoryStub) ListActiveRoutesByModelWithOwnership(context.Context, string, string, *uint) ([]repository.ChannelUpstreamRouteRow, error) {
-	return append([]repository.ChannelUpstreamRouteRow(nil), r.routes...), nil
+func (r *routeResolutionRepositoryStub) ListActiveRoutesByModelWithOwnership(ctx context.Context, name string, _ string, _ *uint) ([]repository.ChannelUpstreamRouteRow, error) {
+	return r.ListActiveRoutesByModel(ctx, name)
 }
 
 func (r *routeResolutionRepositoryStub) GetBreakerDefaults(context.Context) (domainchannel.BreakerDefaults, error) {

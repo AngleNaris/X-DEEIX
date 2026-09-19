@@ -1348,6 +1348,8 @@ export function useChatMessageSubmit({
           const mediaPayload: MediaVideoRequest = {
             ...commonStreamPayload,
             prompt: payloadContent,
+            modelScope: requestModelScope === "user" ? "user" : undefined,
+            userModelID: requestModelScope === "user" ? requestUserModelID : undefined,
           };
           completed = await streamVideoGeneration(token, targetConversationID, mediaPayload, streamOptions);
         } else if (submitTask === "video_extension") {
@@ -1364,6 +1366,8 @@ export function useChatMessageSubmit({
             branchReason: commonStreamPayload.branchReason,
             prompt: payloadContent,
             sourceVideoFileID,
+            modelScope: requestModelScope === "user" ? "user" : undefined,
+            userModelID: requestModelScope === "user" ? requestUserModelID : undefined,
           };
           completed = await streamVideoExtension(token, targetConversationID, mediaPayload, streamOptions);
         } else {

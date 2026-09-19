@@ -88,6 +88,8 @@ func (h *Handler) streamMediaVideo(c *gin.Context, taskType appconversation.Medi
 		req = mediaVideoTransportRequest{
 			Prompt:                payload.Prompt,
 			Model:                 payload.Model,
+			ModelScope:            payload.ModelScope,
+			UserModelID:           payload.UserModelID,
 			Options:               payload.Options,
 			ClientRunID:           payload.ClientRunID,
 			FileIDs:               []string{payload.SourceVideoFileID},
@@ -104,6 +106,8 @@ func (h *Handler) streamMediaVideo(c *gin.Context, taskType appconversation.Medi
 		req = mediaVideoTransportRequest{
 			Prompt:                payload.Prompt,
 			Model:                 payload.Model,
+			ModelScope:            payload.ModelScope,
+			UserModelID:           payload.UserModelID,
 			Options:               payload.Options,
 			ClientRunID:           payload.ClientRunID,
 			FileIDs:               payload.FileIDs,

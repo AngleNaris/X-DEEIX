@@ -10,8 +10,8 @@ import (
 
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"go.uber.org/zap"
 )
@@ -88,9 +88,13 @@ func (s *Service) RequeryMediaVideoRun(ctx context.Context, userID uint, runID s
 		return nil, ErrMediaVideoInputInvalid
 	}
 
-	route, err := s.routeResolver.BuildRouteForUpstream(ctx, run.UpstreamID, run.ProviderProtocol, run.UpstreamModelName)
+	resolver, ok := s.routeResolver.(mediaRouteResolver)
+	if !ok {
+		return nil, ErrModelRouteNotConfigured
+	}
+	route, err := resolver.BuildRouteForUpstream(ctx, run.UpstreamID, run.ProviderProtocol, run.UpstreamModelName)
 	if err != nil {
-		return nil, mapRouteResolutionError(err)
+		return nil, ErrModelRouteNotConfigured
 	}
 	routeConfig := llm.RouteConfig{
 		Protocol:         route.Protocol,
@@ -212,7 +216,7 @@ func (s *Service) RequeryMediaVideoRun(ctx context.Context, userID uint, runID s
 	run.Status = "success"
 	run.ErrorCode = "media.requery_recovered"
 	run.EndedAt = &endedAt
-	if err := s.repo.UpdateConversationRun(ctx, run); err != nil {
+	if err := s.repo.UpsertConversationRun(ctx, run); err != nil {
 		s.logRequeryFailure(ctx, run, "update_run", err)
 		return nil, err
 	}

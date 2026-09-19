@@ -133,3 +133,6 @@ func (s *Service) GetFileExtract(ctx context.Context, userID uint, fileID string
 		OCRUsed:      result.OCRUsed,
 	}, nil
 }
+
+// UploadService exposes the shared file service to media HTTP handlers.
+func (s *Service) UploadService() *appupload.Service { return s.uploadSvc }

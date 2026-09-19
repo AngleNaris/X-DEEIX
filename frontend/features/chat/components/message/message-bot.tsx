@@ -53,6 +53,7 @@ import { cn } from "@/lib/utils";
 import { type FileContentResult, fetchFileContent } from "@/shared/api/file";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import type { PreviewDialogFile } from "@/shared/components/file-preview/preview-dialog";
+import { registerSignedMarkdownImageURL } from "@/shared/lib/markdown-image-source";
 import { PreviewMedia } from "@/shared/components/file-preview/preview-media";
 import { type MarkdownArtifactActions, MarkdownImage } from "@/shared/components/markdown/streamdown-components";
 import { StreamdownRender } from "@/shared/components/markdown/streamdown-render";
@@ -409,6 +410,16 @@ export function ChatMessageBot({
     () => (item.attachments ?? []).filter(isEditableImageAttachment),
     [item.attachments],
   );
+  // 把附件携带的签名缩略图地址注册给 markdown 图片加载器：
+  // 消息内容里 /files/{id}/content 引用渲染时直连签名 URL，免鉴权全量拉取。
+  React.useEffect(() => {
+    for (const attachment of item.attachments ?? []) {
+      if (!attachment.signedPreviewURL && !attachment.signedThumbnailURL) {
+        continue;
+      }
+      registerSignedMarkdownImageURL(attachment.fileID, attachment.signedPreviewURL ?? attachment.signedThumbnailURL);
+    }
+  }, [item.attachments]);
   const getEditableImageAttachment = React.useCallback(
     (src: string) => resolveEditableImageAttachment(src, editableImageAttachments, item.contentType),
     [editableImageAttachments, item.contentType],

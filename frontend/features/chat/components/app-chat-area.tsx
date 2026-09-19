@@ -58,6 +58,8 @@ import { cn } from "@/lib/utils";
 import { getAgentGroup } from "@/shared/api/agent-groups";
 import type { AgentGroupDTO } from "@/shared/api/agent-groups.types";
 import {
+  deleteMessage,
+  setConversationSystemPrompt,
   deleteProjectFile,
   downloadProjectArchive,
   fetchProjectFileContent,
@@ -508,6 +510,8 @@ export function AppChatArea() {
     newConversationAgentGroupID,
     newConversationRoleID,
   ]);
+  const [draftSystemPrompt, setDraftSystemPrompt] = React.useState("");
+  React.useEffect(() => { setDraftSystemPrompt(""); }, [newConversationRevision]);
   const prependNewConversationInContext = React.useCallback(
     (platformModelName?: string) =>
       prependNewConversation(
@@ -515,8 +519,9 @@ export function AppChatArea() {
         newConversationProjectID || undefined,
         newConversationRoleID || undefined,
         newConversationAgentGroupID || undefined,
+        draftSystemPrompt,
       ),
-    [newConversationAgentGroupID, newConversationProjectID, newConversationRoleID, prependNewConversation],
+    [draftSystemPrompt, newConversationAgentGroupID, newConversationProjectID, newConversationRoleID, prependNewConversation],
   );
 
   const handleConversationForked = React.useCallback(
@@ -1231,6 +1236,31 @@ export function AppChatArea() {
     [actionConversationID, canOperateConversation, renameByPublicID],
   );
 
+  const onSaveSystemPrompt = React.useCallback(async (systemPrompt: string) => {
+    if (!conversationID) { setDraftSystemPrompt(systemPrompt); return; }
+    const token = await resolveAccessToken();
+    if (!token) throw new Error(t("submit.needLogin"));
+    try {
+      const updated = await setConversationSystemPrompt(token, conversationID, { systemPrompt });
+      upsertConversation(updated);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("labelMenu.systemPrompt"));
+      throw error;
+    }
+  }, [conversationID, t, upsertConversation]);
+
+  const onDeleteMessage = React.useCallback(async (message: ChatAreaMessage) => {
+    if (generating || !message.publicID) return;
+    const token = await resolveAccessToken();
+    if (!token) return;
+    try {
+      await deleteMessage(token, message.publicID);
+      reload();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t("labelMenu.delete"));
+    }
+  }, [generating, reload, t]);
+
   const onAutoRenameActiveConversation = React.useCallback(async () => {
     if (!canOperateConversation) {
       return;
@@ -1455,7 +1485,7 @@ export function AppChatArea() {
       }
       // 同一文件的多次修改合并为累计 Diff：跨轮次收集原子变更，从当前内容逆序还原初始内容。
       const finalContent = fetched || change.newContent || "";
-      const atomics = collectProjectFileChanges(displayMessages, change.path);
+      const atomics = collectProjectFileChanges(visibleMessages, change.path);
       let initial = atomics.length > 0
         ? reconstructProjectFileInitial(finalContent, atomics)
         : change.name === "project_write_file" ? "" : change.oldContent ?? "";
@@ -1477,7 +1507,7 @@ export function AppChatArea() {
       setActiveProjectTabKey(change.path);
     } catch (error) { toast.error(error instanceof Error ? error.message : "无法读取项目文件"); }
     finally { setProjectFileBusy(false); }
-  }, [displayMessages, workspaceProjectID, setProjectPanelVisibility]);
+  }, [visibleMessages, workspaceProjectID, setProjectPanelVisibility]);
 
   const onOpenProjectChange = React.useCallback((change: ProjectChange) => {
     setProjectPanelVisibility(true);
@@ -1727,6 +1757,7 @@ export function AppChatArea() {
   }, [resetFileDragState, uploadDropDisabled]);
 
   const chatInputProps = {
+    systemPromptEditor: { value: currentConversation?.systemPrompt ?? draftSystemPrompt, onSave: onSaveSystemPrompt },
     draft,
     loading,
     sending: generating,
@@ -1924,6 +1955,7 @@ export function AppChatArea() {
                     onEditAssistantMessage={onEditAssistantMessage}
                     onEditUserMessage={onEditUserMessage}
                     onForkMessage={onForkMessage}
+                    onDeleteMessage={onDeleteMessage}
                     modelOptions={modelOptions}
                     selectedPlatformModelName={selectedPlatformModelName}
                     onModelChange={setSelectedPlatformModelName}
@@ -1937,6 +1969,8 @@ export function AppChatArea() {
                     onCycleMessageBranch={onCycleMessageBranch}
                     onToggleStar={onToggleActiveConversationStar}
                     onRename={onRenameActiveConversation}
+                    onSetSystemPrompt={onSaveSystemPrompt}
+                    systemPrompt={currentConversation?.systemPrompt ?? ""}
                     onAutoRename={onAutoRenameActiveConversation}
                     labels={activeConversationLabels}
                     onUpdateLabels={onUpdateActiveConversationLabels}

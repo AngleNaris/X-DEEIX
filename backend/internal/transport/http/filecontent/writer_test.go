@@ -10,6 +10,7 @@ import (
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/gin-gonic/gin"
+	"net/http"
 )
 
 func TestSafeContentTypeDowngradesActiveContent(t *testing.T) {
@@ -41,6 +42,7 @@ func TestWritePublicContentDisablesCaching(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/content", nil)
 	result := &appupload.FileContentResult{
 		File:        domainconversation.FileObject{FileName: "shared.txt"},
 		Reader:      io.NopCloser(strings.NewReader("shared")),
@@ -53,5 +55,61 @@ func TestWritePublicContentDisablesCaching(t *testing.T) {
 	}
 	if got := recorder.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+}
+
+func TestETagFromSHA256(t *testing.T) {
+	if got := ETag(""); got != "" {
+		t.Fatalf("ETag(\"\") = %q, want empty", got)
+	}
+	if got := ETag("ABC123"); got != `"abc123"` {
+		t.Fatalf("ETag = %q, want quoted lowercase", got)
+	}
+}
+
+func TestNotModifiedMatchesStrongETag(t *testing.T) {
+	etag := ETag("abc123")
+	if notModified("", etag) {
+		t.Fatal("empty If-None-Match must not match")
+	}
+	if !notModified(`"abc123"`, etag) {
+		t.Fatal("exact strong ETag must match")
+	}
+	if !notModified(`W/"abc123"`, etag) {
+		t.Fatal("weak ETag with same value must match")
+	}
+	if !notModified(`"other", "abc123"`, etag) {
+		t.Fatal("list containing matching ETag must match")
+	}
+	if notModified(`"other"`, etag) {
+		t.Fatal("unrelated ETag must not match")
+	}
+}
+
+func TestWriteCacheHeadersVaryAndMaxAge(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	newContext := func() *gin.Context {
+		rec := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(rec)
+		c.Request = httptest.NewRequest(http.MethodGet, "/content", nil)
+		return c
+	}
+
+	c := newContext()
+	writeCacheHeaders(c, "upload", false)
+	if got := c.Writer.Header().Get("Cache-Control"); got != "private, max-age=60" {
+		t.Fatalf("upload private Cache-Control = %q", got)
+	}
+	if got := c.Writer.Header().Get("Vary"); got != "Authorization" {
+		t.Fatalf("upload private Vary = %q", got)
+	}
+
+	c = newContext()
+	writeCacheHeaders(c, "generated_image", true)
+	if got := c.Writer.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("generated public Cache-Control = %q", got)
+	}
+	if got := c.Writer.Header().Get("Vary"); got != "" {
+		t.Fatalf("public response must not Vary, got %q", got)
 	}
 }

@@ -57,7 +57,9 @@ type routeResolver interface {
 	ResolveRoute(ctx context.Context, input channel.ResolveRouteInput) (*channel.ResolvedRoute, error)
 	MarkRouteFailure(ctx context.Context, route *channel.ResolvedRoute, cause error)
 	MarkRouteSuccess(ctx context.Context, route *channel.ResolvedRoute)
-	// BuildRouteForUpstream 按上游 ID 定点重建路由，供异步媒体任务重查使用。
+}
+
+type mediaRouteResolver interface {
 	BuildRouteForUpstream(ctx context.Context, upstreamID uint, protocol string, upstreamModel string) (*channel.ResolvedRoute, error)
 }
 
@@ -298,6 +300,7 @@ type Service struct {
 	moderationSvc         *appcm.Service
 	toolLimiters          sync.Map
 	generationStreams     *generationStreamRegistry
+	pendingArtifacts      *pendingArtifactStore
 	snapshotCache         sync.Map // conversationID (uint) → *cachedSnapshot
 	userMemCache          sync.Map // userID (uint) → *cachedUserMemories
 	imageContextCache     *preparedConversationImageCache
@@ -480,6 +483,7 @@ func NewServiceWithRuntime(
 		storeProvider:     appstorage.NewRuntimeProvider(cfg, nil),
 		logger:            logger,
 		generationStreams: newGenerationStreamRegistry(cache, defaultGenerationStreamOptions()),
+		pendingArtifacts:  newPendingArtifactStore(),
 		imageContextCache: defaultPreparedConversationImageCache(),
 	}
 	if extractSvc == nil {

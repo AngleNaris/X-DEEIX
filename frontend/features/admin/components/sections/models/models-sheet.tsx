@@ -80,15 +80,12 @@ import type {
   AdminLLMModelCbPolicyMode,
   AdminLLMModelDisplayGroupDTO,
   AdminLLMModelDTO,
-  AdminLLMModelAccessScope,
-  AdminLLMModelCbPolicyMode,
   AdminLLMModelUpstreamSourceDTO,
   AdminLLMModelVendor,
   AdminLLMModelVendorDTO,
   AdminLLMStatus,
   AdminLLMUpstreamModelDTO,
   AdminLLMUpstreamView,
-  AdminLLMAdapter,
   UpdateAdminLLMModelRequest,
 } from "@/features/admin/api/llm.types";
 

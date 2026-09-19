@@ -105,7 +105,7 @@ const (
 
 // ContentPart 表示多模态消息中的一个内容片段。
 type ContentPart struct {
- URL string
+	URL          string
 	Kind         string        // text | image | video | file
 	Text         string        // Kind=text 或 Kind=file 时的文本内容
 	MimeType     string        // 媒体 MIME 类型（如 "image/jpeg"）
@@ -134,8 +134,8 @@ type Message struct {
 
 // GenerateInput 定义上游推理请求入参。
 type GenerateInput struct {
- OnProgress func(percent int)
- OnTaskStarted func(upstreamTaskID string)
+	OnProgress             func(percent int)
+	OnTaskStarted          func(upstreamTaskID string)
 	RequestID              string
 	ConversationID         uint
 	ConversationPublicID   string
@@ -678,7 +678,7 @@ type GeneratedImage struct {
 
 // GeneratedVideo 表示视频生成接口返回的一个视频结果。
 type GeneratedVideo struct {
- FallbackURL string
+	FallbackURL     string
 	URL             string
 	B64JSON         string
 	MIMEType        string
@@ -865,7 +865,7 @@ func NewClient(outboundPolicy security.OutboundPolicy) *Client {
 		AdapterOpenAIChatCompletions:  &openAIChatCompletionsAdapter{client: client},
 		AdapterOpenAIImageGenerations: &openAIImageGenerationsAdapter{client: client},
 		AdapterOpenAIImageEdits:       &openAIImageEditsAdapter{client: client},
-		AdapterImageEditsJSON:    &imageEditsJSONAdapter{client: client},
+		AdapterImageEditsJSON:         &imageEditsJSONAdapter{client: client},
 		AdapterXAIResponses:           &xAIResponsesAdapter{client: client},
 		AdapterXAIImage:               &xAIImageAdapter{client: client},
 		AdapterXAIImageEdits:          &xAIImageEditsAdapter{client: client},
@@ -875,7 +875,7 @@ func NewClient(outboundPolicy security.OutboundPolicy) *Client {
 		AdapterGoogleGenerateContent:  &geminiGenerateContentAdapter{client: client},
 		AdapterGoogleImageGeneration:  &geminiImageGenerationAdapter{client: client},
 		AdapterGeminiInteractions:     &geminiInteractionsAdapter{client: client},
-		AdapterOpenAIVideo: &openAIVideoAdapter{client: client},
+		AdapterOpenAIVideo:            &openAIVideoAdapter{client: client},
 	}
 	return client
 }
@@ -900,7 +900,9 @@ func newRouteHTTPClient(policy security.OutboundPolicy, redirectPolicy security.
 	transport := security.NewOutboundHTTPTransport(policy, time.Duration(connectTimeoutMS)*time.Millisecond)
 	transport.MaxIdleConns = 100
 	transport.MaxIdleConnsPerHost = 20
-	transport.IdleConnTimeout = 90 * time.Second
+	// 空闲连接保留时间必须短于常见网关（nginx/CDN）60s 的 keepalive，
+	// 否则会复用已被服务端单侧关闭的连接，导致请求写出阶段断连失败。
+	transport.IdleConnTimeout = 55 * time.Second
 	transport.ForceAttemptHTTP2 = true
 
 	client := &http.Client{
@@ -1960,7 +1962,7 @@ func firstNonZero(values ...int64) int64 {
 }
 
 type VideoTaskRetrieval struct {
- Status string
- Output *GenerateOutput
- Message string
+	Status  string
+	Output  *GenerateOutput
+	Message string
 }

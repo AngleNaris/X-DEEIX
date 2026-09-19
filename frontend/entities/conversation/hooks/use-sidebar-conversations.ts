@@ -486,6 +486,7 @@ export function useSidebarConversationsController({
       projectID?: string,
       roleID?: string,
       agentGroupID?: string,
+      systemPrompt?: string,
     ): Promise<ConversationDTO | null> => {
       const token = await resolveAccessToken();
       if (!token) {
@@ -506,6 +507,7 @@ export function useSidebarConversationsController({
         projectID: projectID?.trim() || "",
         roleID: roleID?.trim() || "",
         agentGroupID: groupID || undefined,
+        systemPrompt,
       });
       return upsertConversation(item);
     },

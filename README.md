@@ -647,3 +647,10 @@ DEEIX Chat is licensed under the [Apache License 2.0](./LICENSE).
 
 
 </details>
+
+
+## 社区贡献致谢
+
+本项目的 `custom` 分支整合并适配了 [LHXCxyw](https://github.com/LHXCxyw) 在 [LHXCxyw/DEEIX-Chat](https://github.com/LHXCxyw/DEEIX-Chat) 中的开发成果，包括个人模型渠道、项目文件工作区、创作画布、会话系统提示词及媒体生成与分发改进。整合参考版本为 [`da326fe8`](https://github.com/LHXCxyw/DEEIX-Chat/commit/da326fe8c67c61fbb2e2375934e85890d84fe20f)，感谢作者的贡献。
+
+重复能力按完整性与安全边界择优整合；存在交互冲突时保留本项目的聊天、角色、Agent Group 与文件管理交互。此致谢不代表原作者审核或维护本分支的适配代码。

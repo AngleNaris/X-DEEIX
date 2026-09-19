@@ -135,6 +135,9 @@ func normalizeDefaultTaskTypes(values []string) ([]string, error) {
 
 func (s *Service) loadDefaultTaskRoutes(ctx context.Context, repo repository.ChannelRepository) (map[string]string, *domainchannel.LLMSetting, error) {
 	setting, err := repo.GetLLMSetting(ctx, DefaultTaskRoutesSettingKey)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, nil, repository.ErrLLMSettingNotFound
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -165,7 +168,7 @@ func validateDefaultTaskTypesForModel(status string, kindsJSON string, taskTypes
 		return ErrInvalidKinds
 	}
 	for _, taskType := range taskTypes {
-		if !ModelSupportsTask(kindsJSON, taskType) {
+		if !defaultRouteModelMatchesTask(kindsJSON, taskType) {
 			return ErrInvalidKinds
 		}
 	}

@@ -10,10 +10,8 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/background"
 	"go.uber.org/zap"
 )
 
@@ -292,12 +290,6 @@ func classifyDurationOverrideSource(
 	// 2. 白名单未放行 duration：参数在过滤阶段被整体丢弃（仅当兜底与管理员白名单都未包含时）。
 	if mode := strings.TrimSpace(cfg.ModelOptionPolicyMode); mode == "" || mode == modelOptionPolicyAllowlist {
 		allowed := false
-		for _, path := range mediaOptionBaselinePathsFor(modelOptionPolicyProtocolKey(protocol)) {
-			if strings.EqualFold(strings.Join(path, "."), "duration") {
-				allowed = true
-				break
-			}
-		}
 		if !allowed {
 			for _, path := range modelOptionPathsForProtocol(cfg.ModelOptionAllowedPaths, protocol) {
 				if strings.EqualFold(strings.Join(path, "."), "duration") {

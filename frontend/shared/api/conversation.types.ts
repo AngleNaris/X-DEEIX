@@ -16,7 +16,6 @@ import type {
   SetConversationStarRequest as ContractSetConversationStarRequest,
   SetConversationSystemPromptRequest as ContractSetConversationSystemPromptRequest,
   SetMessageFeedbackRequest as ContractSetMessageFeedbackRequest,
-  TemporaryChatHistoryMessage as ContractTemporaryChatHistoryMessage,
   UpdateConversationLabelsRequest as ContractUpdateConversationLabelsRequest,
   UpdateConversationProjectRequest as ContractUpdateConversationProjectRequest,
   UpdateMessageRequest as ContractUpdateMessageRequest,
@@ -26,7 +25,6 @@ import type {
   ConversationPreviewMessageResponse,
   ConversationProjectResponse,
   ConversationResponse,
-  ConversationRunStatusResponse,
   ConversationSearchPageResponse,
   ConversationSearchResultResponse,
   ConversationShareResponse,
@@ -377,6 +375,13 @@ export type StreamMessageEvent =
       b64_json: string;
       mime_type?: string;
       revised_prompt?: string;
+    }
+  | {
+      type: "media_artifact_pending";
+      seq?: number;
+      run_id: string;
+      media_type: "image" | "video" | string;
+      indexes: number[];
     }
   | {
       type: "completed";
