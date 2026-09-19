@@ -24,6 +24,10 @@ import type {
 } from "./canvas-types.ts";
 import { CANVAS_LEGACY_STORAGE_KEY, CANVAS_MAX_SCALE, CANVAS_MIN_SCALE, CANVAS_STORAGE_KEY } from "./canvas-types.ts";
 
+let accountID = "guest";
+export function setCanvasStorageAccount(id: string): void { accountID = id || "guest"; }
+function storageKey(): string { return `${CANVAS_STORAGE_KEY}:${accountID}`; }
+
 // ---------------------------------------------------------------------------
 // 序列化：运行时图节点 -> 持久化结构（剥离 objectURL 等运行时字段）
 // ---------------------------------------------------------------------------
@@ -60,7 +64,7 @@ export function toPersistedEdges(edges: ReadonlyArray<GraphEdge>): PersistedGrap
 }
 
 export function stringifyCanvasState(state: PersistedCanvasState): string { return JSON.stringify(state); }
-export function saveCanvasState(state: PersistedCanvasState): void { if (typeof window !== "undefined") try { localStorage.setItem(CANVAS_STORAGE_KEY, stringifyCanvasState(state)); } catch {} }
+export function saveCanvasState(state: PersistedCanvasState): void { if (typeof window !== "undefined") try { localStorage.setItem(storageKey(), stringifyCanvasState(state)); } catch {} }
 
 // ---------------------------------------------------------------------------
 // 解析辅助
@@ -235,12 +239,12 @@ export function parseCanvasState(raw: string): PersistedCanvasState | null {
 export function loadCanvasState(): PersistedCanvasState | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = localStorage.getItem(CANVAS_STORAGE_KEY) ?? localStorage.getItem(CANVAS_LEGACY_STORAGE_KEY);
+    const raw = localStorage.getItem(storageKey());
     return raw ? parseCanvasState(raw) : null;
   } catch { return null; }
 }
 export function clearCanvasState(): void {
-  if (typeof window !== "undefined") try { localStorage.removeItem(CANVAS_STORAGE_KEY); localStorage.removeItem(CANVAS_LEGACY_STORAGE_KEY); localStorage.removeItem("deeix_canvas_state_v2"); } catch {}
+  if (typeof window !== "undefined") try { localStorage.removeItem(storageKey()); } catch {}
 }
 export function clampViewportScale(scale: number, min: number, max: number): number { const safeScale = Number.isFinite(scale) ? scale : 1; return Math.min(max, Math.max(min, safeScale)); }
 export function zoomViewportAt(current: { x: number; y: number; scale: number }, pivot: { x: number; y: number }, nextScale: number, min = 0.2, max = 4) {

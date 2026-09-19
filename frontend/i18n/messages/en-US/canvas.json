@@ -29,7 +29,7 @@
   "imageParamsDefault": "Default",
   "imageParamsCustom": "Custom…",
   "imageParamsReset": "Reset",
-  "nodeCount": "{count} images",
+  "nodeCount": "{count} nodes",
   "assetsPanel": "Assets",
   "assetsEmpty": "No assets yet. Generated images will appear here.",
   "assetsGroupReferences": "Reference images",

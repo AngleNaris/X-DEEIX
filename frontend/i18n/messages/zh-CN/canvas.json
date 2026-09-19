@@ -29,7 +29,7 @@
   "imageParamsDefault": "默认",
   "imageParamsCustom": "自定义…",
   "imageParamsReset": "重置",
-  "nodeCount": "{count} 张图像",
+  "nodeCount": "{count} 个节点",
   "assetsPanel": "资产列表",
   "assetsEmpty": "画布还没有资产，生成的图像会显示在这里",
   "assetsGroupReferences": "参考图片",

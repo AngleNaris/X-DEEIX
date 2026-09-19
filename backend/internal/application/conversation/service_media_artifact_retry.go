@@ -74,6 +74,13 @@ func (s *Service) RetryMediaImageArtifact(ctx context.Context, userID uint, runI
 		}, nil
 	}
 
+	recovered := false
+	defer func() {
+		if !recovered {
+			s.pendingArtifacts.Register(runID, []pendingImageArtifact{artifact})
+		}
+	}()
+
 	resolver, ok := s.routeResolver.(mediaRouteResolver)
 	if !ok {
 		return nil, ErrModelRouteNotConfigured
@@ -130,17 +137,13 @@ func (s *Service) RetryMediaImageArtifact(ctx context.Context, userID uint, runI
 
 	// 部分成功场景消息已有图片内容：追加 markdown，避免覆盖已保存产物
 	content := generatedImageMarkdown([]model.FileObject{file})
-	if existing, msgErr := s.repo.GetMessageByID(ctx, run.ConversationID, assistantMessageID); msgErr == nil && existing != nil {
-		if prefix := strings.TrimSpace(existing.Content); prefix != "" && !strings.HasPrefix(prefix, "!") {
-			content = prefix + "\n\n" + content
-		}
-	}
 	if err := s.repo.CompleteAssistantMessageWithGeneratedAttachments(ctx,
 		assistantMessageID,
 		repository.AssistantMessageCompletionUpdate{
-			ContentType: "image",
-			Content:     content,
-			Status:      "success",
+			AppendGeneratedContent: true,
+			ContentType:            "image",
+			Content:                content,
+			Status:                 "success",
 		},
 		[]model.Attachment{{
 			ConversationID: run.ConversationID,
@@ -161,6 +164,7 @@ func (s *Service) RetryMediaImageArtifact(ctx context.Context, userID uint, runI
 		return nil, err
 	}
 
+	recovered = true
 	return &MediaImageArtifactRetryResult{
 		Status: MediaImageArtifactRetryRecovered,
 		RunID:  runID,

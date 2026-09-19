@@ -23164,6 +23164,13 @@ const docTemplate = `{
                     "type": "string",
                     "maxLength": 128
                 },
+                "modelScope": {
+                    "type": "string",
+                    "enum": [
+                        "platform",
+                        "user"
+                    ]
+                },
                 "options": {
                     "type": "object",
                     "additionalProperties": true
@@ -23182,6 +23189,9 @@ const docTemplate = `{
                 "sourceVideoFileID": {
                     "type": "string",
                     "maxLength": 128
+                },
+                "userModelID": {
+                    "type": "integer"
                 }
             }
         },

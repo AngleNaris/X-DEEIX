@@ -390,7 +390,7 @@ function toChatModelOption(
     ? resolveModelIdentity({ code: item.upstreamModelId || item.name })
     : null;
   return {
-    platformModelName: isUserModel ? `${item.name} [BYOK #${item.id}]` : item.platformModelName,
+    platformModelName: isUserModel ? `${item.name.slice(0, 90)} [BYOK #${item.id}]` : item.platformModelName,
     modelScope: isUserModel ? "user" : "platform",
     userModelID: isUserModel ? item.id : undefined,
     upstreamID: isUserModel ? item.upstreamId : undefined,
@@ -505,7 +505,7 @@ export function useChatModelOptions({
 
     const catalog = await refreshModelCatalog();
     const nextModel = [...catalog.models, ...catalog.userModels].find(
-      (item) => ("upstreamModelId" in item ? `${item.name} [BYOK #${item.id}]` : item.platformModelName) === normalizedName,
+      (item) => ("upstreamModelId" in item ? `${item.name.slice(0, 90)} [BYOK #${item.id}]` : item.platformModelName) === normalizedName,
     );
     return nextModel ? toChatModelOption(nextModel, catalog.modelOptionPolicy?.nativeTools ?? []) : null;
   }, [refreshModelCatalog]);
@@ -619,7 +619,7 @@ export function useChatModelOptions({
       const latestRun = runs.results[0];
       const userModelID = latestRun?.routedBindingCode?.match(/^user-model-(\d+)$/)?.[1];
       const modelName = latestRun?.platformModelName?.trim() || "";
-      const latestRunModel = userModelID && modelName ? `${modelName} [BYOK #${userModelID}]` : modelName;
+      const latestRunModel = userModelID && modelName ? `${modelName.slice(0, 90)} [BYOK #${userModelID}]` : modelName;
       setSelectedPlatformModelName(latestRunModel || fallbackModel);
     }
 
@@ -647,7 +647,7 @@ export function useChatModelOptions({
       if (
         !userSelectedModelRef.current &&
         roleInitialModel &&
-        availableModels.some((item) => ("upstreamModelId" in item ? `${item.name} [BYOK #${item.id}]` : item.platformModelName) === roleInitialModel)
+        availableModels.some((item) => ("upstreamModelId" in item ? `${item.name.slice(0, 90)} [BYOK #${item.id}]` : item.platformModelName) === roleInitialModel)
       ) {
         setSelectedPlatformModelName(roleInitialModel);
         return;
@@ -658,7 +658,7 @@ export function useChatModelOptions({
       if (
         !userSelectedModelRef.current &&
         currentSelection &&
-        availableModels.some((item) => ("upstreamModelId" in item ? `${item.name} [BYOK #${item.id}]` : item.platformModelName) === currentSelection)
+        availableModels.some((item) => ("upstreamModelId" in item ? `${item.name.slice(0, 90)} [BYOK #${item.id}]` : item.platformModelName) === currentSelection)
       ) {
         return;
       }
@@ -681,7 +681,7 @@ export function useChatModelOptions({
       if (!cancelled && !userSelectedModelRef.current) {
         const roleInitialModel = initialModel?.trim() || "";
         setSelectedPlatformModelName(
-          roleInitialModel && availableModels.some((item) => ("upstreamModelId" in item ? `${item.name} [BYOK #${item.id}]` : item.platformModelName) === roleInitialModel)
+          roleInitialModel && availableModels.some((item) => ("upstreamModelId" in item ? `${item.name.slice(0, 90)} [BYOK #${item.id}]` : item.platformModelName) === roleInitialModel)
             ? roleInitialModel
             : (availableModels[0] ? (isUserModel(availableModels[0]) ? availableModels[0].name : availableModels[0].platformModelName) : ""),
         );

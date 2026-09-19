@@ -1,3 +1,5 @@
+> 来源：LHXCxyw/DEEIX-Chat 的历史设计记录。原文状态与验证结论仅适用于来源仓库；custom 的实际取舍、验证和部署边界见 `.codex/verification-lhxcxyw-integration-20260919.md`。签名媒体和公开分享在 custom 使用 no-store，不采用绕过签名参数的 CDN 缓存配置。
+
 # 文件媒体加载慢与缓存失效修复计划
 
 日期：2026-09-14

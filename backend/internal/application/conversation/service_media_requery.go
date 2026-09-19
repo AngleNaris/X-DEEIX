@@ -84,7 +84,7 @@ func (s *Service) RequeryMediaVideoRun(ctx context.Context, userID uint, runID s
 		// 上游任务从未提交成功（如提交即被拒），没有可回查的对象
 		return nil, ErrMediaVideoInputInvalid
 	}
-	if run.Status == "success" {
+	if run.Status != "error" && run.Status != "canceled" {
 		return nil, ErrMediaVideoInputInvalid
 	}
 
@@ -200,10 +200,12 @@ func (s *Service) RequeryMediaVideoRun(ctx context.Context, userID uint, runID s
 	if err := s.repo.CompleteAssistantMessageWithGeneratedAttachments(ctx,
 		assistantMessageID,
 		repository.AssistantMessageCompletionUpdate{
-			ContentType: "video",
-			Content:     content,
-			Status:      "success",
-			LatencyMS:   run.TotalLatencyMS,
+			RequireIncomplete:      true,
+			AppendGeneratedContent: true,
+			ContentType:            "video",
+			Content:                content,
+			Status:                 "success",
+			LatencyMS:              run.TotalLatencyMS,
 		},
 		attachmentRows,
 	); err != nil {

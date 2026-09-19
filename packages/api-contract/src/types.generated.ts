@@ -2082,6 +2082,7 @@ export interface MediaVideoExtensionRequest {
   clientRunID?: string;
   /** @maxLength 128 */
   model?: string;
+  modelScope?: "platform" | "user";
   options?: Record<string, any>;
   /** @maxLength 32 */
   parentMessagePublicID?: string;
@@ -2090,6 +2091,7 @@ export interface MediaVideoExtensionRequest {
   sourceMessagePublicID?: string;
   /** @maxLength 128 */
   sourceVideoFileID: string;
+  userModelID?: number;
 }
 
 export interface MemoryErrorDoc {

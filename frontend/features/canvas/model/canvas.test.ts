@@ -3,7 +3,7 @@ import test from "node:test";
 import { canConnectGraphNodes, createUserPromptTemplate, gatherGraphGenerateInputs, graphEdgeMidpoint, graphEdgePath, graphMediaCompatible, graphNodePorts, graphPortCanvasPosition, isGraphPortCompatibleTarget, isPromptGraphNode, loadPromptTemplates, MAX_MEDIA_REFERENCE_COUNT, promptNodeTruncated } from "./canvas-graph.ts";
 import { editorSizeOptions, modelCanvasMediaType, resolveCanvasMediaRoute, resolveCanvasVideoControls } from "./canvas-image-options.ts";
 import { activeElasticDecorationForElement, arrangeCanvasElements, canvasElementIDsCarriedByDecoration, canvasElementIDsCarriedByFrame, canvasElementIDsInRegion, elasticCanvasBounds, frameFitBounds, frameUnionBounds, isCanvasElementCenterInside, isCanvasElementInside, nextCanvasVersion, refitFrameDecorations, selectedNodeIDsForFilter, shouldDetachElasticBoundary, stableFrameIDForElement, trappedFocusIndex, viewportForCanvasKey } from "./canvas-interactions.ts";
-import { clampViewportScale, legacyNodeToGraphNodes, parseCanvasState, restoreEdges, restoreGraphNodes, stringifyCanvasState, toPersistedEdges, toPersistedGraphNodes, toPersistedNodes, zoomViewportAt } from "./canvas-persist.ts";
+import { loadCanvasState, saveCanvasState, clearCanvasState, setCanvasStorageAccount, clampViewportScale, legacyNodeToGraphNodes, parseCanvasState, restoreEdges, restoreGraphNodes, stringifyCanvasState, toPersistedEdges, toPersistedGraphNodes, toPersistedNodes, zoomViewportAt } from "./canvas-persist.ts";
 import { CANVAS_MAX_SCALE, CANVAS_MIN_SCALE, type GraphEdge, type GraphNode, PROMPT_MAX_LENGTH } from "./canvas-types.ts";
 
 test("将 v2 旧画布状态迁移为 v4 图节点 schema", () => {
@@ -646,4 +646,27 @@ test("视频模型路由判定与参数控件解析", () => {
   assert.ok(paths.includes("aspect_ratio"));
   // 图像模型没有视频控件
   assert.equal(resolveCanvasVideoControls(imageModel).length, 0);
+});
+
+test("canvas persistence isolates accounts and deletion", () => {
+  const entries = new Map<string, string>();
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const previousStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: {} });
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
+    getItem: (key: string) => entries.get(key) ?? null,
+    setItem: (key: string, value: string) => entries.set(key, value),
+    removeItem: (key: string) => entries.delete(key),
+  } });
+  try {
+    const saved = parseCanvasState(JSON.stringify({ nodes: [], imageOptions: {}, viewport: { x: 0, y: 0, scale: 1 } }))!;
+    assert.ok(saved);
+    setCanvasStorageAccount("1"); saveCanvasState(saved);
+    setCanvasStorageAccount("2"); assert.equal(loadCanvasState(), null); clearCanvasState();
+    setCanvasStorageAccount("1"); assert.ok(loadCanvasState());
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow); else Reflect.deleteProperty(globalThis, "window");
+    if (previousStorage) Object.defineProperty(globalThis, "localStorage", previousStorage); else Reflect.deleteProperty(globalThis, "localStorage");
+    setCanvasStorageAccount("guest");
+  }
 });

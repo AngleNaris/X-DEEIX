@@ -2661,3 +2661,72 @@ func TestDeleteFileObjectAndReleaseQuotaRemovesExclusiveObject(t *testing.T) {
 		t.Fatal("exclusive object should be removable after file deletion")
 	}
 }
+
+func TestDeleteMessagePreservesBranchAndUserBoundary(t *testing.T) {
+	db := openConversationRepositoryTestDB(t)
+	repo := NewRepo(db)
+	ctx := context.Background()
+	conv := model.Conversation{UserID: 1, PublicID: "delete-conv", SessionKey: "delete-session", MessageCount: 2, LastResponseID: "stale-response"}
+	if err := db.Create(&conv).Error; err != nil {
+		t.Fatal(err)
+	}
+	parent := model.Message{UserID: 1, ConversationID: conv.ID, PublicID: "delete-parent", Role: "user", Status: "success"}
+	if err := db.Create(&parent).Error; err != nil {
+		t.Fatal(err)
+	}
+	child := model.Message{UserID: 1, ConversationID: conv.ID, PublicID: "delete-child", ParentMessageID: &parent.ID, Role: "assistant", Status: "pending"}
+	if err := db.Create(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.DeleteMessageByPublicID(ctx, 2, parent.PublicID); !errors.Is(err, repository.ErrNotFound) {
+		t.Fatalf("cross-user deletion: %v", err)
+	}
+	if _, err := repo.DeleteMessageByPublicID(ctx, 1, parent.PublicID); !errors.Is(err, repository.ErrInvalidInput) {
+		t.Fatalf("active generation deletion: %v", err)
+	}
+	if err := db.Model(&child).Update("status", "success").Error; err != nil {
+		t.Fatal(err)
+	}
+	if n, err := repo.DeleteMessageByPublicID(ctx, 1, parent.PublicID); err != nil || n != 1 {
+		t.Fatalf("delete = %d, %v", n, err)
+	}
+	if err := db.First(&child, child.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if child.ParentMessageID != nil {
+		t.Fatal("child still references deleted message")
+	}
+	if err := db.First(&conv, conv.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if conv.MessageCount != 1 || conv.LastResponseID != "" {
+		t.Fatalf("stale conversation state: %+v", conv)
+	}
+}
+
+func TestRecoveredArtifactPreservesContentAndUsage(t *testing.T) {
+	db := openConversationRepositoryTestDB(t)
+	conv := model.Conversation{UserID: 1, PublicID: "retry-conv", SessionKey: "retry-session"}
+	if err := db.Create(&conv).Error; err != nil {
+		t.Fatal(err)
+	}
+	msg := model.Message{UserID: 1, ConversationID: conv.ID, PublicID: "retry-message", Role: "assistant", Status: "success", Content: "original", InputTokens: 42, TokenUsage: 42}
+	if err := db.Create(&msg).Error; err != nil {
+		t.Fatal(err)
+	}
+	repo := NewRepo(db)
+	for _, content := range []string{"image1", "image2"} {
+		if err := repo.CompleteAssistantMessageWithGeneratedAttachments(context.Background(), msg.ID, repository.AssistantMessageCompletionUpdate{AppendGeneratedContent: true, Content: content, Status: "success"}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := db.First(&msg, msg.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CompleteAssistantMessageWithGeneratedAttachments(context.Background(), msg.ID, repository.AssistantMessageCompletionUpdate{RequireIncomplete: true, Content: "duplicate", Status: "success"}, nil); !errors.Is(err, repository.ErrInvalidInput) {
+		t.Fatalf("completed recovery accepted: %v", err)
+	}
+	if msg.Content != "original\n\nimage1\n\nimage2" || msg.InputTokens != 42 || msg.TokenUsage != 42 {
+		t.Fatalf("recovery overwrote data: %+v", msg)
+	}
+}

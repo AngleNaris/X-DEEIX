@@ -4696,6 +4696,11 @@ definitions:
       model:
         maxLength: 128
         type: string
+      modelScope:
+        enum:
+        - platform
+        - user
+        type: string
       options:
         additionalProperties: true
         type: object
@@ -4710,6 +4715,8 @@ definitions:
       sourceVideoFileID:
         maxLength: 128
         type: string
+      userModelID:
+        type: integer
     required:
     - prompt
     - sourceVideoFileID

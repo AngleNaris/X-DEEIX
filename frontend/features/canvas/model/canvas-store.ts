@@ -27,6 +27,7 @@ import {
 } from "@/features/canvas/model/canvas-interactions";
 import {
   clearCanvasState,
+  setCanvasStorageAccount,
   loadCanvasState,
   restoreEdges,
   restoreGraphNodes,
@@ -185,6 +186,7 @@ let modelCatalog: ChatModelOption[] = [];
 let persistTimer: number | null = null;
 let cloudPersist: ((raw: string) => void) | null = null;
 let lastPersistedRaw = "";
+let canvasAccountID = "";
 let nodeSpawnCounter = 0;
 type GraphSnapshot = { nodes: GraphNode[]; edges: GraphEdge[] };
 const undoStack: GraphSnapshot[] = [];
@@ -744,6 +746,26 @@ const canvasStoreImplementation = {
 
   setLabels(next: CanvasStoreLabels): void {
     labels = next;
+  },
+
+  setAccount(id: string): void {
+    if (canvasAccountID === id) return;
+    cloudPersist = null;
+    if (persistTimer !== null) clearTimeout(persistTimer);
+    persistTimer = null;
+    for (const controller of abortControllers.values()) controller.abort();
+    abortControllers.clear();
+    startAborts.clear();
+    for (const url of objectURLCache.values()) URL.revokeObjectURL(url);
+    objectURLCache.clear();
+    undoStack.length = 0;
+    redoStack.length = 0;
+    nodeMoveSnapshot = null;
+    nodeSpawnCounter = 0;
+    lastPersistedRaw = "";
+    canvasAccountID = id;
+    setCanvasStorageAccount(id);
+    setState(() => ({ ...initialState }));
   },
 
   setCloudPersist(next: ((raw: string) => void) | null): void {
@@ -1417,6 +1439,7 @@ const canvasStoreImplementation = {
   // 图执行引擎：生成节点汇聚上游提示词与参考图并流式生成，结果写入输出节点
   // -------------------------------------------------------------------------
   async runGenerateNode(generateNodeID: string): Promise<void> {
+    const account = canvasAccountID;
     const generateNode = state.nodes.find((node) => node.id === generateNodeID);
     if (!generateNode || generateNode.kind !== "generate" || !labels) {
       return;
@@ -1476,6 +1499,7 @@ const canvasStoreImplementation = {
     }
 
     const token = await resolveAccessToken();
+    if (account !== canvasAccountID) return;
     if (!token) {
       markGenerateNodeError(generateNodeID, labels.needLogin);
       toast.error(labels.needLogin);
@@ -1490,6 +1514,10 @@ const canvasStoreImplementation = {
       return;
     }
 
+    if (account !== canvasAccountID) {
+      void deleteConversation(token, conversationID).catch(() => {});
+      return;
+    }
     const prompt = inputs.prompt;
     const operation: CanvasOperation = references.length > 0 && generateNode.operation === "generate"
       ? "edit"
@@ -1712,6 +1740,8 @@ const canvasStoreImplementation = {
     startedAt?: number;
     pendingArtifacts?: OutputPendingRetry[];
   }): Promise<void> {
+    const account = canvasAccountID;
+    if (!state.nodes.some((node) => node.id === generateNodeID)) return;
     updateNode(generateNodeID, (node) =>
       node.kind === "generate" && (node.runStatus === "pending" || node.runStatus === "streaming")
         ? { ...node, runStatus: "streaming", statusLabel: labels?.nodeSavingLocal ?? "" }
@@ -1730,10 +1760,12 @@ const canvasStoreImplementation = {
       const imageSource = resolveCanvasChatImageSource(rawResponse);
       if (imageSource) {
         const token = await resolveAccessToken();
+        if (account !== canvasAccountID) return;
         if (!token) {
           return;
         }
         const sourceFile = await canvasChatImageSourceToFile(imageSource, new AbortController().signal);
+        if (account !== canvasAccountID) return;
         const uploaded = await uploadFile(token, sourceFile, { purpose: "generated_image" });
         mediaAttachments.push({
           fileID: uploaded.file.fileID,
@@ -1752,6 +1784,7 @@ const canvasStoreImplementation = {
       }
     }
 
+    if (account !== canvasAccountID) return;
     const sourceNode = state.nodes.find((node) => node.id === generateNodeID);
     if (!sourceNode || sourceNode.kind !== "generate") {
       return;

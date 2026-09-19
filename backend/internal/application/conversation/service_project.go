@@ -13,6 +13,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	appskill "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/skill"
@@ -216,7 +217,7 @@ func (s *Service) ArchiveProjectFiles(ctx context.Context, userID uint, projectP
 			return closeErr
 		}
 	}
-	return nil
+	return archive.Close()
 }
 
 // ImportProjectArchive 解压 ZIP 到项目工作区，所有路径、对象键和数据库写入均绑定 user+project。
@@ -255,6 +256,18 @@ func (s *Service) ImportProjectArchive(ctx context.Context, input ProjectArchive
 		_ = s.repo.FailProjectImport(ctx, input.UserID, workspace.ID, job.ID, "storage_unavailable", "storage unavailable")
 		return nil, err
 	}
+	committed := false
+	writtenKeys := []string{}
+	defer func() {
+		if !committed {
+			cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			defer cancel()
+			for _, key := range writtenKeys {
+				_ = store.Delete(cleanupCtx, key)
+			}
+			_ = s.repo.FailProjectImport(cleanupCtx, input.UserID, workspace.ID, job.ID, "import_failed", "archive import failed")
+		}
+	}()
 	files := make([]model.ProjectFile, 0, min(len(archive.File), maxProjectArchiveFiles))
 	var total int64
 	for _, entry := range archive.File {
@@ -263,7 +276,7 @@ func (s *Service) ImportProjectArchive(ctx context.Context, input ProjectArchive
 			return nil, ErrFileTooLarge
 		}
 		relative := path.Clean(strings.ReplaceAll(entry.Name, "\\", "/"))
-		if relative == "." || strings.HasPrefix(relative, "../") || strings.HasPrefix(relative, "/") {
+		if relative == "." || relative == ".." || strings.ContainsAny(relative, ":\x00") || strings.HasPrefix(relative, "../") || strings.HasPrefix(relative, "/") {
 			_ = s.repo.FailProjectImport(ctx, input.UserID, workspace.ID, job.ID, "invalid_path", "invalid archive path")
 			return nil, ErrInvalidFileReference
 		}
@@ -278,9 +291,17 @@ func (s *Service) ImportProjectArchive(ctx context.Context, input ProjectArchive
 		if openErr != nil {
 			return nil, openErr
 		}
-		limited := io.LimitReader(reader, maxProjectArchiveFileBytes+1)
+		content, readErr := io.ReadAll(io.LimitReader(reader, maxProjectArchiveFileBytes+1))
+		_ = reader.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if len(content) > maxProjectArchiveFileBytes || total+int64(len(content)) > maxProjectArchiveTotalBytes {
+			return nil, ErrFileTooLarge
+		}
 		key := fmt.Sprintf("project/%d/%d/%s", input.UserID, workspace.ID, uuid.NewString()+"/"+relative)
-		info, putErr := store.Put(ctx, key, limited, objectstore.PutOptions{SizeBytes: int64(entry.UncompressedSize64), ContentType: mime.TypeByExtension(path.Ext(relative))})
+		writtenKeys = append(writtenKeys, key)
+		info, putErr := store.Put(ctx, key, bytes.NewReader(content), objectstore.PutOptions{SizeBytes: int64(len(content)), ContentType: mime.TypeByExtension(path.Ext(relative))})
 		_ = reader.Close()
 		if putErr != nil {
 			return nil, putErr
@@ -292,6 +313,7 @@ func (s *Service) ImportProjectArchive(ctx context.Context, input ProjectArchive
 	if err = s.repo.CompleteProjectImport(ctx, input.UserID, workspace.ID, job.ID, files, len(files), total); err != nil {
 		return nil, err
 	}
+	committed = true
 	return &ProjectArchiveResult{Import: job, FileCount: len(files), TotalBytes: total}, nil
 }
 
@@ -437,7 +459,7 @@ func (s *Service) DeleteProjectFile(ctx context.Context, userID uint, projectPub
 
 func normalizeProjectFilePath(value string) (string, error) {
 	relative := path.Clean(strings.ReplaceAll(strings.TrimSpace(value), "\\", "/"))
-	if relative == "." || strings.HasPrefix(relative, "../") || strings.HasPrefix(relative, "/") {
+	if relative == "." || relative == ".." || strings.ContainsAny(relative, ":\x00") || strings.HasPrefix(relative, "../") || strings.HasPrefix(relative, "/") {
 		return "", ErrInvalidFileReference
 	}
 	return relative, nil

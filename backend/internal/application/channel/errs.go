@@ -7,6 +7,7 @@ import (
 )
 
 var (
+	ErrInvalidUpstreamStatus = errors.New("invalid upstream status")
 	// ErrUpstreamNotFound 上游不存在。
 	ErrUpstreamNotFound = repository.ErrUpstreamNotFound
 	// ErrModelNotFound 模型不存在。

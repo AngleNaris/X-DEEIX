@@ -122,7 +122,12 @@ func (s *Service) ensureThumbnailVariant(ctx context.Context, store objectstore.
 			return nil, err
 		}
 		defer original.Close() //nolint:errcheck
-		jpegBytes, err := renderThumbnailVariant(original, thumbnailMaxEdge[variant])
+		select {
+        case imageEncodingSlots <- struct{}{}:
+            defer func() { <-imageEncodingSlots }()
+        case <-ctx.Done(): return nil, ctx.Err()
+        }
+        jpegBytes, err := renderThumbnailVariant(original, thumbnailMaxEdge[variant])
 		if err != nil {
 			return nil, err
 		}
@@ -152,7 +157,8 @@ func (s *Service) prewarmThumbnailVariants(item domainconversation.FileObject) {
 		for _, variant := range []string{ThumbnailVariantThumb, ThumbnailVariantPreview} {
 			// 已存在时 store.Put 覆盖同样内容（原文件不可变，变体幂等），代价只是一次重编码；
 			// 为省 CPU 先探测存在性。
-			if _, _, err := store.Open(ctx, variantStorageKey(item.StoragePath, variant)); err == nil {
+			if reader, _, err := store.Open(ctx, variantStorageKey(item.StoragePath, variant)); err == nil {
+                _ = reader.Close()
 				continue
 			}
 			if err := s.ensureThumbnailVariant(ctx, store, &item, variant); err != nil && s.logger != nil {
@@ -200,7 +206,13 @@ func variantStorageKey(storagePath string, variant string) string {
 // renderThumbnailVariant 解码原图、按长边缩放、合成白色背景后编码 JPEG。
 // 无法解码的图片（损坏或未注册格式）返回 ErrThumbnailUnsupported，由调用方按 404 处理。
 func renderThumbnailVariant(reader io.Reader, maxEdge int) ([]byte, error) {
-	src, _, err := image.Decode(reader)
+	data, err := io.ReadAll(io.LimitReader(reader, 32*1024*1024+1))
+    if err != nil || len(data) > 32*1024*1024 { return nil, ErrThumbnailUnsupported }
+    config, _, err := image.DecodeConfig(bytes.NewReader(data))
+    if err != nil || config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 32_000_000 {
+        return nil, ErrThumbnailUnsupported
+    }
+    src, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, ErrThumbnailUnsupported
 	}

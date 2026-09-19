@@ -19,19 +19,22 @@ type MessageUsageUpdate struct {
 
 // AssistantMessageCompletionUpdate 定义助手消息完成态更新字段。
 type AssistantMessageCompletionUpdate struct {
-	ContentType      string
-	Content          string
-	ReasoningContent string
-	InputTokens      int64
-	OutputTokens     int64
-	CacheReadTokens  int64
-	CacheWriteTokens int64
-	ReasoningTokens  int64
-	LatencyMS        int64
-	Status           string
-	ErrorCode        string
-	ErrorMessage     string
-	KnowledgeSources []domainconversation.MessageKnowledgeSource
+	// AppendGeneratedContent preserves usage and existing content during artifact recovery.
+	AppendGeneratedContent bool
+	RequireIncomplete      bool
+	ContentType            string
+	Content                string
+	ReasoningContent       string
+	InputTokens            int64
+	OutputTokens           int64
+	CacheReadTokens        int64
+	CacheWriteTokens       int64
+	ReasoningTokens        int64
+	LatencyMS              int64
+	Status                 string
+	ErrorCode              string
+	ErrorMessage           string
+	KnowledgeSources       []domainconversation.MessageKnowledgeSource
 }
 
 // ForkConversationMessage 描述 fork 时待创建的消息及其源消息关系。

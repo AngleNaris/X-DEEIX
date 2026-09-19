@@ -3,7 +3,6 @@ package channel
 import (
 	"context"
 	"encoding/json"
-	"net/url"
 	"time"
 
 	domainchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/channel"
@@ -150,6 +149,7 @@ func (s *Service) UpdateUserUpstream(ctx context.Context, userID, upstreamID uin
 		existing.Name = *input.Name
 	}
 	if input.BaseURL != nil {
+        if err := s.validateUpstreamBaseURL(*input.BaseURL); err != nil { return ErrInvalidBaseURL }
 		existing.BaseURL = *input.BaseURL
 	}
 	if input.APIKeys != nil {
@@ -182,8 +182,14 @@ func (s *Service) UpdateUserUpstream(ctx context.Context, userID, upstreamID uin
 		existing.HeadersJSON = string(headersJSON)
 	}
 	if input.Status != nil {
-		existing.Status = *input.Status
-	}
+        if *input.Status != "active" && *input.Status != "inactive" { return ErrInvalidUpstreamStatus }
+        if *input.Status == "active" && cfg.UserUpstreamRequireApproval && existing.Status != "active" {
+            existing.Status = "pending_approval"
+        } else { existing.Status = *input.Status }
+    }
+    if cfg.UserUpstreamRequireApproval && (input.BaseURL != nil || input.APIKeys != nil || input.Headers != nil) {
+        existing.Status = "pending_approval"
+    }
 
 	existing.UpdatedAt = time.Now()
 
@@ -214,7 +220,7 @@ func (s *Service) validateUserUpstreamInput(input CreateUserUpstreamInput) error
 		return ErrAPIKeysRequired
 	}
 	// URL 格式校验
-	if _, err := url.Parse(input.BaseURL); err != nil {
+	if err := s.validateUpstreamBaseURL(input.BaseURL); err != nil {
 		return ErrInvalidBaseURL
 	}
 	return nil

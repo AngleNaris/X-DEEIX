@@ -741,6 +741,13 @@ func (r *Repo) DeleteMessageByPublicID(ctx context.Context, userID uint, publicI
 			First(&target).Error; err != nil {
 			return translateError(err)
 		}
+		var pending int64
+		if err := tx.Model(&models.Message{}).Where("conversation_id = ? AND status = ?", target.ConversationID, "pending").Count(&pending).Error; err != nil {
+			return translateError(err)
+		}
+		if pending > 0 {
+			return repository.ErrInvalidInput
+		}
 		if err := tx.
 			Model(&models.Message{}).
 			Where("conversation_id = ? AND parent_message_id = ?", target.ConversationID, target.ID).
@@ -756,7 +763,10 @@ func (r *Repo) DeleteMessageByPublicID(ctx context.Context, userID uint, publicI
 		if err := tx.
 			Model(&models.Conversation{}).
 			Where("id = ?", target.ConversationID).
-			UpdateColumn("message_count", gorm.Expr("GREATEST(message_count - ?, 0)", deleted)).
+			Updates(map[string]interface{}{
+				"message_count":    gorm.Expr("CASE WHEN message_count > ? THEN message_count - ? ELSE 0 END", deleted, deleted),
+				"last_response_id": "", "last_prompt_fingerprint": "", "last_assistant_message_id": nil,
+			}).
 			Error; err != nil {
 			return translateError(err)
 		}
@@ -1634,6 +1644,7 @@ func (r *Repo) CompleteAssistantMessageWithGeneratedAttachments(
 	assistantAttachments []domainconversation.Attachment,
 ) error {
 	return translateError(r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+
 		if len(assistantAttachments) > 0 {
 			if err := r.lockUsersForAttachmentWrite(tx, assistantAttachments); err != nil {
 				return err
@@ -1649,6 +1660,16 @@ func (r *Repo) CompleteAssistantMessageWithGeneratedAttachments(
 			}
 			if err := tx.Create(&entities).Error; err != nil {
 				return err
+			}
+		}
+
+		if assistantCompletion.RequireIncomplete {
+			var current models.Message
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&current, assistantMessageID).Error; err != nil {
+				return err
+			}
+			if current.Status == "success" {
+				return repository.ErrInvalidInput
 			}
 		}
 
@@ -1673,6 +1694,14 @@ func (r *Repo) CompleteAssistantMessageWithGeneratedAttachments(
 			"status":             assistantCompletion.Status,
 			"error_code":         assistantCompletion.ErrorCode,
 			"error_message":      assistantCompletion.ErrorMessage,
+		}
+		if assistantCompletion.AppendGeneratedContent {
+			updates = map[string]interface{}{
+				"content":       gorm.Expr("CASE WHEN COALESCE(content, '') = '' THEN ? ELSE content || ? END", assistantCompletion.Content, "\n\n"+assistantCompletion.Content),
+				"status":        assistantCompletion.Status,
+				"error_code":    "",
+				"error_message": "",
+			}
 		}
 		if contentType := strings.TrimSpace(assistantCompletion.ContentType); contentType != "" {
 			updates["content_type"] = contentType
@@ -3057,11 +3086,15 @@ func (r *Repo) UpdateFileObjectRagOptOut(ctx context.Context, userID uint, fileI
 func (r *Repo) UpdateFileObjectFavorite(ctx context.Context, userID uint, fileID string, favorite bool) (*domainconversation.FileObject, error) {
 	var item models.FileObject
 	if err := r.db.WithContext(ctx).Where("user_id = ? AND status = ? AND file_id = ?", userID, "active", fileID).First(&item).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) { return nil, ErrFileNotFound }
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrFileNotFound
+		}
 		return nil, translateError(err)
 	}
 	item.Favorite = favorite
-	if err := r.db.WithContext(ctx).Save(&item).Error; err != nil { return nil, translateError(err) }
+	if err := r.db.WithContext(ctx).Save(&item).Error; err != nil {
+		return nil, translateError(err)
+	}
 	result := toFileObjectDomain(item)
 	return &result, nil
 }
@@ -3144,112 +3177,112 @@ func buildSingleFileKindWhereClause(filterKind string) (string, []interface{}) {
 		return "(LOWER(mime_type) = ? OR LOWER(file_name) LIKE ?)", []interface{}{"application/pdf", "%.pdf"}
 	case "spreadsheet":
 		return "(" + strings.Join([]string{
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-			}, " OR ") + ")", []interface{}{
-				"%spreadsheet%",
-				"%excel%",
-				"%csv%",
-				"%.xls",
-				"%.xlsx",
-				"%.csv",
-				"%.ods",
-			}
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+		}, " OR ") + ")", []interface{}{
+			"%spreadsheet%",
+			"%excel%",
+			"%csv%",
+			"%.xls",
+			"%.xlsx",
+			"%.csv",
+			"%.ods",
+		}
 	case "presentation":
 		return "(" + strings.Join([]string{
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-			}, " OR ") + ")", []interface{}{
-				"%presentation%",
-				"%powerpoint%",
-				"%.ppt",
-				"%.pptx",
-				"%.odp",
-			}
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+		}, " OR ") + ")", []interface{}{
+			"%presentation%",
+			"%powerpoint%",
+			"%.ppt",
+			"%.pptx",
+			"%.odp",
+		}
 	case "document":
 		return "(" + strings.Join([]string{
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-			}, " OR ") + ")", []interface{}{
-				"%word%",
-				"%rtf%",
-				"%opendocument.text%",
-				"%.doc",
-				"%.docx",
-				"%.rtf",
-				"%.odt",
-				"%.pages",
-			}
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+		}, " OR ") + ")", []interface{}{
+			"%word%",
+			"%rtf%",
+			"%opendocument.text%",
+			"%.doc",
+			"%.docx",
+			"%.rtf",
+			"%.odt",
+			"%.pages",
+		}
 	case "code":
 		return "(" + strings.Join([]string{
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(mime_type) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-				"LOWER(file_name) LIKE ?",
-			}, " OR ") + ")", []interface{}{
-				"text/%",
-				"%json%",
-				"%javascript%",
-				"%typescript%",
-				"%xml%",
-				"%html%",
-				"%css%",
-				"%yaml%",
-				"%toml%",
-				"%sql%",
-				"%markdown%",
-				"%.js",
-				"%.jsx",
-				"%.ts",
-				"%.tsx",
-				"%.json",
-				"%.html",
-				"%.css",
-				"%.md",
-				"%.xml",
-				"%.yaml",
-				"%.yml",
-				"%.toml",
-				"%.sql",
-				"%.sh",
-				"%.py",
-			}
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(mime_type) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+			"LOWER(file_name) LIKE ?",
+		}, " OR ") + ")", []interface{}{
+			"text/%",
+			"%json%",
+			"%javascript%",
+			"%typescript%",
+			"%xml%",
+			"%html%",
+			"%css%",
+			"%yaml%",
+			"%toml%",
+			"%sql%",
+			"%markdown%",
+			"%.js",
+			"%.jsx",
+			"%.ts",
+			"%.tsx",
+			"%.json",
+			"%.html",
+			"%.css",
+			"%.md",
+			"%.xml",
+			"%.yaml",
+			"%.yml",
+			"%.toml",
+			"%.sql",
+			"%.sh",
+			"%.py",
+		}
 	default:
 		return "", nil
 	}
@@ -4419,7 +4452,7 @@ func toConversationDomain(item models.Conversation) domainconversation.Conversat
 		LastReadMessageID:      item.LastReadMessageID,
 		CreatedAt:              item.CreatedAt,
 		UpdatedAt:              item.UpdatedAt,
-		SystemPrompt:          item.SystemPrompt,
+		SystemPrompt:           item.SystemPrompt,
 	}
 }
 
@@ -4480,7 +4513,7 @@ func toConversationModel(item *domainconversation.Conversation) models.Conversat
 		LastPromptFingerprint:  item.LastPromptFingerprint,
 		LastAssistantMessageID: item.LastAssistantMessageID,
 		LastReadMessageID:      item.LastReadMessageID,
-		SystemPrompt:          item.SystemPrompt,
+		SystemPrompt:           item.SystemPrompt,
 	}
 }
 

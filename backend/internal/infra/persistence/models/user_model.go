@@ -3,10 +3,10 @@ package model
 // LLMUserModel 存储用户私有模型及其上游调用配置。
 type LLMUserModel struct {
 	BaseModel
-	OwnerUserID      uint        `gorm:"not null;index:idx_llm_user_models_owner;comment:归属用户ID"`
-	UpstreamID       uint        `gorm:"not null;index:idx_llm_user_models_upstream;comment:上游渠道ID"`
+	OwnerUserID      uint        `gorm:"not null;index:idx_llm_user_models_owner;uniqueIndex:idx_llm_user_models_identity,where:deleted_at IS NULL;comment:归属用户ID"`
+	UpstreamID       uint        `gorm:"not null;index:idx_llm_user_models_upstream;uniqueIndex:idx_llm_user_models_identity,where:deleted_at IS NULL;comment:上游渠道ID"`
 	Upstream         LLMUpstream `gorm:"foreignKey:UpstreamID;references:ID"`
-	UpstreamModelID  string      `gorm:"size:256;not null;comment:上游模型标识"`
+	UpstreamModelID  string      `gorm:"size:256;not null;uniqueIndex:idx_llm_user_models_identity,where:deleted_at IS NULL;comment:上游模型标识"`
 	Name             string      `gorm:"size:128;not null;comment:用户模型名称"`
 	Protocol         string      `gorm:"size:64;not null;default:'openai';comment:适配协议"`
 	KindsJSON        string      `gorm:"type:text;not null;default:'[\"chat\"]';comment:模型类型JSON"`

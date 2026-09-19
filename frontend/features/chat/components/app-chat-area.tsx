@@ -1239,7 +1239,7 @@ export function AppChatArea() {
   const onSaveSystemPrompt = React.useCallback(async (systemPrompt: string) => {
     if (!conversationID) { setDraftSystemPrompt(systemPrompt); return; }
     const token = await resolveAccessToken();
-    if (!token) throw new Error(t("submit.needLogin"));
+    if (!token) throw new Error(t("submit.authRequired"));
     try {
       const updated = await setConversationSystemPrompt(token, conversationID, { systemPrompt });
       upsertConversation(updated);

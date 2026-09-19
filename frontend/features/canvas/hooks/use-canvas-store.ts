@@ -28,7 +28,11 @@ export function useCanvasStore({
 } = {}) {
   const t = useTranslations("canvas");
   const tMediaStatus = useTranslations("chat.submit");
-  const { accessToken } = useAuthSession();
+  const { accessToken, user, userStatus } = useAuthSession();
+  const accountID = user ? String(user.id) : "guest";
+  React.useEffect(() => {
+    if (userStatus === "ready") canvasStore.setAccount(accountID);
+  }, [accountID, userStatus]);
 
   const state = React.useSyncExternalStore(
     canvasStore.subscribe,
@@ -82,18 +86,19 @@ export function useCanvasStore({
 
   // 刷新恢复：对持久化了运行状态的节点走三层兜底（挂流 → 查消息 → 标记中断）
   React.useEffect(() => {
-    if (!accessToken) {
+    if (!accessToken || userStatus !== "ready") {
       return;
     }
     if (!canvasStore.getState().restored) {
       canvasStore.restore();
     }
     void canvasStore.resumePendingGenerations();
-  }, [accessToken]);
+  }, [accessToken, accountID, userStatus]);
 
   // 登录用户优先恢复云端状态；云端不可用或无有效状态时回退本地记录。
   React.useEffect(() => {
     let active = true;
+    if (userStatus !== "ready") return;
     if (!accessToken) {
       canvasStore.setCloudPersist(null);
       canvasStore.restore();
@@ -149,6 +154,7 @@ export function useCanvasStore({
       lastPullAt = now;
       void loadUserSettingsSnapshot(accessToken)
         .then((settings) => {
+          if (!active) return;
           const cloudState = parseCanvasState(settings[CANVAS_CLOUD_SETTING_KEY] ?? "");
           if (cloudState) {
             canvasStore.seedPersistedState(cloudState);
@@ -197,7 +203,7 @@ export function useCanvasStore({
         canvasStore.pushCurrentStateToCloud();
         void canvasStore.resumePendingGenerations();
       }
-    });
+    }).catch(() => { if (active) canvasStore.restore(); });
 
     return () => {
       active = false;
@@ -210,7 +216,7 @@ export function useCanvasStore({
         persistCloud();
       }
     };
-  }, [accessToken]);
+  }, [accessToken, accountID, userStatus]);
 
   const spawnPointRef = React.useRef(getSpawnPoint);
   spawnPointRef.current = getSpawnPoint;

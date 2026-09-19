@@ -57,6 +57,8 @@ export function ConversationSystemPromptDialog({
     try {
       await onSave(nextValue);
       onOpenChange(false);
+    } catch {
+      // The save handler reports the error; keep the draft open for retry.
     } finally {
       setSaving(false);
     }

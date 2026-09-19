@@ -27,7 +27,7 @@ func (h *Handler) ListAdminUserUpstreamPresets(c *gin.Context) {
 
 func writeUserUpstreamPresetList(c *gin.Context, items []domainchannel.UserUpstreamPreset, err error) {
 	if err != nil {
-		response.InternalError(c)
+		response.ErrorFrom(c, http.StatusInternalServerError, err)
 		return
 	}
 	result := make([]UserUpstreamPresetResponse, 0, len(items))
@@ -61,7 +61,7 @@ func (h *Handler) ReplaceUserUpstreamPresets(c *gin.Context) {
 			errors.Is(err, repository.ErrInvalidInput):
 			response.Error(c, http.StatusBadRequest, err.Error())
 		default:
-			response.InternalError(c)
+			response.ErrorFrom(c, http.StatusInternalServerError, err)
 		}
 		return
 	}
