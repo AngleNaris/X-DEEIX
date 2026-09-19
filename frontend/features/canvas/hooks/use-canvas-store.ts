@@ -4,14 +4,12 @@ import * as React from "react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
-import type { ChatModelOption } from "@/features/chat/types/chat-runtime";
-import { canvasStore } from "@/features/canvas/model/canvas-store";
+import { canvasStore, type CanvasStoreLabels } from "@/features/canvas/model/canvas-store";
 import { parseCanvasState } from "@/features/canvas/model/canvas-persist";
 import {
   CANVAS_CLOUD_SETTING_KEY,
   type CanvasNodeReference,
 } from "@/features/canvas/model/canvas-types";
-import type { ConversationOptions } from "@/shared/api/conversation.types";
 import { uploadFile } from "@/shared/api/file";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import { useAuthSession } from "@/shared/auth/auth-session-context";
@@ -24,15 +22,11 @@ export type CanvasReferenceImage = CanvasNodeReference & {
   previewURL?: string;
 };
 
-const EMPTY_OPTIONS: ConversationOptions = {};
-
 export function useCanvasStore({
-  selectedModel,
   getSpawnPoint,
 }: {
-  selectedModel: ChatModelOption | null;
   getSpawnPoint?: () => { x: number; y: number };
-}) {
+} = {}) {
   const t = useTranslations("canvas");
   const tMediaStatus = useTranslations("chat.submit");
   const { accessToken } = useAuthSession();
@@ -45,7 +39,7 @@ export function useCanvasStore({
 
   // 生成流程所需文案随语言变化同步到 store
   React.useEffect(() => {
-    canvasStore.setLabels({
+    const labels: CanvasStoreLabels = {
       conversationTitle: t("conversationTitle"),
       needLogin: t("needLogin"),
       conversationCreateFailed: t("conversationCreateFailed"),
@@ -61,9 +55,11 @@ export function useCanvasStore({
       noImageOutput: t("noImageOutput"),
       editReferenceRequired: t("editReferenceRequired"),
       editUnsupported: t("editUnsupported"),
-      chatCapabilityRequired: t("chatCapabilityRequired"),
       imageUnsupported: t("generationUnsupported"),
-    });
+      noImageModels: t("noImageModels"),
+      missingPromptInput: t("missingPromptInput"),
+    };
+    canvasStore.setLabels(labels);
   }, [t, tMediaStatus]);
 
   // 登录用户优先恢复云端状态；云端不可用或无有效状态时回退本地记录。
@@ -84,7 +80,10 @@ export function useCanvasStore({
       const raw = pendingCloudRaw;
       pendingCloudRaw = "";
       if (raw) {
-        void updateUserSettings(accessToken, { [CANVAS_CLOUD_SETTING_KEY]: raw }).catch(() => undefined);
+        // 推送失败仅记录日志，不打断画布使用；本地 localStorage 始终是最新状态
+        void updateUserSettings(accessToken, { [CANVAS_CLOUD_SETTING_KEY]: raw }).catch((error) => {
+          console.warn("[canvas] cloud persist failed", error);
+        });
       }
     };
     canvasStore.setCloudPersist((raw) => {
@@ -94,7 +93,67 @@ export function useCanvasStore({
       }
       cloudTimer = setTimeout(persistCloud, 1200);
     });
-    void loadUserSettingsSnapshot(accessToken).then((settings) => {
+    // 页面隐藏或关闭时立即推送挂起的快照，避免防抖丢尾导致云端落后于本地
+    const flushPendingCloud = () => {
+      if (cloudTimer !== null) {
+        clearTimeout(cloudTimer);
+        cloudTimer = null;
+      }
+      persistCloud();
+    };
+
+    // 云端快照拉取：多端同步的另一半。推送端 ~1.6s 内落云；
+    // 本端采用事件驱动拉取（切回标签页 / 窗口聚焦时），空闲时零请求。
+    // seedPersistedState 内部按 savedAt 取更新的一方，云端更旧时自动回推本地，幂等无回环。
+    let lastPullAt = 0;
+    const pullCloud = () => {
+      // 节流：切回标签页时 focus 与 visibilitychange 会先后触发，5 秒内只拉一次
+      const now = Date.now();
+      if (now - lastPullAt < 5000) {
+        return;
+      }
+      // 生成中不拉取，避免云端旧快照打断进行中的任务展示；
+      // 本端有未落盘变更时跳过，等防抖推送完成后再拉，防止覆盖本端编辑
+      if (canvasStore.getState().generatingCount > 0 || canvasStore.hasUnsavedChanges()) {
+        return;
+      }
+      lastPullAt = now;
+      void loadUserSettingsSnapshot(accessToken, { refresh: true })
+        .then((settings) => {
+          const cloudState = parseCanvasState(settings[CANVAS_CLOUD_SETTING_KEY] ?? "");
+          if (cloudState) {
+            canvasStore.seedPersistedState(cloudState);
+          }
+        })
+        .catch(() => {
+          // 拉取失败静默跳过，下次回到前台再拉
+        });
+    };
+    const pullOnVisible = () => {
+      if (document.visibilityState === "visible") {
+        pullCloud();
+      }
+    };
+
+    const handlePageHide = () => {
+      // 关页兜底：防抖中的变更立即落盘并进入云端推送
+      canvasStore.flushPersist();
+      flushPendingCloud();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        canvasStore.flushPersist();
+        flushPendingCloud();
+      } else {
+        pullOnVisible();
+      }
+    };
+    const handleWindowFocus = () => pullOnVisible();
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("focus", handleWindowFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    // 初始加载强制取新鲜快照：认证层的缓存快照可能滞后，误判云端新旧会导致错误采纳
+    void loadUserSettingsSnapshot(accessToken, { refresh: true }).then((settings) => {
       if (!active) {
         return;
       }
@@ -110,6 +169,9 @@ export function useCanvasStore({
     return () => {
       active = false;
       canvasStore.setCloudPersist(null);
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("focus", handleWindowFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
       if (cloudTimer) {
         clearTimeout(cloudTimer);
         persistCloud();
@@ -117,22 +179,16 @@ export function useCanvasStore({
     };
   }, [accessToken]);
 
-  React.useEffect(() => {
-    canvasStore.setModelName(selectedModel?.platformModelName ?? null);
-  }, [selectedModel]);
+  const spawnPointRef = React.useRef(getSpawnPoint);
+  spawnPointRef.current = getSpawnPoint;
 
-  const modelName = selectedModel?.platformModelName ?? "";
-  const imageOptions = state.imageOptions[modelName] ?? EMPTY_OPTIONS;
-
-  const setImageOptions = React.useCallback(
-    (options: ConversationOptions) => {
-      if (!modelName) {
-        return;
-      }
-      canvasStore.setImageOptions(modelName, options);
-    },
-    [modelName],
-  );
+  const addGraphNode = React.useCallback((
+    kind: Parameters<typeof canvasStore.addGraphNode>[0],
+    point?: { x: number; y: number },
+  ) => {
+    // 调用方显式指定坐标时优先使用，否则回退到视口中心生成点
+    return canvasStore.addGraphNode(kind, point ?? spawnPointRef.current?.());
+  }, []);
 
   const uploadReferenceFile = React.useCallback(
     async (file: File): Promise<CanvasReferenceImage | null> => {
@@ -158,52 +214,9 @@ export function useCanvasStore({
     [t],
   );
 
-  const generate = React.useCallback(
-    (prompt: string, references: CanvasReferenceImage[] = [], parentID?: string | null, maskReference?: CanvasReferenceImage | null, operation?: "generate" | "edit" | "inpaint" | "outpaint" | "crop", optionsOverride?: ConversationOptions, modelOverride?: ChatModelOption) => {
-      const model = modelOverride ?? selectedModel;
-      if (!model) {
-        toast.error(t("noImageModels"));
-        return;
-      }
-      void canvasStore.generate({
-        prompt,
-        model,
-        imageOptions: optionsOverride ?? imageOptions,
-        references: references.map(({ fileID, fileName, mimeType, sizeBytes }) => ({
-          fileID,
-          fileName,
-          mimeType,
-          sizeBytes,
-        })),
-        maskReference: maskReference
-          ? {
-            fileID: maskReference.fileID,
-            fileName: maskReference.fileName,
-            mimeType: maskReference.mimeType,
-            sizeBytes: maskReference.sizeBytes,
-          }
-          : null,
-        parentID: parentID ?? null,
-        operation,
-        spawnPoint: getSpawnPoint?.(),
-      });
-    },
-    [getSpawnPoint, imageOptions, selectedModel, t],
-  );
-
-  const retryNode = React.useCallback(
-    (nodeID: string) => {
-      if (!selectedModel) {
-        toast.error(t("noImageModels"));
-        return;
-      }
-      void canvasStore.retryNode(nodeID, selectedModel);
-    },
-    [selectedModel, t],
-  );
-
   return {
     nodes: state.nodes,
+    edges: state.edges,
     decorations: state.decorations,
     bookmarks: state.bookmarks,
     canvases: state.canvases,
@@ -211,22 +224,22 @@ export function useCanvasStore({
     projectName: state.projectName,
     versions: state.versions,
     selectedDecorationIDs: state.selectedDecorationIDs,
+    selectedEdgeIDs: state.selectedEdgeIDs,
     viewport: state.viewport,
-    conversationID: state.conversationID,
     pointerMode: state.pointerMode,
     selectedNodeIDs: state.selectedNodeIDs,
     generatingCount: state.generatingCount,
     restored: state.restored,
     canUndo: state.canUndo,
     canRedo: state.canRedo,
-    imageOptions,
-    setImageOptions,
+    restoredModelName: state.restoredModelName,
     setViewportState: canvasStore.setViewport,
     resetViewport: canvasStore.resetViewport,
     fitViewport: canvasStore.fitViewport,
     setPointerMode: canvasStore.setPointerMode,
     setSelectedNodeIDs: canvasStore.setSelectedNodeIDs,
     setSelectedDecorationIDs: canvasStore.setSelectedDecorationIDs,
+    setSelectedEdgeIDs: canvasStore.setSelectedEdgeIDs,
     setProjectName: canvasStore.setProjectName,
     addCanvas: canvasStore.addCanvas,
     switchCanvas: canvasStore.switchCanvas,
@@ -251,14 +264,20 @@ export function useCanvasStore({
     beginNodeMove: canvasStore.beginNodeMove,
     moveNodes: canvasStore.moveNodes,
     endNodeMove: canvasStore.endNodeMove,
+    addGraphNode,
+    updateGraphNode: canvasStore.updateGraphNode,
+    ensureNodeImagePreview: canvasStore.ensureNodeImagePreview,
+    adoptNodeIntoFrame: canvasStore.adoptNodeIntoFrame,
     removeNode: canvasStore.removeNode,
     removeNodes: canvasStore.removeNodes,
+    connectGraphNodes: canvasStore.connectGraphNodes,
+    removeEdge: canvasStore.removeEdge,
+    runGenerateNode: canvasStore.runGenerateNode,
+    cancelNode: canvasStore.cancelNode,
+    enqueueGraphEdit: canvasStore.enqueueGraphEdit,
     undo: canvasStore.undo,
     redo: canvasStore.redo,
-    cancelNode: canvasStore.cancelNode,
     clearCanvas: canvasStore.clearCanvas,
-    retryNode,
-    generate,
     uploadReferenceFile,
   };
 }
