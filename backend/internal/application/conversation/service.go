@@ -347,6 +347,8 @@ type SendMessageInput struct {
 	ContentType             string
 	Content                 string
 	PlatformModelName       string
+	ModelScope              string
+	UserModelID             uint
 	Options                 map[string]interface{}
 	ClientRunID             string
 	FileIDs                 []string
@@ -385,6 +387,10 @@ type SendMessageResult struct {
 	Billable            bool
 	UpstreamID          uint
 	UpstreamName        string
+	// 用户自有渠道（BYOK）归属信息
+	IsUserOwnedUpstream bool
+	UpstreamOwnerUserID *uint
+	UpstreamBillingMode string
 	PlatformModelName   string
 	RoutedBindingCode   string
 	UpstreamModelName   string

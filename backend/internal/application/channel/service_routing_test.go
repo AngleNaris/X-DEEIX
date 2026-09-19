@@ -19,11 +19,11 @@ import (
 
 type routeResolutionRepositoryStub struct {
 	repository.ChannelRepository
-	model         domainchannel.PlatformModel
-	routes        []repository.ChannelUpstreamRouteRow
-	models        map[string]domainchannel.PlatformModel
-	routesByModel map[string][]repository.ChannelUpstreamRouteRow
-	modelRows     []repository.ChannelModelListRow
+	model           domainchannel.PlatformModel
+	routes          []repository.ChannelUpstreamRouteRow
+	models          map[string]domainchannel.PlatformModel
+	routesByModel   map[string][]repository.ChannelUpstreamRouteRow
+	modelRows       []repository.ChannelModelListRow
 	breakerDefaults domainchannel.BreakerDefaults
 	breakerErr      error
 	breakerLoads    int
@@ -131,6 +131,10 @@ func TestResolveDefaultModelSkipsStructurallyUnusableCandidate(t *testing.T) {
 	if modelName != second.PlatformModelName {
 		t.Fatalf("ResolveDefaultModel() = %q, want %q", modelName, second.PlatformModelName)
 	}
+}
+
+func (r *routeResolutionRepositoryStub) ListActiveRoutesByModelWithOwnership(context.Context, string, string, *uint) ([]repository.ChannelUpstreamRouteRow, error) {
+	return append([]repository.ChannelUpstreamRouteRow(nil), r.routes...), nil
 }
 
 func (r *routeResolutionRepositoryStub) GetBreakerDefaults(context.Context) (domainchannel.BreakerDefaults, error) {

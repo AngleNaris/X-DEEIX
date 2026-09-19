@@ -110,28 +110,38 @@ func (s *Service) ValidateModelRouteReference(ctx context.Context, input Resolve
 }
 
 func (s *Service) resolveRouteReferences(ctx context.Context, input ResolveRouteInput) ([]repository.ChannelUpstreamRouteRow, error) {
-	platformModelName, err := normalizePlatformModelName(input.PlatformModelName)
-	if err != nil {
-		return nil, ErrModelNotFound
-	}
-	platformModel, err := s.repo.GetActiveModelByName(ctx, platformModelName)
-	if err != nil {
-		return nil, err
-	}
-	if !routeScopeAllowsModelAccess(input.Scope, platformModel.AccessScope) {
-		return nil, ErrModelAccessDenied
-	}
-	if normalizeRouteScope(input.Scope) == RouteScopeUser && input.UserID > 0 {
-		accessible, err := s.isModelAccessible(ctx, platformModel.ID, input.UserID)
+	var rows []repository.ChannelUpstreamRouteRow
+	var err error
+	if strings.EqualFold(strings.TrimSpace(input.ModelScope), RouteScopeUser) {
+		if !s.cfg.Snapshot().UserUpstreamEnabled || s.cfg.Snapshot().UserUpstreamBillingMode == "disabled" {
+			return nil, ErrModelAccessDenied
+		}
+		rows, err = s.getUserModelRoute(ctx, input)
+	} else {
+		platformModelName, err := normalizePlatformModelName(input.PlatformModelName)
+		if err != nil {
+			return nil, ErrModelNotFound
+		}
+		platformModel, err := s.repo.GetActiveModelByName(ctx, platformModelName)
 		if err != nil {
 			return nil, err
 		}
-		if !accessible {
+		if !routeScopeAllowsModelAccess(input.Scope, platformModel.AccessScope) {
 			return nil, ErrModelAccessDenied
 		}
-	}
+		if normalizeRouteScope(input.Scope) == RouteScopeUser && input.UserID > 0 {
+			accessible, err := s.isModelAccessible(ctx, platformModel.ID, input.UserID)
+			if err != nil {
+				return nil, err
+			}
+			if !accessible {
+				return nil, ErrModelAccessDenied
+			}
+		}
 
-	rows, err := s.repo.ListActiveRoutesByModel(ctx, platformModelName)
+		input.PlatformModelName = platformModelName
+		rows, err = s.getAvailableRoutesWithUserPriority(ctx, input)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -411,6 +421,9 @@ func buildResolvedRoute(row repository.ChannelUpstreamRouteRow, apiKey string) *
 		UpstreamModelID:                 row.UpstreamModelID,
 		UpstreamID:                      row.UpstreamID,
 		UpstreamName:                    strings.TrimSpace(row.UpstreamName),
+		UpstreamOwnerUserID:             row.UpstreamOwnerUserID,
+		UpstreamOwnershipType:           strings.TrimSpace(row.UpstreamOwnershipType),
+		UpstreamBillingMode:             strings.TrimSpace(row.UpstreamBillingMode),
 		BindingCode:                     strings.TrimSpace(row.BindingCode),
 		Protocol:                        row.Protocol,
 		BaseURL:                         strings.TrimSpace(row.BaseURL),

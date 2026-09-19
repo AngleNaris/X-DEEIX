@@ -384,6 +384,8 @@ func (s *Service) sendMessageInternal(
 
 	routeResolveInput := channel.ResolveRouteInput{
 		PlatformModelName: conversation.Model,
+		ModelScope:        input.ModelScope,
+		UserModelID:       input.UserModelID,
 		TaskType:          channel.TaskTypeChat,
 		Scope:             channel.RouteScopeUser,
 		UserID:            input.UserID,
@@ -2136,6 +2138,9 @@ func (s *Service) sendMessageInternal(
 		Billable:              true,
 		UpstreamID:            run.UpstreamID,
 		UpstreamName:          run.UpstreamName,
+		IsUserOwnedUpstream:   route.UpstreamOwnerUserID != nil,
+		UpstreamOwnerUserID:   route.UpstreamOwnerUserID,
+		UpstreamBillingMode:   route.UpstreamBillingMode,
 		PlatformModelName:     route.PlatformModelName,
 		RoutedBindingCode:     route.BindingCode,
 		UpstreamModelName:     route.UpstreamModel,

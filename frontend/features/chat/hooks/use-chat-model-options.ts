@@ -16,6 +16,8 @@ import { listConversationRuns } from "@/shared/api/conversation";
 import type { ConversationOptions } from "@/shared/api/conversation.types";
 import { listPublicModels } from "@/shared/api/model";
 import type { PublicModelDTO } from "@/shared/api/model.types";
+import { resolveModelIdentity } from "@/shared/lib/model-identity";
+import { listUserModels, type UserModelDTO } from "@/shared/api/user-upstream";
 import { getMCPPolicy, getModelOptionPolicy } from "@/shared/api/settings";
 import { getUserSettings } from "@/shared/api/user-settings";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
@@ -34,8 +36,15 @@ import {
 import { resolveConversationDefaultModel } from "@/shared/model/conversation-default-model";
 import { parseKindsJSON } from "@/shared/model/llm-schema";
 
+type ModelCatalogItem = PublicModelDTO | UserModelDTO;
+
+function isUserModel(item: ModelCatalogItem): item is UserModelDTO {
+  return "upstreamModelId" in item;
+}
+
 type ModelCatalogRefreshResult = {
   models: PublicModelDTO[];
+  userModels: UserModelDTO[];
   modelOptionPolicy: ModelOptionPolicy | null;
 };
 
@@ -369,30 +378,41 @@ function resolveSupportsVision(capabilitiesJSON: string): boolean {
 }
 
 function toChatModelOption(
-  item: PublicModelDTO,
+  item: ModelCatalogItem,
   nativeToolCatalog: ModelOptionPolicy["nativeTools"] = [],
 ): ChatModelOption {
-  const protocols = parseProtocolsJSON(item.protocolsJSON);
-  const nativeTools = resolveNativeTools(item.capabilitiesJSON);
+  const isUserModel = "upstreamModelId" in item;
+  const capabilitiesJSON = isUserModel ? "{}" : item.capabilitiesJSON;
+  const protocolsJSON = isUserModel ? JSON.stringify([item.protocol]) : item.protocolsJSON;
+  const protocols = parseProtocolsJSON(protocolsJSON);
+  const nativeTools = resolveNativeTools(capabilitiesJSON);
+  const userIdentity = isUserModel
+    ? resolveModelIdentity({ code: item.upstreamModelId || item.name })
+    : null;
   return {
-    platformModelName: item.platformModelName,
-    icon: item.icon,
-    vendor: item.vendor,
-    vendorName: item.vendorName,
-    vendorIcon: item.vendorIcon,
-    displayGroupID: item.displayGroupID,
-    displayGroupName: item.displayGroupName,
-    displayGroupIcon: item.displayGroupIcon,
-    kinds: parseKindsJSON(item.kindsJSON),
+    platformModelName: isUserModel ? item.name : item.platformModelName,
+    modelScope: isUserModel ? "user" : "platform",
+    userModelID: isUserModel ? item.id : undefined,
+    upstreamID: isUserModel ? item.upstreamId : undefined,
+    upstreamName: isUserModel ? item.upstreamName : undefined,
+    upstreamCompatible: isUserModel ? item.upstreamCompatible : undefined,
+    icon: isUserModel ? "" : item.icon,
+    vendor: isUserModel ? userIdentity?.vendorKey || "user" : item.vendor,
+    vendorName: isUserModel ? userIdentity?.vendorLabel || "其他提供商" : item.vendorName,
+    vendorIcon: isUserModel ? userIdentity?.vendorIcon || "" : item.vendorIcon,
+    displayGroupID: isUserModel ? null : item.displayGroupID,
+    displayGroupName: isUserModel ? "" : item.displayGroupName,
+    displayGroupIcon: isUserModel ? "" : item.displayGroupIcon,
+    kinds: isUserModel ? parseKindsJSON(item.kinds) : parseKindsJSON(item.kindsJSON),
     protocols,
-    supportsVision: resolveSupportsVision(item.capabilitiesJSON),
-    defaultOptions: resolveDefaultOptions(item.capabilitiesJSON, nativeTools, nativeToolCatalog, protocols),
-    optionControls: resolveOptionControls(item.capabilitiesJSON),
-    lockedOptionPaths: resolveLockedOptionPaths(item.capabilitiesJSON),
-    nativeToolKeys: resolveNativeToolKeys(item.capabilitiesJSON),
+    supportsVision: resolveSupportsVision(capabilitiesJSON),
+    defaultOptions: resolveDefaultOptions(capabilitiesJSON, nativeTools, nativeToolCatalog, protocols),
+    optionControls: resolveOptionControls(capabilitiesJSON),
+    lockedOptionPaths: resolveLockedOptionPaths(capabilitiesJSON),
+    nativeToolKeys: resolveNativeToolKeys(capabilitiesJSON),
     nativeTools,
-    pricing: item.pricing,
-    videoExtension: resolveVideoExtensionConfig(item.capabilitiesJSON, protocols),
+    pricing: isUserModel ? null : item.pricing,
+    videoExtension: resolveVideoExtensionConfig(capabilitiesJSON, protocols),
   };
 }
 
@@ -408,7 +428,7 @@ export function useChatModelOptions({
   resetToken?: number;
 }) {
   const t = useTranslations("chat.models");
-  const [availableModels, setAvailableModels] = React.useState<PublicModelDTO[]>([]);
+  const [availableModels, setAvailableModels] = React.useState<ModelCatalogItem[]>([]);
   const [modelsLoading, setModelsLoading] = React.useState(true);
   const [modelsErrorMsg, setModelsErrorMsg] = React.useState("");
   const [selectedPlatformModelName, setSelectedPlatformModelName] = React.useState("");
@@ -449,11 +469,12 @@ export function useChatModelOptions({
         throw new Error("missing access token");
       }
 
-      const [models, modelOptionPolicy] = await Promise.all([
+      const [models, userModels, modelOptionPolicy] = await Promise.all([
         listPublicModels(token),
+        listUserModels(token).catch(() => []),
         getModelOptionPolicy(token).catch(() => null),
       ]);
-      return { models, modelOptionPolicy };
+      return { models, userModels, modelOptionPolicy };
     })().finally(() => {
       if (modelCatalogRequestRef.current === request) {
         modelCatalogRequestRef.current = null;
@@ -465,7 +486,7 @@ export function useChatModelOptions({
   }, []);
 
   const applyModelCatalog = React.useCallback((catalog: ModelCatalogRefreshResult) => {
-    setAvailableModels(catalog.models);
+    setAvailableModels([...catalog.models, ...catalog.userModels]);
     setModelOptionPolicy(catalog.modelOptionPolicy);
   }, []);
 
@@ -483,7 +504,9 @@ export function useChatModelOptions({
     }
 
     const catalog = await refreshModelCatalog();
-    const nextModel = catalog.models.find((item) => item.platformModelName === normalizedName);
+    const nextModel = [...catalog.models, ...catalog.userModels].find(
+      (item) => ("upstreamModelId" in item ? item.name : item.platformModelName) === normalizedName,
+    );
     return nextModel ? toChatModelOption(nextModel, catalog.modelOptionPolicy?.nativeTools ?? []) : null;
   }, [refreshModelCatalog]);
 
@@ -621,7 +644,7 @@ export function useChatModelOptions({
       if (
         !userSelectedModelRef.current &&
         roleInitialModel &&
-        availableModels.some((item) => item.platformModelName === roleInitialModel)
+        availableModels.some((item) => ("upstreamModelId" in item ? item.name : item.platformModelName) === roleInitialModel)
       ) {
         setSelectedPlatformModelName(roleInitialModel);
         return;
@@ -632,7 +655,7 @@ export function useChatModelOptions({
       if (
         !userSelectedModelRef.current &&
         currentSelection &&
-        availableModels.some((item) => item.platformModelName === currentSelection)
+        availableModels.some((item) => ("upstreamModelId" in item ? item.name : item.platformModelName) === currentSelection)
       ) {
         return;
       }
@@ -640,9 +663,10 @@ export function useChatModelOptions({
       if (!token || cancelled || userSelectedModelRef.current) {
         return;
       }
+      const publicModels = availableModels.filter((item): item is PublicModelDTO => !isUserModel(item));
       const result = await resolveConversationDefaultModel({
         accessToken: token,
-        availableModels,
+        availableModels: publicModels,
         userDefaultModel,
       });
       if (!cancelled && !userSelectedModelRef.current) {
@@ -654,9 +678,9 @@ export function useChatModelOptions({
       if (!cancelled && !userSelectedModelRef.current) {
         const roleInitialModel = initialModel?.trim() || "";
         setSelectedPlatformModelName(
-          roleInitialModel && availableModels.some((item) => item.platformModelName === roleInitialModel)
+          roleInitialModel && availableModels.some((item) => ("upstreamModelId" in item ? item.name : item.platformModelName) === roleInitialModel)
             ? roleInitialModel
-            : availableModels[0]?.platformModelName ?? "",
+            : (availableModels[0] ? (isUserModel(availableModels[0]) ? availableModels[0].name : availableModels[0].platformModelName) : ""),
         );
       }
     });

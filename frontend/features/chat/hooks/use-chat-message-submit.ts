@@ -227,6 +227,8 @@ type QueuedChatSubmission = BranchScope & {
   content: string;
   attachments: PendingAttachment[];
   platformModelName: string;
+  modelScope?: "platform" | "user";
+  userModelID?: number;
   options: ConversationOptions;
   selectedToolIDs: number[];
   selectedSkills: SkillSummaryDTO[];
@@ -807,6 +809,9 @@ export function useChatMessageSubmit({
     }) => {
       const payloadContent = content || t("attachmentOnlyContent");
       const requestPlatformModelName = (queuedSubmission?.platformModelName ?? selectedPlatformModelName).trim();
+      const selectedModel = modelOptions.find((item) => item.platformModelName === requestPlatformModelName) ?? null;
+      const requestModelScope = queuedSubmission?.modelScope ?? selectedModel?.modelScope;
+      const requestUserModelID = queuedSubmission?.userModelID ?? selectedModel?.userModelID;
       const requestOptions = queuedSubmission?.options ?? options;
       const requestSelectedToolIDs = queuedSubmission?.selectedToolIDs ?? selectedToolIDs;
       const requestSelectedSkills = queuedSubmission?.selectedSkills ?? selectedSkills;
@@ -831,7 +836,6 @@ export function useChatMessageSubmit({
           visibleBranchScopePathRef.current,
           visibleMessagesRef.current,
         );
-      const selectedModel = modelOptions.find((item) => item.platformModelName === requestPlatformModelName) ?? null;
       const resolvedBranchReason = branchReason ?? "default";
       const concurrentBranchRun = resolvedBranchReason === "retry" || resolvedBranchReason === "edit";
       const targetConversationHasActiveStream = Array.from(activeStreamsRef.current.values()).some(
@@ -1316,6 +1320,8 @@ export function useChatMessageSubmit({
             ...commonStreamPayload,
             contentType: resolvedEffectiveAttachments.length > 0 ? "mixed" : "text",
             content: payloadContent,
+            modelScope: requestModelScope === "user" ? "user" : undefined,
+            userModelID: requestModelScope === "user" ? requestUserModelID : undefined,
             selectedToolIDs: requestSelectedToolIDs.length > 0 ? requestSelectedToolIDs : undefined,
             skillIDs: requestSelectedSkills.length > 0 ? requestSelectedSkills.map((skill) => skill.id) : undefined,
             knowledgeBaseIDs: requestSelectedKnowledgeBaseIDs.length > 0 ? requestSelectedKnowledgeBaseIDs : undefined,
@@ -1790,6 +1796,8 @@ export function useChatMessageSubmit({
           content,
           attachments: currentAttachments,
           platformModelName: selectedPlatformModelName,
+          modelScope: modelOptions.find((item) => item.platformModelName === selectedPlatformModelName)?.modelScope,
+          userModelID: modelOptions.find((item) => item.platformModelName === selectedPlatformModelName)?.userModelID,
           options: sanitizeConversationOptions(options),
           selectedToolIDs: selectedToolIDs.slice(),
           selectedSkills: selectedSkills.slice(),
@@ -1811,6 +1819,7 @@ export function useChatMessageSubmit({
     draft,
     htmlVisualPromptEnabled,
     isAgentGroupConversation,
+    modelOptions,
     options,
     selectedPlatformModelName,
     selectedPrompts,

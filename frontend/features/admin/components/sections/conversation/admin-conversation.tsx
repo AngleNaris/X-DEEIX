@@ -510,6 +510,10 @@ export function AdminConversationSettingsPage() {
     () => visibleConversationSettingsFields.filter((field) => field.section === "contextCompression"),
     [visibleConversationSettingsFields],
   );
+  const userUpstreamFields = React.useMemo(
+    () => visibleConversationSettingsFields.filter((field) => field.section === "userUpstream"),
+    [visibleConversationSettingsFields],
+  );
   const modelOptionFields = React.useMemo(
     () => visibleConversationSettingsFields.filter(isModelOptionPolicyField),
     [visibleConversationSettingsFields],
@@ -549,6 +553,7 @@ export function AdminConversationSettingsPage() {
   const modelOptionActions = renderSaveAction(modelOptionFields);
   const contextCompressionActions = renderSaveAction(contextCompressionFields);
   const conversationActions = renderSaveAction(conversationFields);
+  const userUpstreamActions = renderSaveAction(userUpstreamFields);
 
   function renderField(
     field: ConversationSettingsField,
@@ -643,6 +648,14 @@ export function AdminConversationSettingsPage() {
       <SettingsSection title={t("sections.contextCompression")} actions={contextCompressionActions}>
         <SettingsFieldList>
           {contextCompressionFields.map((field, index) => renderField(field, index, { inset: Boolean(field.subgroupKey) }))}
+        </SettingsFieldList>
+      </SettingsSection>
+
+      <SettingsSectionSeparator />
+
+      <SettingsSection title={t("sections.userUpstream")} actions={userUpstreamActions}>
+        <SettingsFieldList>
+          {userUpstreamFields.map((field, index) => renderField(field, index))}
         </SettingsFieldList>
       </SettingsSection>
 

@@ -262,6 +262,8 @@ export type MessageFeedbackResult = Omit<MessageFeedbackResponse, "myFeedback"> 
 };
 
 export type SendMessageRequest = Omit<ContractSendMessageRequest, "options"> & {
+  modelScope?: "platform" | "user";
+  userModelID?: number;
   options?: ConversationOptions;
 };
 
