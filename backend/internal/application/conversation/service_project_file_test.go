@@ -20,8 +20,8 @@ func TestNormalizeProjectFilePath(t *testing.T) {
 	}{
 		{name: "normalizes separators", input: ` src\main.go `, want: "src/main.go"},
 		{name: "rejects parent directory", input: "..", wantErr: true},
- {name: "rejects drive path", input: "C:/secret", wantErr: true},
- {name: "rejects empty", input: " ", wantErr: true},
+		{name: "rejects drive path", input: "C:/secret", wantErr: true},
+		{name: "rejects empty", input: " ", wantErr: true},
 		{name: "rejects parent traversal", input: "../secret", wantErr: true},
 		{name: "rejects absolute path", input: "/etc/passwd", wantErr: true},
 	}

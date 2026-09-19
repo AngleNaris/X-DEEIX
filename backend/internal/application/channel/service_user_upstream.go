@@ -149,7 +149,9 @@ func (s *Service) UpdateUserUpstream(ctx context.Context, userID, upstreamID uin
 		existing.Name = *input.Name
 	}
 	if input.BaseURL != nil {
-        if err := s.validateUpstreamBaseURL(*input.BaseURL); err != nil { return ErrInvalidBaseURL }
+		if err := s.validateUpstreamBaseURL(*input.BaseURL); err != nil {
+			return ErrInvalidBaseURL
+		}
 		existing.BaseURL = *input.BaseURL
 	}
 	if input.APIKeys != nil {
@@ -182,14 +184,18 @@ func (s *Service) UpdateUserUpstream(ctx context.Context, userID, upstreamID uin
 		existing.HeadersJSON = string(headersJSON)
 	}
 	if input.Status != nil {
-        if *input.Status != "active" && *input.Status != "inactive" { return ErrInvalidUpstreamStatus }
-        if *input.Status == "active" && cfg.UserUpstreamRequireApproval && existing.Status != "active" {
-            existing.Status = "pending_approval"
-        } else { existing.Status = *input.Status }
-    }
-    if cfg.UserUpstreamRequireApproval && (input.BaseURL != nil || input.APIKeys != nil || input.Headers != nil) {
-        existing.Status = "pending_approval"
-    }
+		if *input.Status != "active" && *input.Status != "inactive" {
+			return ErrInvalidUpstreamStatus
+		}
+		if *input.Status == "active" && cfg.UserUpstreamRequireApproval && existing.Status != "active" {
+			existing.Status = "pending_approval"
+		} else {
+			existing.Status = *input.Status
+		}
+	}
+	if cfg.UserUpstreamRequireApproval && (input.BaseURL != nil || input.APIKeys != nil || input.Headers != nil) {
+		existing.Status = "pending_approval"
+	}
 
 	existing.UpdatedAt = time.Now()
 
