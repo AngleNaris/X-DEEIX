@@ -270,6 +270,8 @@ export type SendMessageRequest = Omit<ContractSendMessageRequest, "options"> & {
 export type MediaImageRequest = {
   prompt: string;
   model?: string;
+  modelScope?: "platform" | "user";
+  userModelID?: number;
   options?: ConversationOptions;
   clientRunID?: string;
   fileIDs?: string[];

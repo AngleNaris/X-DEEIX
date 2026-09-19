@@ -30,19 +30,29 @@ var conversationReferencePattern = regexp.MustCompile(`\[会话引用:\s*.*?\(([
 // resolveConversationReferences expands drag-and-dropped conversation IDs into a bounded prompt block.
 func (s *Service) resolveConversationReferences(ctx context.Context, userID uint, content string) []model.Message {
 	matches := conversationReferencePattern.FindAllStringSubmatch(content, 4)
-	if len(matches) == 0 { return nil }
+	if len(matches) == 0 {
+		return nil
+	}
 	seen := map[string]struct{}{}
 	var out []model.Message
 	for _, match := range matches {
 		publicID := strings.TrimSpace(match[1])
-		if _, ok := seen[publicID]; ok { continue }
+		if _, ok := seen[publicID]; ok {
+			continue
+		}
 		seen[publicID] = struct{}{}
 		conversation, err := s.repo.GetConversationByPublicID(ctx, publicID, userID)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		messages, _, err := s.repo.ListMessages(ctx, conversation.ID, 0, 20)
-		if err != nil { continue }
+		if err != nil {
+			continue
+		}
 		for _, message := range messages {
-			if strings.TrimSpace(message.Content) == "" || (message.Role != "user" && message.Role != "assistant") { continue }
+			if strings.TrimSpace(message.Content) == "" || (message.Role != "user" && message.Role != "assistant") {
+				continue
+			}
 			message.Content = "[引用会话 " + publicID + "]\n" + message.Content
 			out = append(out, message)
 		}
@@ -511,6 +521,9 @@ func (s *Service) sendMessageInternal(
 	if err != nil {
 		retErr = err
 		return nil, err
+	}
+	if strings.TrimSpace(conversation.ProjectPublicID) == "" {
+		toolRuntime = toolRuntime.withoutProjectTools()
 	}
 	toolRuntime.bindMultimodalAnalyzerWithHistory(cfg, route, conversationAttachments, true)
 	toolRuntime.bindCredentialSecretRefs(input.UserID, input.ConversationID, runID)
@@ -1513,6 +1526,7 @@ func (s *Service) sendMessageInternal(
 				),
 			)
 			toolResult := s.executeAssistantToolCalls(toolCtx, executeAssistantToolCallsInput{
+				ProjectPublicID:         conversation.ProjectPublicID,
 				UserID:                  input.UserID,
 				ConversationID:          input.ConversationID,
 				MessageID:               assistantMessage.ID,

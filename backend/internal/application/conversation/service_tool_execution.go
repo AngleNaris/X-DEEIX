@@ -35,6 +35,7 @@ type executeAssistantToolCallsInput struct {
 	PriorCredentialWrites   []credentialWrite
 	SkipPersistence         bool
 	ResultTokenBudget       int64
+	ProjectPublicID         string
 }
 
 type executeAssistantToolCallsResult struct {
@@ -57,6 +58,15 @@ type credentialWrite struct {
 type toolExecutionRecord struct {
 	row    model.ToolCall
 	result llm.ToolResult
+}
+
+func isProjectWorkspaceQueryTool(name string) bool {
+	switch strings.TrimSpace(name) {
+	case "project_list_files", "project_read_file", "project_search_files":
+		return true
+	default:
+		return false
+	}
 }
 
 type toolExecutionSlot struct {
@@ -283,6 +293,8 @@ func (s *Service) executeAssistantToolCalls(ctx context.Context, input executeAs
 				continue
 
 			}
+		}
+		if mcpConfig == nil && !isProjectTool(executionToolName) {
 			row.Status = "error"
 			row.ErrorJSON = toolNotEnabledForRunMessage(modelToolName)
 			slots[i] = toolExecutionSlot{
@@ -313,7 +325,7 @@ func (s *Service) executeAssistantToolCalls(ctx context.Context, input executeAs
 		}
 		row.InputJSON = normalizedInput
 
-		if input.Ledger != nil {
+		if input.Ledger != nil && !isProjectWorkspaceQueryTool(row.ToolName) {
 			if previous, ok := input.Ledger.lookup(row.ToolName, row.InputJSON); ok {
 				slot := buildRepeatedToolSlot(row, modelToolName, previous)
 				slot.row.InputJSON = maskCredentialToolInput(slot.row.ToolName, isPlatformTool, slot.row.InputJSON)
@@ -329,12 +341,13 @@ func (s *Service) executeAssistantToolCalls(ctx context.Context, input executeAs
 		// 执行参数展开 {{credential: name}} 占位符（仅执行使用，落库保持占位符原文）。
 		executionArguments := s.expandCredentialRefsInJSON(ctx, input.UserID, row.InputJSON)
 		outputJSON, executeErr := s.executeToolCall(ctx, ExecuteToolInput{
-			UserID:         input.UserID,
-			ConversationID: input.ConversationID,
-			RequestID:      strings.TrimSpace(input.RequestID),
-			ToolName:       row.ToolName,
-			ArgumentsJSON:  executionArguments,
-			MCPConfig:      mcpConfig,
+			UserID:          input.UserID,
+			ConversationID:  input.ConversationID,
+			RequestID:       strings.TrimSpace(input.RequestID),
+			ToolName:        row.ToolName,
+			ArgumentsJSON:   executionArguments,
+			MCPConfig:       mcpConfig,
+			ProjectPublicID: strings.TrimSpace(input.ProjectPublicID),
 		})
 		row.LatencyMS = time.Since(toolStartedAt).Milliseconds()
 		if row.LatencyMS < 0 {

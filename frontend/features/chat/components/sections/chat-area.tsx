@@ -31,6 +31,7 @@ import { ChatResponseOutlineRail } from "@/features/chat/components/sections/cha
 import { ChatScreenshotSelectionBar } from "@/features/chat/components/sections/chat-screenshot-selection-bar";
 import { useChatMessageFeedback } from "@/features/chat/hooks/use-chat-message-feedback";
 import type { OpenCodeArtifactInput } from "@/features/chat/model/chat-artifacts";
+import type { ProjectChange } from "@/features/chat/components/sections/chat-project-workspace";
 import { areChatAreaMessagesRenderEqual } from "@/features/chat/model/chat-message-render";
 import type { ChatModelOption } from "@/features/chat/types/chat-runtime";
 import type { ChatAreaMessage, MessageAttachment } from "@/features/chat/types/messages";
@@ -189,6 +190,7 @@ type ChatAreaProps = {
   onEditImageAttachment?: (attachment: MessageAttachment, sourceModelName?: string) => void;
   onExtendVideoAttachment?: (attachment: MessageAttachment, sourceModelName?: string) => void;
   onOpenCodeArtifact?: (message: ChatAreaMessage, artifact: OpenCodeArtifactInput) => void;
+  onOpenProjectChange?: (change: ProjectChange) => void;
   onCycleMessageBranch: (parentPublicID: string | null, direction: "previous" | "next") => void;
   onPlatformToolApprovalResolved?: () => void;
   onToggleStar?: () => void | Promise<void>;
@@ -359,6 +361,7 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
   onPlatformToolApprovalResolved,
   onReactAssistantMessage,
   onOpenCodeArtifact,
+  onOpenProjectChange,
   markdownRender,
   showModelInfo,
   showLatency,
@@ -392,6 +395,7 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
   onPlatformToolApprovalResolved?: () => void;
   onReactAssistantMessage: (publicID: string, reaction: AssistantReaction) => void;
   onOpenCodeArtifact?: (message: ChatAreaMessage, artifact: OpenCodeArtifactInput) => void;
+  onOpenProjectChange?: (change: ProjectChange) => void;
   markdownRender: boolean;
   showModelInfo: boolean;
   showLatency: boolean;
@@ -491,6 +495,7 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
           sourceSupportsVideoExtension ? onExtendVideoAttachment : undefined
         }
         artifactActions={artifactActions}
+        onOpenProjectChange={onOpenProjectChange}
         markdownRender={markdownRender}
         showModelInfo={showModelInfo}
         showLatency={showLatency}
@@ -540,6 +545,7 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
   previous.onExtendVideoAttachment === next.onExtendVideoAttachment &&
   previous.onPlatformToolApprovalResolved === next.onPlatformToolApprovalResolved &&
   previous.onOpenCodeArtifact === next.onOpenCodeArtifact &&
+  previous.onOpenProjectChange === next.onOpenProjectChange &&
   areChatAreaMessagesRenderEqual(previous.item, next.item)
 ));
 
@@ -566,6 +572,7 @@ export function ChatArea({
   onEditImageAttachment,
   onExtendVideoAttachment,
   onOpenCodeArtifact,
+  onOpenProjectChange,
   onCycleMessageBranch,
   onPlatformToolApprovalResolved,
   onToggleStar,
@@ -799,6 +806,7 @@ export function ChatArea({
                       }
                       onReactAssistantMessage={stableOnReactAssistantMessage}
                       onOpenCodeArtifact={onOpenCodeArtifact}
+                      onOpenProjectChange={onOpenProjectChange}
                       markdownRender={markdownRender}
                       showModelInfo={showModelInfo}
                       showLatency={showLatency}

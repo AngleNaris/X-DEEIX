@@ -93,6 +93,14 @@ const CONVERSATION_METADATA_REFRESH_BACKOFF = 1.5;
 const MAX_CONCURRENT_RUNS = 5;
 const GENERATION_CANCEL_SETTLEMENT_TIMEOUT_MS = 25_000;
 
+function imagePromptSuffix(options: ConversationOptions): string {
+  const values = [options.aspect_ratio, options.image_size]
+    .filter((value): value is string | number => typeof value === "string" || typeof value === "number")
+    .map((value) => String(value).trim())
+    .filter(Boolean);
+  return values.map((value) => ` --${value}`).join("");
+}
+
 function resolveSubmitBlockDescription(
   reason: ChatSubmitBlockReason,
   t: (key: string) => string,
@@ -918,6 +926,14 @@ export function useChatMessageSubmit({
         resolvedEffectiveAttachments,
         isAgentGroupTarget ? undefined : sanitizedOptions,
       );
+      const promptImageOptions = Boolean(
+        selectedModel?.kinds.includes("image_gen") &&
+        selectedModel.kinds.includes("chat") &&
+        !selectedModel.protocols.some((protocol) => protocol.includes("image")),
+      );
+      const submittedContent = submitDecision.task === "chat" && promptImageOptions
+        ? `${payloadContent}${imagePromptSuffix(sanitizedOptions)}`
+        : payloadContent;
       if (submitDecision.blockedReason) {
         toast.error(t("mediaInputUnsupported"), {
           description: resolveSubmitBlockDescription(submitDecision.blockedReason, t),
@@ -1004,7 +1020,7 @@ export function useChatMessageSubmit({
           sourcePublicID: resolvedSourcePublicID,
           branchReason: resolvedBranchReason,
           reuseUserMessage: assistantOnlyBranch,
-          userContent: payloadContent,
+          userContent: submittedContent,
           userAttachments: resolvedEffectiveAttachments.length > 0 ? resolvedEffectiveAttachments : undefined,
           userCreatedAt: createdAt,
           assistantText: "",
@@ -1319,7 +1335,7 @@ export function useChatMessageSubmit({
           const chatPayload: SendMessageRequest = {
             ...commonStreamPayload,
             contentType: resolvedEffectiveAttachments.length > 0 ? "mixed" : "text",
-            content: payloadContent,
+            content: submittedContent,
             modelScope: requestModelScope === "user" ? "user" : undefined,
             userModelID: requestModelScope === "user" ? requestUserModelID : undefined,
             selectedToolIDs: requestSelectedToolIDs.length > 0 ? requestSelectedToolIDs : undefined,
@@ -1354,6 +1370,8 @@ export function useChatMessageSubmit({
           const mediaPayload: MediaImageRequest = {
             ...commonStreamPayload,
             prompt: payloadContent,
+            modelScope: requestModelScope === "user" ? "user" : undefined,
+            userModelID: requestModelScope === "user" ? requestUserModelID : undefined,
           };
           completed =
             submitTask === "image_generation"

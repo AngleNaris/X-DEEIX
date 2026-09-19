@@ -574,6 +574,10 @@ function ChatInputComponent({
   );
   const selectedProtocols = React.useMemo(() => selectedModel?.protocols ?? [], [selectedModel]);
   const selectedModelName = selectedModel?.platformModelName || selectedPlatformModelName;
+  const promptImageOptions = Boolean(
+    selectedModel?.kinds.some((kind) => kind === "image_gen" || kind === "image_edit") &&
+    !selectedProtocols.some((protocol) => protocol.includes("image")),
+  );
   const reasoningEffortProtocol = resolveReasoningEffortProtocol(selectedModel?.protocols ?? []);
   const reasoningEffortValue = reasoningEffortProtocol
     ? getReasoningEffortOptionValue(reasoningEffortProtocol, options)
@@ -1229,7 +1233,7 @@ function ChatInputComponent({
             }}
           />
 
-          <InputGroupAddon align="block-end" className="items-center justify-between pt-2">
+          <InputGroupAddon align="block-end" className="items-center justify-between gap-2 overflow-x-auto pt-2">
             <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
               <DropdownMenu
                 modal={false}
@@ -1416,7 +1420,27 @@ function ChatInputComponent({
               ) : null}
             </div>
 
-            <div className="flex min-w-0 flex-1 items-center justify-end gap-1 overflow-hidden sm:gap-1.5">
+            <div className="flex shrink-0 items-center justify-end gap-1 sm:gap-1.5">
+              {!modelOptionPolicyDisabled ? (
+                <ChatModelConfig
+                  disabled={loading || uploading || modelLoading}
+                  options={modelConfigOptions}
+                  defaultOptions={taskOptionConfig?.defaultOptions ?? defaultOptions}
+                  optionControls={taskOptionConfig?.optionControls ?? selectedModel?.optionControls ?? []}
+                  lockedOptionPaths={taskOptionConfig ? [] : selectedModel?.lockedOptionPaths ?? []}
+                  nativeToolKeys={selectedModel?.nativeToolKeys ?? []}
+                  nativeTools={selectedModel?.nativeTools ?? []}
+                  modelOptionPolicy={modelOptionPolicy}
+                  selectedProtocols={selectedProtocols}
+                  selectedModelName={selectedModelName}
+                  selectedModelKinds={selectedModel?.kinds ?? []}
+                  promptImageOptions={promptImageOptions}
+                  onOptionsChange={onOptionsChange}
+                  onOptionsReset={onOptionsReset}
+                  onDefaultOptionsRestore={onOptionsDefaultRestore}
+                />
+              ) : null}
+
               {composerModeIndicator && ComposerModeIcon ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1567,7 +1591,7 @@ function ChatInputComponent({
             </div>
           </InputGroupAddon>
         </div>
-      </InputGroup>
+      </InputGroup >
 
     </div>
   );
