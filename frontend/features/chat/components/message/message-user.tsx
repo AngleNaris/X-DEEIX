@@ -41,6 +41,7 @@ type ChatMessageUserProps = {
   onRetryUserMessage: (message: ChatAreaMessage) => Promise<void> | void;
   onEditUserMessage: (message: ChatAreaMessage, content: string) => Promise<boolean> | boolean;
   onForkMessage?: (message: ChatAreaMessage) => Promise<void> | void;
+  onDeleteMessage?: (message: ChatAreaMessage) => Promise<void> | void;
   modelOptions?: ChatModelOption[];
   selectedPlatformModelName?: string;
   onModelChange?: (platformModelName: string) => void;
@@ -60,6 +61,7 @@ export function ChatMessageUser({
   onRetryUserMessage,
   onEditUserMessage,
   onForkMessage,
+  onDeleteMessage,
   modelOptions = [],
   selectedPlatformModelName = "",
   onModelChange = () => undefined,
@@ -145,6 +147,7 @@ export function ChatMessageUser({
     () => onForkMessage?.(item),
     [item, onForkMessage],
   );
+  const onDelete = React.useCallback(() => onDeleteMessage?.(item), [item, onDeleteMessage]);
 
   const onEditSave = React.useCallback(async () => {
     const nextContent = editingValue.trim();
@@ -331,6 +334,7 @@ export function ChatMessageUser({
         onEdit={() => setIsEditing(true)}
         onCopy={onCopy}
         onFork={onForkMessage ? onFork : undefined}
+        onDelete={onDeleteMessage ? onDelete : undefined}
         copySucceeded={copySucceeded}
         readOnly={readOnly}
         alwaysVisible={readOnly}

@@ -33,6 +33,7 @@ import { AssistantMessageMeta } from "@/features/chat/components/message/message
 import { MessageProcessTrace, MessageTraceEventBlocks } from "@/features/chat/components/message/message-process-trace";
 import { MessageSavedArtifactCards } from "@/features/chat/components/message/message-tool-trace";
 import { PlatformToolApprovalCard } from "@/features/chat/components/message/platform-tool-approval-card";
+import { type ProjectChange, projectChanges } from "@/features/chat/components/sections/chat-project-workspace";
 import { resolveLeadingImagePreview } from "@/features/chat/model/media-image-preview";
 import { collectSavedArtifactTraceItems } from "@/features/chat/model/message-process-trace";
 import {
@@ -46,7 +47,6 @@ import type {
   ChatInlineAlert,
   MessageAttachment,
 } from "@/features/chat/types/messages";
-import { projectChanges, type ProjectChange } from "@/features/chat/components/sections/chat-project-workspace";
 import { isUpstreamStreamingDebugBody, summarizeUpstreamError } from "@/features/chat/utils/chat-runtime";
 import { useLocalizedErrorMessage } from "@/i18n/use-localized-error";
 import { cn } from "@/lib/utils";
@@ -186,6 +186,7 @@ type ChatMessageBotProps = {
   onContinueAssistantMessage?: (message: ChatAreaMessage) => Promise<void> | void;
   onEditAssistantMessage: (message: ChatAreaMessage, content: string) => Promise<boolean> | boolean;
   onForkMessage?: (message: ChatAreaMessage) => Promise<void> | void;
+  onDeleteMessage?: (message: ChatAreaMessage) => Promise<void> | void;
   onCycleMessageBranch: (parentPublicID: string | null, direction: "previous" | "next") => void;
   onReactAssistantMessage: (publicID: string, reaction: AssistantReaction) => void;
   onPlatformToolApprovalResolved?: () => void;
@@ -219,6 +220,7 @@ export function ChatMessageBot({
   onContinueAssistantMessage,
   onEditAssistantMessage,
   onForkMessage,
+  onDeleteMessage,
   onCycleMessageBranch,
   onReactAssistantMessage,
   onPlatformToolApprovalResolved,
@@ -253,6 +255,7 @@ export function ChatMessageBot({
     () => onForkMessage?.(item),
     [item, onForkMessage],
   );
+  const onDelete = React.useCallback(() => onDeleteMessage?.(item), [item, onDeleteMessage]);
   const onEditSave = React.useCallback(async () => {
     const nextContent = editingValue.trim();
     if (!nextContent || nextContent === item.content.trim()) {
@@ -609,6 +612,7 @@ export function ChatMessageBot({
         onEdit={() => setIsEditing(true)}
         onCopy={onCopy}
         onFork={onForkMessage ? onFork : undefined}
+        onDelete={onDeleteMessage ? onDelete : undefined}
         copySucceeded={copySucceeded}
         onReact={(value) => onReactAssistantMessage(item.publicID, value)}
         showModelInfo={showModelInfo}

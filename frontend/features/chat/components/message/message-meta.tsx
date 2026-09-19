@@ -13,6 +13,7 @@ import {
   FilePenLine,
   Forward,
   TicketSlash,
+  Trash2,
 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import * as React from "react";
@@ -289,6 +290,7 @@ export function UserMessageMeta({
   onEdit,
   onCopy,
   onFork,
+  onDelete,
   copySucceeded = false,
   readOnly = false,
   alwaysVisible = false,
@@ -301,6 +303,7 @@ export function UserMessageMeta({
   onEdit: () => void;
   onCopy: () => void;
   onFork?: () => Promise<void> | void;
+  onDelete?: () => Promise<void> | void;
   copySucceeded?: boolean;
   readOnly?: boolean;
   alwaysVisible?: boolean;
@@ -351,6 +354,16 @@ export function UserMessageMeta({
               disabled={messagePending}
               onFork={onFork}
             />
+          ) : null}
+          {showRetry && hasPersistedMessage && onDelete ? (
+            <MetaIconButton
+              label={t("deleteMessage")}
+              className="hover:text-destructive"
+              disabled={messagePending}
+              onClick={() => void onDelete()}
+            >
+              <Trash2 size={14} strokeWidth={1.8} />
+            </MetaIconButton>
           ) : null}
         </div>
       ) : null}
@@ -994,6 +1007,7 @@ export function AssistantMessageMeta({
   onEdit,
   onCopy,
   onFork,
+  onDelete,
   copySucceeded = false,
   onReact,
   showModelInfo = true,
@@ -1016,6 +1030,7 @@ export function AssistantMessageMeta({
   onEdit?: () => void;
   onCopy: () => void;
   onFork?: () => Promise<void> | void;
+  onDelete?: () => Promise<void> | void;
   copySucceeded?: boolean;
   onReact: (value: AssistantReaction) => void;
   showModelInfo?: boolean;
@@ -1043,6 +1058,7 @@ export function AssistantMessageMeta({
   const canEdit = Boolean(canRetry && !busy && onEdit);
   const canContinue = Boolean(canRetry && !busy && item.status === "interrupted");
   const canFork = Boolean(canRetry && onFork);
+  const canDelete = Boolean(canRetry && onDelete);
   const canShowBranchNavigator = Boolean(showBranchNavigator && item.branchNavigator);
   const hasTokenUsage = Boolean(
     (item.inputTokens ?? 0) > 0 ||
@@ -1155,6 +1171,15 @@ export function AssistantMessageMeta({
                     label={t("forkMessage")}
                     onFork={onFork}
                   />
+                ) : null}
+                {canDelete && onDelete ? (
+                  <MetaIconButton
+                    label={t("deleteMessage")}
+                    className="hover:text-destructive"
+                    onClick={() => void onDelete()}
+                  >
+                    <Trash2 size={14} strokeWidth={1.8} />
+                  </MetaIconButton>
                 ) : null}
                 <QuickMemoryPin disabled={messagePending} />
               </>

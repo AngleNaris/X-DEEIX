@@ -17,6 +17,7 @@ type messageRoutePromptInput struct {
 	AppendUserContent        bool
 	ProjectSystemPrompt      string
 	RoleSystemPrompt         string
+	ConversationSystemPrompt string
 	HTMLVisualPromptEnabled  bool
 	ReasoningContentPassback bool
 	DomainMessages           []model.Message
@@ -95,6 +96,7 @@ func (s *Service) buildMessageRoutePrompt(ctx context.Context, route *channel.Re
 		input.RoleSystemPrompt,
 		input.HTMLVisualPromptEnabled,
 		s.resolveSystemPromptVars(ctx, input.UserID),
+input.ConversationSystemPrompt,
 	)
 	if systemPrompt.Content != "" {
 		if systemPrompt.InlineToUser {

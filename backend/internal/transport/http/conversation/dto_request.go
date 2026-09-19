@@ -7,6 +7,7 @@ type CreateConversationRequest struct {
 	ProjectID    string `json:"projectID,omitempty" binding:"omitempty,max=32"`
 	RoleID       string `json:"roleID,omitempty" binding:"omitempty,max=32"`
 	AgentGroupID string `json:"agentGroupID,omitempty" binding:"omitempty,max=32"`
+	SystemPrompt string `json:"systemPrompt,omitempty" binding:"max=12000"`
 }
 
 // WriteProjectFileRequest 手动创建或覆盖项目文件请求。
@@ -101,6 +102,16 @@ type BatchSetConversationProjectRequest struct {
 // RenameConversationRequest 重命名会话请求。
 type RenameConversationRequest struct {
 	Title string `json:"title" binding:"required,max=255"`
+}
+
+// SetConversationSystemPromptRequest 更新会话系统提示词请求；传空字符串表示清除。
+type SetConversationSystemPromptRequest struct {
+	SystemPrompt string `json:"systemPrompt" binding:"max=12000"`
+}
+
+// DeleteMessageResponse 删除消息响应。
+type DeleteMessageResponse struct {
+	DeletedCount int64 `json:"deletedCount"`
 }
 
 // UpdateConversationLabelsRequest 更新会话标签请求。

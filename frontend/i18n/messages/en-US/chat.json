@@ -90,7 +90,10 @@
     "share": "Share",
     "manageShare": "Manage share",
     "exportJSON": "Export JSON",
-    "delete": "Delete"
+    "delete": "Delete",
+    "systemPrompt": "System Prompt",
+    "systemPromptDescription": "Set a system prompt for this conversation. It applies to every reply in this conversation; leave empty to clear.",
+    "systemPromptPlaceholder": "e.g. You are a rigorous academic writing assistant. Keep responses formal and cite reliable sources..."
   },
   "screenshot": {
     "captureFull": "Capture full conversation",
@@ -278,7 +281,9 @@
     "artifactSaved": "Saved, share link created",
     "artifactSaveFailed": "Failed to save",
     "artifactLinkCopied": "Link copied",
-    "artifactOpenLink": "Open share page"
+    "artifactOpenLink": "Open share page",
+    "deleteMessage": "Delete message",
+    "deleteMessageFailed": "Failed to delete message"
   },
   "loadError": {
     "title": "Failed to load conversation",
@@ -365,7 +370,8 @@
     "moderationBlocked": "Content blocked",
     "moderationBlockedDescription": "This response was withdrawn after a safety check.",
     "moderationEventId": "Event ID: {id}",
-    "moderationCategories": "Categories: {categories}"
+    "moderationCategories": "Categories: {categories}",
+    "deleteMessageFailed": "Failed to delete message"
   },
   "data": {
     "signInRequired": "Sign in before loading conversation messages.",
@@ -592,7 +598,8 @@
     "insertScript": "Insert script",
     "insertScriptTitle": "Insert script",
     "insertScriptDescription": "Pick a script to insert a {{script: name}} tag at the cursor; it runs and expands when the message is sent.",
-    "insertScriptEmpty": "No scripts yet. Create one in Skills → Scripts."
+    "insertScriptEmpty": "No scripts yet. Create one in Skills → Scripts.",
+    "systemPrompt": "System Prompt"
   },
   "modelPicker": {
     "selectModel": "Select model",

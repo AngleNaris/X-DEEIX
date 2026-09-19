@@ -26,6 +26,7 @@ type Conversation struct {
 	LastPromptFingerprint  string     `gorm:"size:64;not null;default:'';index:idx_chat_conversations_last_prompt_fingerprint;comment:最新上游状态指纹"`
 	LastAssistantMessageID *uint      `gorm:"index:idx_chat_conversations_last_assistant_message_id;comment:最新成功助手消息ID"`
 	LastReadMessageID      *uint      `gorm:"index:idx_chat_conversations_last_read_message_id;comment:用户已读助手消息ID"`
+	SystemPrompt          string     `gorm:"type:text;not null;default:'';comment:会话级系统提示词"`
 }
 
 // TableName 指定表名。

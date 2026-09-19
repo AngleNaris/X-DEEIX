@@ -852,6 +852,7 @@ func (s *Service) sendMessageInternal(
 		ToolRuntime:             toolRuntime,
 		SkipImageAttachments:    imageAttachmentRoutingActive,
 		Config:                  cfg,
+		ConversationSystemPrompt: conversation.SystemPrompt,
 	}
 	buildRoutePrompt := func(currentRoute *channel.ResolvedRoute) (PromptPlan, bool, error) {
 		passbackEnabled := s.reasoningContentPassbackEnabled(ctx, input.UserID, currentRoute)

@@ -45,6 +45,8 @@ type Conversation struct {
 	LastShareAccessedAt    *time.Time
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
+	ProjectSystemPrompt   string
+	SystemPrompt          string
 }
 
 // ConversationProject 表示用户会话项目分组。

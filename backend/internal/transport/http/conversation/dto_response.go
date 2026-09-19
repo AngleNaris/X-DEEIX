@@ -26,6 +26,7 @@ type ConversationResponse struct {
 	Title               string     `json:"title"`
 	LabelsJSON          string     `json:"labelsJSON"`
 	Model               string     `json:"model"`
+	SystemPrompt        string     `json:"systemPrompt"`
 	Provider            string     `json:"provider"`
 	SessionKey          string     `json:"sessionKey"`
 	IsStarred           bool       `json:"isStarred"`
@@ -117,6 +118,7 @@ func toConversationResponse(item *model.Conversation) ConversationResponse {
 		Title:               item.Title,
 		LabelsJSON:          labelsJSON,
 		Model:               item.Model,
+		SystemPrompt:        item.SystemPrompt,
 		Provider:            item.Provider,
 		SessionKey:          item.SessionKey,
 		IsStarred:           item.IsStarred,
