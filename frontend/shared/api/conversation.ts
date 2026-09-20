@@ -50,7 +50,6 @@ import type {
   SetConversationArchiveRequest,
   SetConversationProjectRequest,
   SetConversationStarRequest,
-  SetConversationSystemPromptRequest,
   SetMessageFeedbackRequest,
   StreamMessageEvent,
   GroupStreamEvent,
@@ -669,22 +668,6 @@ export async function renameConversation(
 ): Promise<ConversationDTO> {
   return authedRequest<ConversationDTO>(
     `/api/v1/conversations/${pathParam(conversationPublicID)}/title`,
-    {
-      method: "PATCH",
-      accessToken,
-      body: payload,
-    },
-    true,
-  );
-}
-
-export async function setConversationSystemPrompt(
-  accessToken: string,
-  conversationPublicID: string,
-  payload: SetConversationSystemPromptRequest,
-): Promise<ConversationDTO> {
-  return authedRequest<ConversationDTO>(
-    `/api/v1/conversations/${pathParam(conversationPublicID)}/system-prompt`,
     {
       method: "PATCH",
       accessToken,

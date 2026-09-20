@@ -6,7 +6,7 @@ export type ConversationVisibilityRule =
   | { field: string; equals: string }
   | { all: ConversationVisibilityRule[] };
 
-export type ConversationSettingsSection = "conversation" | "contextCompression" | "optionPassthrough" | "userUpstream";
+export type ConversationSettingsSection = "conversation" | "contextCompression" | "optionPassthrough";
 
 export type ConversationSettingsField = {
   section: ConversationSettingsSection;
@@ -73,11 +73,6 @@ export const COMPACT_LLM_ENABLED_RULE: ConversationVisibilityRule = {
     CONTEXT_COMPACT_ENABLED_RULE,
     { field: "chat.compact_llm_enabled", equals: "true" },
   ],
-};
-
-export const USER_UPSTREAM_ENABLED_RULE: ConversationVisibilityRule = {
-  field: "chat.user_upstream_enabled",
-  equals: "true",
 };
 
 export const DEFAULT_MODEL_OPTION_ALLOWED_PATHS = `{
@@ -496,47 +491,6 @@ export function buildConversationSettingsFields(t: ConversationSettingsTranslato
       placeholder: t("fields.defaultPromptPlaceholder"),
       visibleWhen: COMPACT_LLM_ENABLED_RULE,
       subgroupKey: "compact_llm",
-    },
-    {
-      section: "userUpstream",
-      namespace: "chat",
-      key: "user_upstream_enabled",
-      label: t("fields.userUpstreamEnabled.label"),
-      description: t("fields.userUpstreamEnabled.description"),
-      type: "bool",
-    },
-    {
-      section: "userUpstream",
-      namespace: "chat",
-      key: "user_upstream_billing_mode",
-      label: t("fields.userUpstreamBillingMode.label"),
-      description: t("fields.userUpstreamBillingMode.description"),
-      type: "select",
-      options: [
-        { label: t("userUpstreamBilling.disabled"), value: "disabled" },
-        { label: t("userUpstreamBilling.statisticsOnly"), value: "statistics_only" },
-        { label: t("userUpstreamBilling.platformPricing"), value: "platform_pricing" },
-      ],
-      visibleWhen: USER_UPSTREAM_ENABLED_RULE,
-    },
-    {
-      section: "userUpstream",
-      namespace: "chat",
-      key: "user_upstream_quota_limit",
-      label: t("fields.userUpstreamQuotaLimit.label"),
-      description: t("fields.userUpstreamQuotaLimit.description"),
-      type: "int",
-      placeholder: t("fields.userUpstreamQuotaLimit.placeholder"),
-      visibleWhen: USER_UPSTREAM_ENABLED_RULE,
-    },
-    {
-      section: "userUpstream",
-      namespace: "chat",
-      key: "user_upstream_require_approval",
-      label: t("fields.userUpstreamRequireApproval.label"),
-      description: t("fields.userUpstreamRequireApproval.description"),
-      type: "bool",
-      visibleWhen: USER_UPSTREAM_ENABLED_RULE,
     },
   ];
 }

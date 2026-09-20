@@ -7,34 +7,10 @@ func (m *Module) RegisterPublicRoutes(public *gin.RouterGroup) {
 	public.GET("/llm/icon-assets/:public_id", m.Handler.GetModelIconAsset)
 }
 
-// RegisterRoutes 注册用户侧模型目录与自有渠道路由。
+// RegisterRoutes 注册用户侧模型目录路由。
 func (m *Module) RegisterRoutes(authRequired *gin.RouterGroup) {
 	authRequired.GET("/models", m.Handler.ListPublicModels)
 
-	// 用户自有渠道（BYOK）
-	authRequired.GET("/user/upstreams", m.Handler.ListUserUpstreams)
-	authRequired.GET("/user/upstream-presets", m.Handler.ListUserUpstreamPresets)
-	authRequired.POST("/user/upstreams", m.Handler.CreateUserUpstream)
-	authRequired.GET("/user/upstreams/:id", m.Handler.GetUserUpstream)
-	authRequired.PATCH("/user/upstreams/:id", m.Handler.UpdateUserUpstream)
-	authRequired.DELETE("/user/upstreams/:id", m.Handler.DeleteUserUpstream)
-	authRequired.GET("/user/upstreams/:id/models/remote", m.Handler.ListUserRemoteModels)
-	authRequired.POST("/user/upstreams/:id/models", m.Handler.CreateUserModel)
-	authRequired.POST("/user/upstreams/:id/models/batch", m.Handler.BatchCreateUserModels)
-	authRequired.POST("/user/upstreams/:id/test", m.Handler.TestUserUpstream)
-	authRequired.GET("/user/models", m.Handler.ListUserModels)
-	authRequired.POST("/user/models/batch-update", m.Handler.BatchUpdateUserModels)
-	authRequired.POST("/user/models/batch-delete", m.Handler.BatchDeleteUserModels)
-	authRequired.POST("/user/models/:id/test", m.Handler.TestUserModel)
-	authRequired.PATCH("/user/models/:id", m.Handler.UpdateUserModel)
-	authRequired.DELETE("/user/models/:id", m.Handler.DeleteUserModel)
-	authRequired.GET("/user/embedding-profiles", m.Handler.ListUserEmbeddingProfiles)
-	authRequired.PUT("/user/embedding-profiles", m.Handler.SaveUserEmbeddingProfile)
-	authRequired.DELETE("/user/embedding-profiles/:id", m.Handler.DeleteUserEmbeddingProfile)
-	authRequired.GET("/user/rag-settings", m.Handler.GetUserRAGSettings)
-	authRequired.PUT("/user/rag-settings", m.Handler.SaveUserRAGSettings)
-	authRequired.GET("/user/conversation-projects/:project_id/rag-settings", m.Handler.GetProjectRAGSettings)
-	authRequired.PUT("/user/conversation-projects/:project_id/rag-settings", m.Handler.SaveProjectRAGSettings)
 }
 
 // RegisterAdminRoutes 注册管理员侧上游配置路由。
@@ -95,6 +71,4 @@ func (m *Module) RegisterAdminRoutes(adminGroup *gin.RouterGroup) {
 	// 全局设置
 	adminGroup.GET("/llm/settings", m.Handler.ListLLMSettings)
 	adminGroup.PATCH("/llm/settings/:key", m.Handler.UpdateLLMSetting)
-	adminGroup.GET("/llm/user-upstream-presets", m.Handler.ListAdminUserUpstreamPresets)
-	adminGroup.PUT("/llm/user-upstream-presets", m.Handler.ReplaceUserUpstreamPresets)
 }

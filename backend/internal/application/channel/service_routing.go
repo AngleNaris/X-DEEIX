@@ -112,11 +112,8 @@ func (s *Service) ValidateModelRouteReference(ctx context.Context, input Resolve
 func (s *Service) resolveRouteReferences(ctx context.Context, input ResolveRouteInput) ([]repository.ChannelUpstreamRouteRow, error) {
 	var rows []repository.ChannelUpstreamRouteRow
 	var err error
-	if strings.EqualFold(strings.TrimSpace(input.ModelScope), RouteScopeUser) {
-		if !s.cfg.Snapshot().UserUpstreamEnabled || s.cfg.Snapshot().UserUpstreamBillingMode == "disabled" {
-			return nil, ErrModelAccessDenied
-		}
-		rows, err = s.getUserModelRoute(ctx, input)
+	if strings.EqualFold(strings.TrimSpace(input.ModelScope), RouteScopeUser) || input.UserModelID != 0 {
+		return nil, ErrModelAccessDenied
 	} else {
 		platformModelName, err := normalizePlatformModelName(input.PlatformModelName)
 		if err != nil {
@@ -140,7 +137,7 @@ func (s *Service) resolveRouteReferences(ctx context.Context, input ResolveRoute
 		}
 
 		input.PlatformModelName = platformModelName
-		rows, err = s.getAvailableRoutesWithUserPriority(ctx, input)
+		rows, err = s.repo.ListActiveRoutesByModelWithOwnership(ctx, input.PlatformModelName, "platform", nil)
 	}
 	if err != nil {
 		return nil, err
@@ -767,15 +764,15 @@ func (s *Service) BuildRouteForUpstream(ctx context.Context, upstreamID uint, pr
 		return nil, err
 	}
 	return &ResolvedRoute{
-		UpstreamID:        upstream.ID,
-		UpstreamName:      upstream.Name,
-		Protocol:          strings.TrimSpace(protocol),
-		BaseURL:           upstream.BaseURL,
-		APIKey:            apiKey,
-		ConnectTimeoutMS:  upstream.ConnectTimeoutMS,
-		ReadTimeoutMS:     upstream.ReadTimeoutMS,
+		UpstreamID:          upstream.ID,
+		UpstreamName:        upstream.Name,
+		Protocol:            strings.TrimSpace(protocol),
+		BaseURL:             upstream.BaseURL,
+		APIKey:              apiKey,
+		ConnectTimeoutMS:    upstream.ConnectTimeoutMS,
+		ReadTimeoutMS:       upstream.ReadTimeoutMS,
 		StreamIdleTimeoutMS: upstream.StreamIdleTimeoutMS,
-		HeadersJSON:       upstream.HeadersJSON,
-		UpstreamModel:     strings.TrimSpace(upstreamModel),
+		HeadersJSON:         upstream.HeadersJSON,
+		UpstreamModel:       strings.TrimSpace(upstreamModel),
 	}, nil
 }

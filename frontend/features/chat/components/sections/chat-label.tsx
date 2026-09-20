@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDown, MessagesSquare, PencilLine, Star, StarOff, Trash } from "lucide-react";
+import { ChevronDown, PencilLine, Star, StarOff, Trash } from "lucide-react";
 import { useTranslations } from "next-intl";
 import * as React from "react";
 
@@ -26,7 +26,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Spinner, SpinnerLabel } from "@/components/ui/spinner";
 import { ConversationLabelsDialog, ConversationLabelsMenuItem } from "@/entities/conversation";
-import { ConversationSystemPromptDialog } from "@/features/chat/components/shared/conversation-system-prompt-dialog";
 import { cn } from "@/lib/utils";
 import { ConversationProjectSubmenu } from "@/shared/components/conversation-project-submenu";
 import { ConversationShareExportSubmenu } from "@/shared/components/conversation-share-export-menu";
@@ -38,8 +37,6 @@ type ChatLabelProps = {
   className?: string;
   onToggleStar?: () => void | Promise<void>;
   onRename?: (title: string) => void | Promise<void>;
-  onSetSystemPrompt?: (systemPrompt: string) => void | Promise<void>;
-  systemPrompt?: string;
   onAutoRename?: () => void | Promise<void>;
   labels?: string[];
   onUpdateLabels?: (labels: string[]) => void | Promise<void>;
@@ -70,8 +67,6 @@ export function ChatLabel({
   className,
   onToggleStar,
   onRename,
-  onSetSystemPrompt,
-  systemPrompt = "",
   onAutoRename,
   labels = [],
   onUpdateLabels,
@@ -90,7 +85,6 @@ export function ChatLabel({
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [renameDialogOpen, setRenameDialogOpen] = React.useState(false);
   const [labelsDialogOpen, setLabelsDialogOpen] = React.useState(false);
-  const [systemPromptDialogOpen, setSystemPromptDialogOpen] = React.useState(false);
   const [renameValue, setRenameValue] = React.useState(title);
   const [renaming, setRenaming] = React.useState(false);
   const [autoRenaming, setAutoRenaming] = React.useState(false);
@@ -194,22 +188,6 @@ export function ChatLabel({
           >
             <DropdownMenuItemIcon icon={PencilLine} />
             {t("rename")}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            disabled={!onSetSystemPrompt}
-            onSelect={(event) => {
-              event.preventDefault();
-              if (!onSetSystemPrompt) {
-                return;
-              }
-              setMenuOpen(false);
-              requestAnimationFrame(() => {
-                setSystemPromptDialogOpen(true);
-              });
-            }}
-          >
-            <DropdownMenuItemIcon icon={MessagesSquare} />
-            {t("systemPrompt")}
           </DropdownMenuItem>
           <ConversationLabelsMenuItem
             labels={labels}
@@ -318,14 +296,6 @@ export function ChatLabel({
           </form>
         </DialogContent>
       </Dialog>
-      {onSetSystemPrompt ? (
-        <ConversationSystemPromptDialog
-          open={systemPromptDialogOpen}
-          onOpenChange={setSystemPromptDialogOpen}
-          systemPrompt={systemPrompt}
-          onSave={onSetSystemPrompt}
-        />
-      ) : null}
       {onUpdateLabels ? (
         <ConversationLabelsDialog
           open={labelsDialogOpen}

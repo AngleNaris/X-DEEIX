@@ -17,7 +17,6 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
-  MessagesSquare,
   Box,
   CornerDownRight,
   Eye,
@@ -76,7 +75,6 @@ import { ChatMCP } from "@/features/chat/components/sections/chat-mcp";
 import { ChatModelConfig } from "@/features/chat/components/sections/chat-model-config";
 import { ChatModelPicker } from "@/features/chat/components/sections/chat-model-picker";
 import { ChatMentionMenuPortal } from "@/features/chat/components/shared/chat-mention-menu";
-import { ConversationSystemPromptDialog } from "@/features/chat/components/shared/conversation-system-prompt-dialog";
 import {
   type ChatMentionMenuKind,
   useChatMentionMenu,
@@ -230,10 +228,6 @@ type ChatInputProps = {
   onDeleteQueuedMessage: (id: string) => void;
   onEditQueuedMessage: (id: string, content: string) => void;
   onGuideQueuedMessage: (id: string) => void;
-  systemPromptEditor?: {
-    value: string;
-    onSave: (systemPrompt: string) => void | Promise<void>;
-  };
 };
 
 type ComposerModeIndicator = {
@@ -432,7 +426,6 @@ function ChatInputComponent({
   onDeleteQueuedMessage,
   onEditQueuedMessage,
   onGuideQueuedMessage,
-  systemPromptEditor,
 }: ChatInputProps) {
   const tChat = useTranslations("chat");
   const tComposer = useTranslations("chat.composer");
@@ -443,7 +436,6 @@ function ChatInputComponent({
   const tImageQuality = useTranslations("chat.imageQuality");
   const locale = useLocale();
   const [isBlocksHovered, setIsBlocksHovered] = React.useState(false);
-  const [systemPromptDialogOpen, setSystemPromptDialogOpen] = React.useState(false);
   const [isVoiceHovered, setIsVoiceHovered] = React.useState(false);
   const [toolsMenuHovered, setToolsMenuHovered] = React.useState(false);
   const [toolsMenuOpen, setToolsMenuOpen] = React.useState(false);
@@ -582,10 +574,6 @@ function ChatInputComponent({
   );
   const selectedProtocols = React.useMemo(() => selectedModel?.protocols ?? [], [selectedModel]);
   const selectedModelName = selectedModel?.platformModelName || selectedPlatformModelName;
-  const promptImageOptions = Boolean(
-    selectedModel?.kinds.some((kind) => kind === "image_gen" || kind === "image_edit") &&
-    !selectedProtocols.some((protocol) => protocol.includes("image")),
-  );
   const reasoningEffortProtocol = resolveReasoningEffortProtocol(selectedModel?.protocols ?? []);
   const reasoningEffortValue = reasoningEffortProtocol
     ? getReasoningEffortOptionValue(reasoningEffortProtocol, options)
@@ -1307,7 +1295,6 @@ function ChatInputComponent({
 
               {!modelOptionPolicyDisabled ? (
                 <ChatModelConfig
-                  selectedModelKinds={selectedModel?.kinds ?? []}
                   disabled={loading || uploading || modelLoading}
                   options={modelConfigOptions}
                   defaultOptions={taskOptionConfig?.defaultOptions ?? defaultOptions}
@@ -1366,32 +1353,6 @@ function ChatInputComponent({
                   unavailableReason={ragAvailabilityReason}
                   onChange={onSelectedKnowledgeBasesChange}
                 />
-              ) : null}
-
-              {systemPromptEditor ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <InputGroupButton
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className={cn(
-                        "size-7 rounded-md text-muted-foreground hover:text-foreground sm:size-8",
-                        systemPromptEditor.value.trim() &&
-                          "bg-primary/10 text-primary hover:bg-primary/10 hover:text-primary",
-                      )}
-                      disabled={loading || uploading}
-                      aria-label={tComposer("systemPrompt")}
-                      aria-pressed={Boolean(systemPromptEditor.value.trim())}
-                      onClick={() => setSystemPromptDialogOpen(true)}
-                    >
-                      <MessagesSquare size={18} strokeWidth={1.5} />
-                    </InputGroupButton>
-                  </TooltipTrigger>
-                  <TooltipContent side="top" className="text-xs">
-                    {tComposer("systemPrompt")}
-                  </TooltipContent>
-                </Tooltip>
               ) : null}
 
               {showHTMLVisualPromptButton ? (
@@ -1455,27 +1416,7 @@ function ChatInputComponent({
               ) : null}
             </div>
 
-            <div className="flex shrink-0 items-center justify-end gap-1 sm:gap-1.5">
-              {!modelOptionPolicyDisabled ? (
-                <ChatModelConfig
-                  selectedModelKinds={selectedModel?.kinds ?? []}
-                  disabled={loading || uploading || modelLoading}
-                  options={modelConfigOptions}
-                  defaultOptions={taskOptionConfig?.defaultOptions ?? defaultOptions}
-                  optionControls={taskOptionConfig?.optionControls ?? selectedModel?.optionControls ?? []}
-                  lockedOptionPaths={taskOptionConfig ? [] : selectedModel?.lockedOptionPaths ?? []}
-                  nativeToolKeys={selectedModel?.nativeToolKeys ?? []}
-                  nativeTools={selectedModel?.nativeTools ?? []}
-                  modelOptionPolicy={modelOptionPolicy}
-                  selectedProtocols={selectedProtocols}
-                  selectedModelName={selectedModelName}
-                  promptImageOptions={promptImageOptions}
-                  onOptionsChange={onOptionsChange}
-                  onOptionsReset={onOptionsReset}
-                  onDefaultOptionsRestore={onOptionsDefaultRestore}
-                />
-              ) : null}
-
+            <div className="flex min-w-0 flex-1 items-center justify-end gap-1 overflow-hidden sm:gap-1.5">
               {composerModeIndicator && ComposerModeIcon ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -1627,15 +1568,6 @@ function ChatInputComponent({
           </InputGroupAddon>
         </div>
       </InputGroup >
-
-      {systemPromptEditor ? (
-        <ConversationSystemPromptDialog
-          open={systemPromptDialogOpen}
-          onOpenChange={setSystemPromptDialogOpen}
-          systemPrompt={systemPromptEditor.value}
-          onSave={systemPromptEditor.onSave}
-        />
-      ) : null}
     </div >
   );
 }

@@ -32,7 +32,6 @@ func (m *Module) RegisterRoutes(authRequired *gin.RouterGroup) {
 	authRequired.POST("/conversations/:id/read", m.Handler.MarkConversationRead)
 	authRequired.GET("/conversations/:id/export", m.Handler.ExportConversation)
 	authRequired.PATCH("/conversations/:id/title", m.Handler.RenameConversation)
-	authRequired.PATCH("/conversations/:id/system-prompt", m.Handler.SetConversationSystemPrompt)
 	authRequired.POST("/conversations/:id/title/regenerate", m.Handler.RegenerateConversationTitle)
 	authRequired.PATCH("/conversations/:id/labels", m.Handler.UpdateConversationLabels)
 	authRequired.PATCH("/conversations/:id/star", m.Handler.SetConversationStar)

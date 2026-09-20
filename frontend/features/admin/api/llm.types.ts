@@ -190,18 +190,6 @@ export type AdminLLMSetting = {
   updatedAt: string;
 };
 
-export type AdminUserUpstreamPreset = {
-  id: string;
-  name: string;
-  base_url: string;
-  compatible: AdminLLMCompatible;
-  protocol_defaults: string;
-  enabled: boolean;
-  sort_order: number;
-};
-
-export type ReplaceAdminUserUpstreamPresetsRequest = AdminUserUpstreamPreset[];
-
 export type AdminLLMModelVendorDTO = ModelVendorResponse;
 export type AdminLLMModelVendorDeleteConflictDetails = ModelVendorDeleteConflictDetails;
 export type AdminLLMModelDisplayGroupDTO = ModelDisplayGroupResponse;

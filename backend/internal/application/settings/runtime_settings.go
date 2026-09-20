@@ -415,6 +415,11 @@ func (r *RuntimeSettings) applyItem(cfg *config.Config, item domainsettings.Syst
 }
 
 func (r *RuntimeSettings) normalizeConfig(cfg *config.Config) {
+	// Retired personal-channel settings must not reactivate through stored values.
+	cfg.UserUpstreamEnabled = false
+	cfg.UserUpstreamBillingMode = "disabled"
+	cfg.UserEmbeddingEnabled = false
+	cfg.UserRAGEnabled = false
 	if !cfg.EmailLoginEnabled {
 		cfg.EmailRegistrationEnabled = false
 	}

@@ -41,9 +41,7 @@ type ConversationSearchResult struct {
 }
 
 // CreateConversation 创建用户新会话。
-func (s *Service) CreateConversation(ctx context.Context, userID uint, title string, modelName string, projectPublicID string, rolePublicID string, agentGroupPublicID string, conversationPrompts ...string) (*model.Conversation, error) {
- systemPrompt := ""
- if len(conversationPrompts) > 0 { systemPrompt = conversationPrompts[0] }
+func (s *Service) CreateConversation(ctx context.Context, userID uint, title string, modelName string, projectPublicID string, rolePublicID string, agentGroupPublicID string) (*model.Conversation, error) {
 	normalizedTitle := strings.TrimSpace(title)
 	if normalizedTitle == "" {
 		normalizedTitle = "新对话"
@@ -121,7 +119,6 @@ func (s *Service) CreateConversation(ctx context.Context, userID uint, title str
 		MessageCount:    0,
 		Status:          "active",
 		ContextPolicy:   buildContextPolicyJSON(s.cfg.Snapshot()),
-		SystemPrompt:    strings.TrimSpace(systemPrompt),
 		LastCompactedAt: nil,
 		LastResponseID:  "",
 	}
@@ -534,18 +531,6 @@ func (s *Service) RenameConversation(ctx context.Context, userID uint, publicID 
 		return nil, ErrInvalidConversationTitle
 	}
 	item, err := s.repo.UpdateConversationTitleByPublicID(ctx, userID, publicID, normalizedTitle)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return nil, ErrConversationNotFound
-		}
-		return nil, err
-	}
-	return item, nil
-}
-
-// SetConversationSystemPrompt 设置会话级系统提示词；传空字符串表示清除。
-func (s *Service) SetConversationSystemPrompt(ctx context.Context, userID uint, publicID string, systemPrompt string) (*model.Conversation, error) {
-	item, err := s.repo.UpdateConversationSystemPromptByPublicID(ctx, userID, publicID, systemPrompt)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return nil, ErrConversationNotFound

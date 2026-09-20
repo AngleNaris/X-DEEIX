@@ -196,8 +196,6 @@ type ChatAreaProps = {
   onPlatformToolApprovalResolved?: () => void;
   onToggleStar?: () => void | Promise<void>;
   onRename?: (title: string) => void | Promise<void>;
-  onSetSystemPrompt?: (systemPrompt: string) => void | Promise<void>;
-  systemPrompt?: string;
   onAutoRename?: () => void | Promise<void>;
   labels?: string[];
   onUpdateLabels?: (labels: string[]) => void | Promise<void>;
@@ -586,8 +584,6 @@ export function ChatArea({
   onPlatformToolApprovalResolved,
   onToggleStar,
   onRename,
-  onSetSystemPrompt,
-  systemPrompt,
   onAutoRename,
   labels,
   onUpdateLabels,
@@ -684,8 +680,6 @@ export function ChatArea({
         <div className="relative flex w-full items-center justify-between gap-3">
           <div className="flex min-w-0 flex-1 items-center gap-1">
             <ChatLabel
-              onSetSystemPrompt={canOperateConversation ? onSetSystemPrompt : undefined}
-              systemPrompt={systemPrompt}
               title={title}
               displayTitle={agentGroup?.contextLabel || undefined}
               starred={starred}

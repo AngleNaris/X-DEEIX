@@ -51,47 +51,18 @@ const DESKTOP_GROUP_MENU_VERTICAL_CHROME = 40;
 /** Model submenu non-list chrome: p-1.5 × 2. */
 const DESKTOP_SUBMENU_VERTICAL_CHROME = 12;
 
-function modelIdentityKey(item: ChatModelOption): string {
-  return item.modelScope === "user" ? `user:${item.userModelID ?? item.platformModelName}` : `platform:${item.platformModelName}`;
-}
-
 function resolveModelGroups(modelOptions: ChatModelOption[], orderBy?: string[] | null) {
-  const groupMap = new Map<
-    string,
-    {
-      label: string;
-      icon: string;
-      channelKey?: string;
-      channelLabel?: string;
-      items: ChatModelOption[];
-    }
-  >();
-  const channelOrder = new Map<string, number>();
+  const groupMap = new Map<string, { label: string; icon: string; items: ChatModelOption[] }>();
   for (const item of modelOptions) {
-    const isUserModel = item.modelScope === "user";
-    const providerKey = item.vendor || item.vendorName || "unknown";
-    const channelKey = isUserModel
-      ? String(item.upstreamID ?? item.upstreamName ?? "unknown")
-      : undefined;
-    if (channelKey && !channelOrder.has(channelKey)) {
-      channelOrder.set(channelKey, channelOrder.size);
-    }
-    const key = isUserModel
-      ? `user:${channelKey}:${providerKey}`
-      : resolveModelPresentationGroup(item).key;
-    const presentation = isUserModel
-      ? { label: item.vendorName || item.vendor || "其他提供商", icon: item.vendorIcon }
-      : resolveModelPresentationGroup(item);
-    const group = groupMap.get(key);
+    const presentation = resolveModelPresentationGroup(item);
+    const group = groupMap.get(presentation.key);
     if (group) {
       group.items.push(item);
       continue;
     }
-    groupMap.set(key, {
+    groupMap.set(presentation.key, {
       label: presentation.label,
       icon: presentation.icon,
-      channelKey,
-      channelLabel: isUserModel ? item.upstreamName || "用户渠道" : undefined,
       items: [item],
     });
   }
@@ -543,8 +514,6 @@ export function ChatModelPicker({
   const [modelOrder, setModelOrder] = React.useState<string[] | null>(null);
   const [activeGroupKey, setActiveGroupKey] = React.useState("");
   const [mobileGroupKey, setMobileGroupKey] = React.useState<string | null>(null);
-  const [modelScopeTab, setModelScopeTab] = React.useState<"platform" | "user">("platform");
-  const [collapsedChannelKeys, setCollapsedChannelKeys] = React.useState<Set<string>>(new Set());
   const [desktopSubmenuSide, setDesktopSubmenuSide] = React.useState<"right" | "left">("right");
   const [desktopSubmenuTop, setDesktopSubmenuTop] = React.useState(0);
   const [desktopSubmenuWidth, setDesktopSubmenuWidth] = React.useState(DESKTOP_MODEL_MENU_WIDTH);
@@ -559,29 +528,25 @@ export function ChatModelPicker({
     () => modelOptions.find((item) => item.platformModelName === selectedPlatformModelName) ?? null,
     [modelOptions, selectedPlatformModelName],
   );
-  const selectedModelKey = selectedModel ? modelIdentityKey(selectedModel) : "";
   const selectedGroupKey = React.useMemo(() => {
     if (!selectedModel) {
       return "";
     }
-    return selectedModel.modelScope === "user"
-      ? `user:${selectedModel.upstreamID ?? selectedModel.upstreamName ?? "unknown"}:${selectedModel.vendor || selectedModel.vendorName || "unknown"}`
-      : resolveModelPresentationGroup(selectedModel).key;
+    return resolveModelPresentationGroup(selectedModel).key;
   }, [selectedModel]);
   const selectedGroupLabel = React.useMemo(() => {
     if (!selectedModel) {
       return "none";
     }
-    return selectedModel.modelScope === "user"
-      ? selectedModel.upstreamName || "用户渠道"
-      : resolveModelPresentationGroup(selectedModel).label;
+    return resolveModelPresentationGroup(selectedModel).label;
   }, [selectedModel]);
-  const allModelGroups = React.useMemo(() => resolveModelGroups(modelOptions, modelOrder), [modelOptions, modelOrder]);
   const modelGroups = React.useMemo(
-    () => allModelGroups.filter((group) => group.items.some((item) => (item.modelScope ?? "platform") === modelScopeTab)),
-    [allModelGroups, modelScopeTab],
+    () => resolveModelGroups(modelOptions, modelOrder),
+    [modelOptions, modelOrder],
   );
-  const sortedModelOptions = React.useMemo(() => sortModelOptionsByOrder(modelOptions, modelOrder), [modelOptions, modelOrder]
+  const sortedModelOptions = React.useMemo(
+    () => sortModelOptionsByOrder(modelOptions, modelOrder),
+    [modelOptions, modelOrder],
   );
   const activeDesktopGroupKey = activeGroupKey || selectedGroupKey || modelGroups[0]?.key || "";
   const activeDesktopGroup = React.useMemo(
@@ -593,7 +558,6 @@ export function ChatModelPicker({
     () => modelGroups.find((group) => group.key === mobileGroupKey) ?? null,
     [mobileGroupKey, modelGroups],
   );
-  const activeModels = activeDesktopGroup?.items ?? [];
   const pricingLabels = React.useMemo(
     () => ({
       freeModel: t("freeModel"),
@@ -818,19 +782,14 @@ export function ChatModelPicker({
   const handleOpenChange = React.useCallback(
     (nextOpen: boolean) => {
       if (nextOpen) {
-        const nextScope = selectedModel?.modelScope === "user" ? "user" : "platform";
-        setModelScopeTab(nextScope);
-        const scopedGroups = allModelGroups.filter((group) =>
-          group.items.some((item) => (item.modelScope ?? "platform") === nextScope),
-        );
-        setActiveGroupKey(selectedGroupKey || scopedGroups[0]?.key || "");
+        setActiveGroupKey(selectedGroupKey || modelGroups[0]?.key || "");
         if (onModelCatalogRefresh) {
           void Promise.resolve(onModelCatalogRefresh()).catch(() => undefined);
         }
       }
       setOpen(nextOpen);
     },
-    [allModelGroups, onModelCatalogRefresh, selectedGroupKey, selectedModel],
+    [modelGroups, onModelCatalogRefresh, selectedGroupKey],
   );
 
   const closeMenu = React.useCallback(() => {
@@ -891,25 +850,6 @@ export function ChatModelPicker({
                 : "w-[min(16rem,calc(100vw-3rem))] border-0 bg-transparent p-0 shadow-none",
             )}
           >
-            <div className="mb-1.5 grid grid-cols-2 gap-1 rounded-lg bg-muted/60 p-1">
-              {(["platform", "user"] as const).map((scope) => (
-                <button
-                  key={scope}
-                  type="button"
-                  className={cn(
-                    "h-7 rounded-md text-[11px] font-medium transition-colors",
-                    modelScopeTab === scope ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
-                  )}
-                  onClick={() => {
-                    setModelScopeTab(scope);
-                    setActiveGroupKey("");
-                    setMobileGroupKey(null);
-                  }}
-                >
-                  {scope === "platform" ? "系统模型" : "用户模型"}
-                </button>
-              ))}
-            </div>
             {viewMode === "custom" ? (
               <div className="flex max-h-[calc(100dvh-3rem)] min-w-0 flex-col overflow-hidden rounded-xl border-[0.5px] border-border bg-popover p-1.5 shadow-xs">
                 <div className="flex shrink-0 items-center px-1 pb-1">
@@ -959,9 +899,9 @@ export function ChatModelPicker({
                       <div className="flex flex-col gap-0.5">
                         {mobileGroup.items.map((item) => (
                           <ChatModelMenuItem
-                            key={modelIdentityKey(item)}
+                            key={item.platformModelName}
                             model={item}
-                            selected={modelIdentityKey(item) === selectedModelKey}
+                            selected={item.platformModelName === selectedPlatformModelName}
                             onSelect={() => {
                               onModelChange(item.platformModelName);
                               closeMenu();
@@ -974,53 +914,28 @@ export function ChatModelPicker({
                         ))}
                       </div>
                     ) : (
-                      <div className="flex flex-col gap-1">
-                        {modelGroups.map((group, index) => {
+                      <div className="flex flex-col gap-0.5">
+                        {modelGroups.map((group) => {
                           const selectedGroup = group.key === selectedGroupKey;
-                          const previousGroup = modelGroups[index - 1];
-                          const showChannelHeading = Boolean(
-                            group.channelKey &&
-                            (!previousGroup || previousGroup.channelKey !== group.channelKey),
-                          );
-                          const channelCollapsed = Boolean(
-                            group.channelKey && collapsedChannelKeys.has(group.channelKey),
-                          );
                           const groupIconURL = resolveModelIconURL(group.icon);
                           return (
-                            <React.Fragment key={group.key}>
-                              {showChannelHeading ? (
-                                <button
-                                  type="button"
-                                  className="flex h-7 w-full items-center justify-between px-2 pt-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70 hover:text-foreground"
-                                  onClick={() => {
-                                    if (!group.channelKey) return;
-                                    setCollapsedChannelKeys((current) => {
-                                      const next = new Set(current);
-                                      if (next.has(group.channelKey!)) next.delete(group.channelKey!);
-                                      else next.add(group.channelKey!);
-                                      return next;
-                                    });
-                                  }}
-                                >
-                                  <span>{group.channelLabel}</span>
-                                  {channelCollapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-                                </button>
-                              ) : null}
-                              {!channelCollapsed ? (
-                                <button
-                                  type="button"
-                                  className={cn(
-                                    "flex h-7 w-full items-center justify-between gap-2 rounded-md px-2 py-0 text-left text-[11px] font-medium outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground",
-                                    selectedGroup ? "bg-accent text-accent-foreground" : "text-muted-foreground",
-                                  )}
-                                  onClick={() => setMobileGroupKey(group.key)}
-                                >
-                                  <ModelIcon iconUrl={groupIconURL} label={group.label} />
-                                  <span className="min-w-0 flex-1 truncate font-medium">{group.label}</span>
-                                  <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/80">{group.items.length}</span>
-                                </button>
-                              ) : null}
-                            </React.Fragment>
+                            <button
+                              type="button"
+                              key={group.key}
+                              className={cn(
+                                "flex h-7 w-full items-center justify-between gap-2 rounded-md px-2 py-0 text-left text-[11px] font-medium outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground",
+                                selectedGroup ? "bg-accent text-accent-foreground" : "text-muted-foreground",
+                              )}
+                              onClick={() => {
+                                setMobileGroupKey(group.key);
+                              }}
+                            >
+                              <ModelIcon iconUrl={groupIconURL} label={group.label} />
+                              <span className="min-w-0 flex-1 truncate font-medium">{group.label}</span>
+                              <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/80">
+                                {group.items.length}
+                              </span>
+                            </button>
                           );
                         })}
                       </div>
@@ -1044,12 +959,12 @@ export function ChatModelPicker({
                   >
                     <ModelMenuScrollContainer maxHeight={desktopSubmenuListMaxHeight}>
                       <div className="flex flex-col gap-0.5">
-                        {activeModels.map((item) => (
+                        {activeDesktopGroup?.items.map((item) => (
                           <ChatModelMenuItem
-                            key={modelIdentityKey(item)}
+                            key={item.platformModelName}
                             model={item}
-                            selected={modelIdentityKey(item) === selectedModelKey}
-                            buttonRef={modelIdentityKey(item) === selectedModelKey ? selectedModelButtonRef : undefined}
+                            selected={item.platformModelName === selectedPlatformModelName}
+                            buttonRef={item.platformModelName === selectedPlatformModelName ? selectedModelButtonRef : undefined}
                             onSelect={() => {
                               onModelChange(item.platformModelName);
                               closeMenu();
@@ -1080,64 +995,37 @@ export function ChatModelPicker({
                     <div className="min-h-0 min-w-0">
                       <ModelMenuScrollContainer maxHeight={desktopGroupListMaxHeight} onScroll={updateDesktopSubmenuMetrics}>
                         <div className="flex flex-col gap-0.5">
-                          {modelGroups.map((group, index) => {
+                          {modelGroups.map((group) => {
                             const selectedGroup = group.key === selectedGroupKey;
                             const activeGroup = group.key === activeDesktopGroup?.key;
                             const groupIconURL = resolveModelIconURL(group.icon);
-                            const previousGroup = modelGroups[index - 1];
-                            const showChannelHeading = Boolean(
-                              group.channelKey &&
-                              (!previousGroup || previousGroup.channelKey !== group.channelKey),
-                            );
-                            const channelCollapsed = Boolean(
-                              group.channelKey && collapsedChannelKeys.has(group.channelKey),
-                            );
                             return (
-                              <React.Fragment key={group.key}>
-                                {showChannelHeading ? (
-                                  <button
-                                    type="button"
-                                    className="flex h-7 w-full items-center justify-between px-2 pt-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground/70 hover:text-foreground"
-                                    onClick={() => {
-                                      if (!group.channelKey) return;
-                                      setCollapsedChannelKeys((current) => {
-                                        const next = new Set(current);
-                                        if (next.has(group.channelKey!)) next.delete(group.channelKey!);
-                                        else next.add(group.channelKey!);
-                                        return next;
-                                      });
-                                    }}
-                                  >
-                                    <span>{group.channelLabel}</span>
-                                    {channelCollapsed ? <ChevronRight className="size-3.5" /> : <ChevronDown className="size-3.5" />}
-                                  </button>
-                                ) : null}
-                                {!channelCollapsed ? (
-                                  <button
-                                    type="button"
-                                    ref={(node) => {
-                                      if (node) {
-                                        desktopGroupItemRefs.current.set(group.key, node);
-                                        return;
-                                      }
-                                      desktopGroupItemRefs.current.delete(group.key);
-                                    }}
-                                    className={cn(
-                                      "flex h-7 w-full items-center gap-2 rounded-md px-2 py-0 text-left text-[11px] font-medium outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground",
-                                      activeGroup ? "bg-accent text-accent-foreground" : "text-muted-foreground",
-                                      selectedGroup && !activeGroup ? "text-foreground" : null,
-                                    )}
-                                    onMouseEnter={() => selectDesktopGroup(group.key)}
-                                    onFocus={() => selectDesktopGroup(group.key)}
-                                    onClick={() => selectDesktopGroup(group.key)}
-                                  >
-                                    <ModelIcon iconUrl={groupIconURL} label={group.label} />
-                                    <span className="min-w-0 flex-1 truncate font-medium">{group.label}</span>
-                                    <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/80">{group.items.length}</span>
-                                    <ChevronRight className={cn("size-3.5 shrink-0 text-muted-foreground/65 transition-transform", activeGroup && "rotate-90")} strokeWidth={1.8} />
-                                  </button>
-                                ) : null}
-                              </React.Fragment>
+                              <button
+                                type="button"
+                                key={group.key}
+                                ref={(node) => {
+                                  if (node) {
+                                    desktopGroupItemRefs.current.set(group.key, node);
+                                    return;
+                                  }
+                                  desktopGroupItemRefs.current.delete(group.key);
+                                }}
+                                className={cn(
+                                  "flex h-7 w-full items-center gap-2 rounded-md px-2 py-0 text-left text-[11px] font-medium outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground",
+                                  activeGroup ? "bg-accent text-accent-foreground" : "text-muted-foreground",
+                                  selectedGroup && !activeGroup ? "text-foreground" : null,
+                                )}
+                                onMouseEnter={() => selectDesktopGroup(group.key)}
+                                onFocus={() => selectDesktopGroup(group.key)}
+                                onClick={() => selectDesktopGroup(group.key)}
+                              >
+                                <ModelIcon iconUrl={groupIconURL} label={group.label} />
+                                <span className="min-w-0 flex-1 truncate font-medium">{group.label}</span>
+                                <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/80">
+                                  {group.items.length}
+                                </span>
+                                <ChevronRight className="size-3.5 shrink-0 text-muted-foreground/65" strokeWidth={1.8} />
+                              </button>
                             );
                           })}
                         </div>
@@ -1147,8 +1035,8 @@ export function ChatModelPicker({
                 </div>
               </div>
             )}
-          </PopoverContent>
-        </Popover>
+        </PopoverContent>
+      </Popover>
       </div>
     </>
   );

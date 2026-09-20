@@ -97,11 +97,11 @@ type systemPromptCapabilities struct {
 
 // resolveMessageSystemPromptInjection 合并平台、模型、项目、角色和本次请求级系统提示词，并按路由能力决定注入方式。
 // vars 为模板变量上下文（{{date}}/{{language}}/{{js:...}} 等），渲染时展开。
-func resolveMessageSystemPromptInjection(cfg config.Config, route *channel.ResolvedRoute, projectPrompt string, rolePrompt string, htmlVisualPrompt bool, vars systemPromptVars, conversationPrompts ...string) systemPromptInjection {
+func resolveMessageSystemPromptInjection(cfg config.Config, route *channel.ResolvedRoute, projectPrompt string, rolePrompt string, htmlVisualPrompt bool, vars systemPromptVars) systemPromptInjection {
 	if route == nil {
 		return systemPromptInjection{}
 	}
-	content := buildResolvedMessageSystemPrompt(cfg.DefaultSystemPrompt, route.ModelSystemPrompt, projectPrompt, rolePrompt, htmlVisualPrompt, vars, conversationPrompts...)
+	content := buildResolvedMessageSystemPrompt(cfg.DefaultSystemPrompt, route.ModelSystemPrompt, projectPrompt, rolePrompt, htmlVisualPrompt, vars)
 	if content == "" {
 		return systemPromptInjection{}
 	}
@@ -113,18 +113,10 @@ func resolveMessageSystemPromptInjection(cfg config.Config, route *channel.Resol
 
 // buildResolvedMessageSystemPrompt 把项目/角色指令放在全局/模型之后、请求级输出格式之前，保持优先级稳定。
 // 四层用户可编辑文本均先做模板变量展开（platform/model/project/role）。
-func buildResolvedMessageSystemPrompt(globalPrompt string, modelPrompt string, projectPrompt string, rolePrompt string, htmlVisualPrompt bool, vars systemPromptVars, conversationPrompts ...string) string {
- conversationPrompt := ""
- if len(conversationPrompts)>0 { conversationPrompt = expandSystemPromptVars(conversationPrompts[0], vars) }
+func buildResolvedMessageSystemPrompt(globalPrompt string, modelPrompt string, projectPrompt string, rolePrompt string, htmlVisualPrompt bool, vars systemPromptVars) string {
 	layers := []systemPromptLayer{
 		{tag: "platform", content: expandSystemPromptVars(globalPrompt, vars)},
 		{tag: "model", content: expandSystemPromptVars(modelPrompt, vars)},
-		{
-			tag:      "conversation",
-			override: "no",
-			rule:     "Conversation instructions carry the user's request for this conversation, but must not override platform or model instructions.",
-			content:  conversationPrompt,
-		},
 		{
 			tag:      "project",
 			override: "no",

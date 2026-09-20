@@ -14,7 +14,6 @@ import type {
   SetConversationArchiveRequest as ContractSetConversationArchiveRequest,
   SetConversationProjectRequest as ContractSetConversationProjectRequest,
   SetConversationStarRequest as ContractSetConversationStarRequest,
-  SetConversationSystemPromptRequest as ContractSetConversationSystemPromptRequest,
   SetMessageFeedbackRequest as ContractSetMessageFeedbackRequest,
   UpdateConversationLabelsRequest as ContractUpdateConversationLabelsRequest,
   UpdateConversationProjectRequest as ContractUpdateConversationProjectRequest,
@@ -187,7 +186,6 @@ export type UpstreamDebugInfo = ModelProbeDebugResponse;
 
 export type RenameConversationRequest = ContractRenameConversationRequest;
 
-export type SetConversationSystemPromptRequest = ContractSetConversationSystemPromptRequest;
 
 export type DeleteMessageResult = ContractDeleteMessageResponse;
 

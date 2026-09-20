@@ -59,7 +59,6 @@ import { getAgentGroup } from "@/shared/api/agent-groups";
 import type { AgentGroupDTO } from "@/shared/api/agent-groups.types";
 import {
   deleteMessage,
-  setConversationSystemPrompt,
   deleteProjectFile,
   downloadProjectArchive,
   fetchProjectFileContent,
@@ -510,8 +509,6 @@ export function AppChatArea() {
     newConversationAgentGroupID,
     newConversationRoleID,
   ]);
-  const [draftSystemPrompt, setDraftSystemPrompt] = React.useState("");
-  React.useEffect(() => { setDraftSystemPrompt(""); }, [newConversationRevision]);
   const prependNewConversationInContext = React.useCallback(
     (platformModelName?: string) =>
       prependNewConversation(
@@ -519,9 +516,8 @@ export function AppChatArea() {
         newConversationProjectID || undefined,
         newConversationRoleID || undefined,
         newConversationAgentGroupID || undefined,
-        draftSystemPrompt,
       ),
-    [draftSystemPrompt, newConversationAgentGroupID, newConversationProjectID, newConversationRoleID, prependNewConversation],
+    [newConversationAgentGroupID, newConversationProjectID, newConversationRoleID, prependNewConversation],
   );
 
   const handleConversationForked = React.useCallback(
@@ -1236,19 +1232,6 @@ export function AppChatArea() {
     [actionConversationID, canOperateConversation, renameByPublicID],
   );
 
-  const onSaveSystemPrompt = React.useCallback(async (systemPrompt: string) => {
-    if (!conversationID) { setDraftSystemPrompt(systemPrompt); return; }
-    const token = await resolveAccessToken();
-    if (!token) throw new Error(t("submit.authRequired"));
-    try {
-      const updated = await setConversationSystemPrompt(token, conversationID, { systemPrompt });
-      upsertConversation(updated);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("labelMenu.systemPrompt"));
-      throw error;
-    }
-  }, [conversationID, t, upsertConversation]);
-
   const onDeleteMessage = React.useCallback(async (message: ChatAreaMessage) => {
     if (generating || !message.publicID) return;
     const token = await resolveAccessToken();
@@ -1757,7 +1740,6 @@ export function AppChatArea() {
   }, [resetFileDragState, uploadDropDisabled]);
 
   const chatInputProps = {
-    systemPromptEditor: { value: currentConversation?.systemPrompt ?? draftSystemPrompt, onSave: onSaveSystemPrompt },
     draft,
     loading,
     sending: generating,
@@ -1969,8 +1951,6 @@ export function AppChatArea() {
                     onCycleMessageBranch={onCycleMessageBranch}
                     onToggleStar={onToggleActiveConversationStar}
                     onRename={onRenameActiveConversation}
-                    onSetSystemPrompt={onSaveSystemPrompt}
-                    systemPrompt={currentConversation?.systemPrompt ?? ""}
                     onAutoRename={onAutoRenameActiveConversation}
                     labels={activeConversationLabels}
                     onUpdateLabels={onUpdateActiveConversationLabels}
