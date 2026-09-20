@@ -210,7 +210,7 @@ func userModelError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, appchannel.ErrNotFound), errors.Is(err, appchannel.ErrModelNotFound), errors.Is(err, appchannel.ErrUpstreamNotFound):
 		response.Error(c, http.StatusNotFound, "user model or upstream not found")
-	case errors.Is(err, appchannel.ErrInvalidInput):
+	case errors.Is(err, appchannel.ErrInvalidInput), errors.Is(err, appchannel.ErrInvalidAdapter), errors.Is(err, appchannel.ErrProtocolRequired):
 		response.Error(c, http.StatusBadRequest, "invalid user model")
 	case errors.Is(err, appchannel.ErrDuplicate):
 		response.Error(c, http.StatusConflict, "user model already exists")

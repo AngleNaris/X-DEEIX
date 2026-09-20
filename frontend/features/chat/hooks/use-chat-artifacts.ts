@@ -5,6 +5,7 @@ import * as React from "react";
 import {
   extractArtifactsFromContent,
   extractArtifactsFromMessages,
+  resolveConversationArtifact,
   type ChatArtifact,
   type OpenCodeArtifactInput,
 } from "@/features/chat/model/chat-artifacts";
@@ -191,10 +192,13 @@ export function useChatArtifacts({ conversationID, messages }: UseChatArtifactsP
 
     if (!selected) return;
 
+    const resolved = resolveConversationArtifact(artifacts, selected);
+    if (!resolved) return;
+
     dismissedArtifactRef.current = null;
     setDismissedArtifactID(null);
-    setActiveArtifactID(selected.id);
-  }, []);
+    setActiveArtifactID(resolved.id);
+  }, [artifacts]);
 
   const closeArtifact = React.useCallback(() => {
     const dismissedArtifact = activeArtifact ?? latestArtifact;

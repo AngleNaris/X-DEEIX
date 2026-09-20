@@ -61,6 +61,7 @@ type routeResolver interface {
 
 type mediaRouteResolver interface {
 	BuildRouteForUpstream(ctx context.Context, upstreamID uint, protocol string, upstreamModel string) (*channel.ResolvedRoute, error)
+	BuildRouteForUserModel(ctx context.Context, userID, userModelID, upstreamID uint, protocol, upstreamModel string) (*channel.ResolvedRoute, error)
 }
 
 // defaultRouteResolver 表示按任务类型解析默认路由的可选能力。

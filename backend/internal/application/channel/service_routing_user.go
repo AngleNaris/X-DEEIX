@@ -8,6 +8,29 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 )
 
+// BuildRouteForUserModel rebuilds the original personal route without falling back
+// to a platform upstream with the same numeric ID.
+func (s *Service) BuildRouteForUserModel(ctx context.Context, userID, userModelID, upstreamID uint, protocol, upstreamModel string) (*ResolvedRoute, error) {
+	rows, err := s.getUserModelRoute(ctx, ResolveRouteInput{UserID: userID, UserModelID: userModelID})
+	if err != nil {
+		return nil, err
+	}
+	row := rows[0]
+	if upstreamID == 0 || row.UpstreamID != upstreamID {
+		return nil, ErrRouteNotFound
+	}
+	keyCfg, err := s.parseAPIKeysConfig(row.APIKeysEnc)
+	if err != nil {
+		return nil, err
+	}
+	apiKey, err := s.selectAPIKey(ctx, upstreamID, keyCfg)
+	if err != nil {
+		return nil, err
+	}
+	row.Protocol, row.UpstreamModelName = protocol, upstreamModel
+	return buildResolvedRoute(row, apiKey), nil
+}
+
 func (s *Service) getUserModelRoute(ctx context.Context, input ResolveRouteInput) ([]repository.ChannelUpstreamRouteRow, error) {
 	if s.userModelRepo == nil || input.UserID == 0 || input.UserModelID == 0 {
 		return nil, ErrModelAccessDenied
@@ -34,7 +57,7 @@ func (s *Service) getUserModelRoute(ctx context.Context, input ResolveRouteInput
 		// 用户模型能力：优先取用户在渠道里配置的 capabilities（如 defaultOptions/lockedOptionPaths），
 		// 未配置时为空，参数策略回退到协议默认白名单；不可再用 KindsJSON 冒充能力 JSON。
 		ModelCapabilitiesJSON: strings.TrimSpace(userModel.CapabilitiesJSON),
-		Protocol: userModelRouteProtocol(input.TaskType, userModel.KindsJSON, userModel.Protocol), BaseURL: upstream.BaseURL, APIKeysEnc: upstream.APIKeysEnc,
+		Protocol:              userModelRouteProtocol(input.TaskType, userModel.KindsJSON, userModel.Protocol), BaseURL: upstream.BaseURL, APIKeysEnc: upstream.APIKeysEnc,
 		ConnectTimeoutMS: upstream.ConnectTimeoutMS, ReadTimeoutMS: upstream.ReadTimeoutMS,
 		StreamIdleTimeoutMS: upstream.StreamIdleTimeoutMS, HeadersJSON: upstream.HeadersJSON,
 		RouteHeadersJSON: userModel.HeadersJSON, BindingCode: "user-model-" + strconv.FormatUint(uint64(userModel.ID), 10),

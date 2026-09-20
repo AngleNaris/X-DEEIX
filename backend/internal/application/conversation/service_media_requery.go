@@ -5,9 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
@@ -88,11 +90,7 @@ func (s *Service) RequeryMediaVideoRun(ctx context.Context, userID uint, runID s
 		return nil, ErrMediaVideoInputInvalid
 	}
 
-	resolver, ok := s.routeResolver.(mediaRouteResolver)
-	if !ok {
-		return nil, ErrModelRouteNotConfigured
-	}
-	route, err := resolver.BuildRouteForUpstream(ctx, run.UpstreamID, run.ProviderProtocol, run.UpstreamModelName)
+	route, err := s.buildMediaRecoveryRoute(ctx, run)
 	if err != nil {
 		return nil, ErrModelRouteNotConfigured
 	}
@@ -228,6 +226,21 @@ func (s *Service) RequeryMediaVideoRun(ctx context.Context, userID uint, runID s
 		RunID:       run.RunID,
 		Attachments: requeryAttachments,
 	}, nil
+}
+
+func (s *Service) buildMediaRecoveryRoute(ctx context.Context, run *model.Run) (*channel.ResolvedRoute, error) {
+	resolver, ok := s.routeResolver.(mediaRouteResolver)
+	if !ok {
+		return nil, ErrModelRouteNotConfigured
+	}
+	if strings.HasPrefix(run.RoutedBindingCode, "user-model-") {
+		id, err := strconv.ParseUint(strings.TrimPrefix(run.RoutedBindingCode, "user-model-"), 10, strconv.IntSize)
+		if err != nil || id == 0 || run.RoutedBindingCode != "user-model-"+strconv.FormatUint(id, 10) {
+			return nil, ErrModelRouteNotConfigured
+		}
+		return resolver.BuildRouteForUserModel(ctx, run.UserID, uint(id), run.UpstreamID, run.ProviderProtocol, run.UpstreamModelName)
+	}
+	return resolver.BuildRouteForUpstream(ctx, run.UpstreamID, run.ProviderProtocol, run.UpstreamModelName)
 }
 
 // logRequeryFailure 在任务重查的每个可能失败环节记录结构化诊断日志。

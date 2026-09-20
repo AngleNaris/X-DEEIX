@@ -14,6 +14,7 @@ export type { ArtifactPreviewKind } from "@/shared/lib/artifact-preview";
 
 export type ChatArtifact = {
   id: string;
+  sourceIDs?: string[];
   messageID: string;
   messageKey: string;
   runID?: string;
@@ -509,12 +510,14 @@ function appendBlock(
   block: RawCodeBlock,
   message: Pick<ChatAreaMessage, "publicID" | "key" | "runID" | "updatedAt">,
   streaming: boolean,
+  sourceID: string,
 ): ChatArtifact {
   const code = `${merged.code}\n${block.code}`;
   const language = merged.language || block.language;
   const kind = resolveArtifactPreviewKind(language, code) ?? merged.kind;
   return {
-    id: `${merged.id}:merged`,
+    id: merged.id,
+    sourceIDs: [...(merged.sourceIDs ?? [merged.id]), sourceID],
     messageID: message.publicID,
     messageKey: message.key,
     runID: message.runID?.trim() || undefined,
@@ -565,7 +568,8 @@ export function extractArtifactsFromMessages(messages: ChatAreaMessage[]): ChatA
             ? pending
             : null;
       if (target) {
-        const merged = appendBlock(target, block, message, streaming);
+        const sourceID = `${stableMessageID}:artifact:${messageBlockIndex++}`;
+        const merged = appendBlock(target, block, message, streaming, sourceID);
         artifacts[artifacts.length - 1] = merged;
         if (resumed || resumeArtifact) {
           resumeArtifact = merged;
@@ -632,4 +636,8 @@ export function extractArtifactsFromMessages(messages: ChatAreaMessage[]): ChatA
   }
 
   return artifacts;
+}
+
+export function resolveConversationArtifact(artifacts: ChatArtifact[], source: ChatArtifact): ChatArtifact | undefined {
+  return artifacts.find((artifact) => artifact.id === source.id || artifact.sourceIDs?.includes(source.id));
 }

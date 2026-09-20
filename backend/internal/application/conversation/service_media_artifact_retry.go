@@ -81,11 +81,7 @@ func (s *Service) RetryMediaImageArtifact(ctx context.Context, userID uint, runI
 		}
 	}()
 
-	resolver, ok := s.routeResolver.(mediaRouteResolver)
-	if !ok {
-		return nil, ErrModelRouteNotConfigured
-	}
-	route, err := resolver.BuildRouteForUpstream(ctx, run.UpstreamID, run.ProviderProtocol, run.UpstreamModelName)
+	route, err := s.buildMediaRecoveryRoute(ctx, run)
 	if err != nil {
 		s.pendingArtifacts.Register(runID, []pendingImageArtifact{artifact})
 		return nil, ErrModelRouteNotConfigured
