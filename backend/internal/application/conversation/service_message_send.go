@@ -483,6 +483,10 @@ func (s *Service) sendMessageInternal(
 	contextMessages = s.expandContextMessagesToSnapshotBoundary(ctx, input.ConversationID, userMessage.ID, contextMessages, prefetch.snapshot, compactPolicy)
 	// 快照扩展可能重新加载数据库中的原始 error 状态；在最终分支路径上统一恢复可用的重试上下文。
 	contextMessages = recoverAssistantRetryUserStates(contextMessages)
+	if snapshot := s.maybeCompactContextBeforePrompt(ctx, cfg, compactPolicy, route, conversation.Model, input, runID, contextMessages); snapshot != nil {
+		// 立即将新快照用于本轮 PromptScope，不能等待成功响应后的异步维护任务。
+		prefetch.snapshot = snapshot
+	}
 	contextMessages = append(s.resolveConversationReferences(ctx, input.UserID, input.Content), contextMessages...)
 	promptScope := buildPromptScope(contextMessages, prefetch.snapshot, compactPolicy)
 	promptMessages := s.applyContextTokenBudget(promptScope.activeMessages(), route.UpstreamModel, route.ModelCapabilitiesJSON, reasoningContentPassback)
@@ -777,6 +781,11 @@ func (s *Service) sendMessageInternal(
 	}
 	stableFullContextAttachments := append([]AttachmentInput{}, fileContextPlan.FullAttachments...)
 	stableFullContextAttachments = append(stableFullContextAttachments, ragFallbackEvidenceAttachments(retrievalRAGFallbacks)...)
+	stableFullContextAttachments, fullContextBudgetSkipped := trimFullContextAttachments(
+		stableFullContextAttachments,
+		fullContextAttachmentTokenBudget(cfg, route.UpstreamModel, route.ModelCapabilitiesJSON),
+	)
+	appendRAGFallbackSkippedTrace(traceRecorder, fullContextBudgetSkipped, "full_context_budget")
 	userCtx.Attachments = imageAttachmentsForCurrentUser(stableFullContextAttachments)
 	userCtx.RAGChunks = ragContextChunks
 	assistantMessage.KnowledgeSources = messageKnowledgeSourcesFromRAGChunks(ragContextChunks)

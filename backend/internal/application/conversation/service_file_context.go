@@ -239,7 +239,123 @@ func buildConversationFileContextPlan(
 		plan.Attachments = append(plan.Attachments, item)
 		plan.FullAttachments = append(plan.FullAttachments, item)
 	}
+	return enforceFullContextAttachmentBudget(plan, fileMode, cfg, capabilityModelName, capabilitiesJSON, ragAvailable)
+}
+
+// fullContextAttachmentTokenBudget reserves the majority of a request for the
+// transcript and dynamic context. Full-text attachments may use at most 40% of
+// the strictest configured model/input budget.
+func fullContextAttachmentTokenBudget(cfg config.Config, capabilityModelName string, capabilitiesJSON string) int64 {
+	budget := int64(llm.EffectiveContextBudgetFromCapabilities(capabilityModelName, capabilitiesJSON))
+	if maxInput := int64(cfg.ContextMaxInputTokens); maxInput > 0 && (budget <= 0 || maxInput < budget) {
+		budget = maxInput
+	}
+	if budget <= 0 {
+		return 0
+	}
+	return budget * 2 / 5
+}
+
+func enforceFullContextAttachmentBudget(
+	plan conversationFileContextPlan,
+	fileMode string,
+	cfg config.Config,
+	capabilityModelName string,
+	capabilitiesJSON string,
+	ragAvailable bool,
+) conversationFileContextPlan {
+	budget := fullContextAttachmentTokenBudget(cfg, capabilityModelName, capabilitiesJSON)
+	if budget <= 0 || len(plan.FullAttachments) == 0 {
+		return plan
+	}
+
+	var used int64
+	seenText := false
+	for index := range plan.Attachments {
+		item := &plan.Attachments[index]
+		if !isStableTextAttachment(*item) {
+			continue
+		}
+		tokens := estimateTokens(item.ExtractedText)
+		if tokens < 0 {
+			tokens = 0
+		}
+		if !seenText {
+			// The first full-text attachment preserves the existing single-file
+			// behavior; the aggregate budget only constrains additional files.
+			seenText = true
+			used += tokens
+			continue
+		}
+		if used+tokens <= budget {
+			used += tokens
+			continue
+		}
+		// Respect an explicit full-context choice. Auto mode can instead use the
+		// existing RAG path when it is available, avoiding a silent loss of data.
+		if fileMode != fileContextModeFull && canRetrieveAttachment(*item, ragAvailable) {
+			item.ContextMode = fileContextModeRAG
+		} else {
+			item.ContextMode = fileContextModeSkipped
+		}
+	}
+	return rebuildConversationFileContextPlan(plan)
+}
+
+func rebuildConversationFileContextPlan(plan conversationFileContextPlan) conversationFileContextPlan {
+	plan.FullAttachments = make([]AttachmentInput, 0, len(plan.Attachments))
+	plan.RAGAttachments = make([]AttachmentInput, 0, len(plan.Attachments))
+	plan.Skipped = make([]AttachmentInput, 0, len(plan.Attachments))
+	for _, item := range plan.Attachments {
+		switch item.ContextMode {
+		case fileContextModeFull, fileContextModeRAGFallback, fileContextModeDirectImage:
+			plan.FullAttachments = append(plan.FullAttachments, item)
+		case fileContextModeRAG:
+			plan.RAGAttachments = append(plan.RAGAttachments, item)
+		case fileContextModeSkipped:
+			plan.Skipped = append(plan.Skipped, item)
+		}
+	}
 	return plan
+}
+
+// trimFullContextAttachments keeps stable text attachments inside the aggregate
+// budget after RAG fallback selection. Direct image inputs are not text context
+// and remain unchanged.
+func trimFullContextAttachments(items []AttachmentInput, budget int64) ([]AttachmentInput, []AttachmentInput) {
+	if budget <= 0 || len(items) == 0 {
+		return items, nil
+	}
+	kept := make([]AttachmentInput, 0, len(items))
+	skipped := make([]AttachmentInput, 0)
+	var used int64
+	seenText := false
+	for _, item := range items {
+		if !isStableTextAttachment(item) {
+			kept = append(kept, item)
+			continue
+		}
+		tokens := estimateTokens(item.ExtractedText)
+		if tokens < 0 {
+			tokens = 0
+		}
+		if !seenText {
+			// Mirror the plan-level budget: the first text attachment is kept
+			// even when it alone exceeds the aggregate budget.
+			seenText = true
+			used += tokens
+			kept = append(kept, item)
+			continue
+		}
+		if used+tokens <= budget {
+			used += tokens
+			kept = append(kept, item)
+			continue
+		}
+		item.ContextMode = fileContextModeSkipped
+		skipped = append(skipped, item)
+	}
+	return kept, skipped
 }
 
 func shouldUseRAGForAttachment(item AttachmentInput, fileMode string, cfg config.Config, capabilityModelName string, capabilitiesJSON string, ragAvailable bool) bool {
@@ -414,6 +530,8 @@ func ragFallbackReasonLabel(reason string) string {
 		return "检索不可用"
 	case "rag_error":
 		return "检索失败"
+	case "full_context_budget":
+		return "超出全文上下文预算"
 	default:
 		return strings.TrimSpace(reason)
 	}

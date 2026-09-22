@@ -26,7 +26,10 @@ type MaybeCompactConversationInput struct {
 	RunID               string
 	Messages            []domainconversation.Message
 	PromptTokenEstimate int64
-	PlatformModelName   string
+	// TriggerTokens permits a caller to apply a stricter, route-specific token
+	// threshold. Zero preserves the runtime-configured token trigger.
+	TriggerTokens     int64
+	PlatformModelName string
 }
 
 // Service 封装会话压缩能力。
@@ -136,6 +139,11 @@ func (s *Service) MaybeCompactConversation(
 	}
 	maxTurns := cfg.ContextMaxTurns
 	triggerTokens := cfg.ContextCompactTrigger
+	// A runtime value of zero intentionally disables token-triggered compaction;
+	// callers may only lower an enabled threshold for a narrower model window.
+	if triggerTokens > 0 && input.TriggerTokens > 0 && input.TriggerTokens < int64(triggerTokens) {
+		triggerTokens = int(input.TriggerTokens)
+	}
 	if maxTurns <= 0 && triggerTokens <= 0 {
 		return nil, nil
 	}
