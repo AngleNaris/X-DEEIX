@@ -64,6 +64,7 @@ export type PendingAttachment = {
   detectedMime?: string;
   fileCategory?: string;
   sizeBytes: number;
+  sha256?: string;
   previewURL?: string;
   processingStatus?: string;
   processingReady?: boolean;

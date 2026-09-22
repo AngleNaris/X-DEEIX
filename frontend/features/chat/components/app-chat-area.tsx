@@ -1,6 +1,5 @@
 "use client";
 
-import { motion } from "motion/react";
 import { FileCode2, MessageSquare, PanelRightOpen, X } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
@@ -274,6 +273,7 @@ export function AppChatArea() {
     (group: AgentGroupDTO) => {
       const projectID = routeProjectID ?? "";
       const roleID = routeRoleID ?? "";
+      setActiveRouteAgentGroup(group);
       requestNewConversation({ projectID, roleID, agentGroupID: group.publicID });
       const params = new URLSearchParams();
       if (projectID) {
@@ -444,7 +444,7 @@ export function AppChatArea() {
       setActiveRouteAgentGroup(null);
       return;
     }
-    setActiveRouteAgentGroup(null);
+    setActiveRouteAgentGroup((current) => current?.publicID === newConversationAgentGroupID ? current : null);
     let cancelled = false;
     async function loadAgentGroup() {
       const token = await resolveAccessToken();
@@ -1107,6 +1107,7 @@ export function AppChatArea() {
             detectedMime: file.detectedMIME,
             fileCategory: file.fileCategory,
             sizeBytes: file.sizeBytes,
+            sha256: file.sha256,
             processingStatus: file.processingStatus,
             processingReady: file.processingReady,
             processingErrorCode: file.processingErrorCode,
@@ -1813,24 +1814,24 @@ export function AppChatArea() {
 
   // 聊天区标签条：第一个固定为聊天，其后为已打开的项目文件，可自由切换。
   const projectTabStrip = workspaceProjectID && projectFileTabs.length > 0 ? (
-    <div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b bg-muted/30 px-2">
+    <div className="flex h-10 shrink-0 items-center gap-1 overflow-x-auto border-b border-border/40 bg-background px-3">
       <button
         type="button"
         onClick={() => setActiveProjectTabKey("")}
         className={cn(
-          "flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors",
-          activeProjectTabKey === "" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:bg-muted",
+          "flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors",
+          activeProjectTabKey === "" ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
         )}
       >
         <MessageSquare className="size-3.5 shrink-0" />
-        <span className="shrink-0">聊天</span>
+        <span className="shrink-0">{t("workspace.chatTab")}</span>
       </button>
       {projectFileTabs.map((tab) => (
         <div
           key={tab.key}
           className={cn(
-            "group flex h-7 shrink-0 items-center gap-1.5 rounded-md pl-2 pr-1 text-xs transition-colors",
-            activeProjectTabKey === tab.key ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:bg-muted",
+            "group flex h-8 shrink-0 items-center gap-1.5 rounded-md pl-2 pr-1 text-xs transition-colors",
+            activeProjectTabKey === tab.key ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/70 hover:text-foreground",
           )}
         >
           <button
@@ -1841,11 +1842,11 @@ export function AppChatArea() {
           >
             <FileCode2 className="size-3.5 shrink-0" />
             <span className="max-w-[180px] truncate">{tab.path.split("/").at(-1) ?? tab.path}</span>
-            {!tab.diff && !tab.deleted && tab.content !== tab.savedContent ? <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-label="未保存" /> : null}
+            {!tab.diff && !tab.deleted && tab.content !== tab.savedContent ? <span className="size-1.5 shrink-0 rounded-full bg-primary" aria-label={t("workspace.unsaved")} /> : null}
           </button>
           <button
             type="button"
-            aria-label="关闭标签页"
+            aria-label={t("workspace.closeTab")}
             className="flex size-5 shrink-0 items-center justify-center rounded hover:bg-muted-foreground/20"
             onClick={() => closeProjectTab(tab.key)}
           >
@@ -1869,10 +1870,10 @@ export function AppChatArea() {
           type="button"
           variant="outline"
           size="icon"
-          title="打开 IDE"
-          aria-label="打开 IDE"
+          title={t("workspace.openWorkspace")}
+          aria-label={t("workspace.openWorkspace")}
           // 移动端为抽屉入口按钮（底部悬浮），桌面为右缘贴边按钮。
-          className="absolute bottom-4 right-4 z-30 inline-flex rounded-lg border shadow-sm md:bottom-auto md:right-0 md:top-1/2 md:-translate-y-1/2 md:rounded-l-lg md:rounded-r-none md:border-r-0"
+          className="absolute bottom-4 right-4 z-30 inline-flex rounded-lg border-border/55 bg-background shadow-sm md:bottom-auto md:right-0 md:top-1/2 md:-translate-y-1/2 md:rounded-l-lg md:rounded-r-none md:border-r-0"
           onClick={() => setProjectPanelVisibility(true)}
         >
           <PanelRightOpen className="size-4" />
@@ -1884,8 +1885,9 @@ export function AppChatArea() {
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <ChatEmptyState
               greetingTitle={newConversationProject?.name || activeRouteRole?.name || greetingTitle}
-              badgeLabel={newConversationProject ? t("projectMode") : undefined}
-              badgeTooltip={newConversationProject ? t("projectModeTooltip") : undefined}
+              adjacentTitle={activeAgentGroup?.name || undefined}
+              badgeLabel={activeAgentGroup ? t("agentGroupMode") : newConversationProject ? t("projectMode") : undefined}
+              badgeTooltip={activeAgentGroup ? t("agentGroupModeTooltip") : newConversationProject ? t("projectModeTooltip") : undefined}
               contentWidthClassName={chatContentWidthClassName}
             >
               <ChatInput {...chatInputProps} />
@@ -2017,14 +2019,14 @@ export function AppChatArea() {
                 {isMobileViewport ? (
                   <button
                     type="button"
-                    aria-label="关闭资源管理器"
+                    aria-label={t("workspace.closeWorkspace")}
                     className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[1px]"
                     onClick={() => setProjectPanelVisibility(false)}
                   />
                 ) : null}
                 <button
                   type="button"
-                  aria-label="拖动调整 IDE 宽度"
+                  aria-label={t("workspace.resizeWorkspace")}
                   // 移动端抽屉为全宽，无拖拽意义；仅桌面显示。
                   className="absolute -left-1 top-0 z-20 hidden h-full w-2 cursor-col-resize touch-none md:block"
                   onPointerDown={(event) => {

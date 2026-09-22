@@ -13,6 +13,7 @@ type PersistedAttachment = Pick<
   | "fileName"
   | "mimeType"
   | "sizeBytes"
+  | "sha256"
   | "detectedMime"
   | "fileCategory"
   | "processingStatus"
@@ -48,6 +49,7 @@ function sanitizeAttachments(items: PendingAttachment[]): PersistedAttachment[] 
     fileName: item.fileName,
     mimeType: item.mimeType,
     sizeBytes: item.sizeBytes,
+    sha256: item.sha256,
     detectedMime: item.detectedMime,
     fileCategory: item.fileCategory,
     processingStatus: item.processingStatus,

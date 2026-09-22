@@ -103,6 +103,7 @@ import type { FileObjectDTO } from "@/shared/api/file.types";
 import type { MCPToolDTO } from "@/shared/api/mcp.types";
 import type { PromptPresetDTO } from "@/shared/api/prompt-presets.types";
 import type { SkillSummaryDTO } from "@/shared/api/skills.types";
+import { FileThumbnail } from "@/shared/components/file-thumbnail";
 import { ImageAspectRatioSelector } from "@/shared/components/image-aspect-ratio-selector";
 import { ImageQualitySelector } from "@/shared/components/image-quality-selector";
 import { ImageResolutionSelector } from "@/shared/components/image-resolution-selector";
@@ -110,7 +111,7 @@ import { StreamdownRender } from "@/shared/components/markdown/streamdown-render
 import { ReasoningEffortSelector } from "@/shared/components/reasoning-effort-selector";
 import { useDialogSnapshot } from "@/shared/hooks/use-dialog-snapshot";
 import type { BillingDisplayCurrency } from "@/shared/lib/billing-display";
-import { formatBytes, resolveFileExtension, resolveFileIcon } from "@/shared/lib/file-display";
+import { formatBytes, resolveFileExtension } from "@/shared/lib/file-display";
 import { resolveFileProcessingBadge } from "@/shared/lib/file-processing";
 import {
   deriveRatioString,
@@ -574,6 +575,7 @@ function ChatInputComponent({
   );
   const selectedProtocols = React.useMemo(() => selectedModel?.protocols ?? [], [selectedModel]);
   const selectedModelName = selectedModel?.platformModelName || selectedPlatformModelName;
+  const showModelControls = !hideModelPicker;
   const reasoningEffortProtocol = resolveReasoningEffortProtocol(selectedModel?.protocols ?? []);
   const reasoningEffortValue = reasoningEffortProtocol
     ? getReasoningEffortOptionValue(reasoningEffortProtocol, options)
@@ -588,8 +590,8 @@ function ChatInputComponent({
     [onOptionsChange, options, reasoningEffortProtocol],
   );
   const submitDecision = resolveChatSubmitDecision(
-    selectedModel,
-    resolvedSubmissionAttachments ?? attachments,
+    showModelControls ? selectedModel : null,
+    showModelControls ? resolvedSubmissionAttachments ?? attachments : [],
     options,
   );
   const submitTask = submitDecision.task;
@@ -1025,7 +1027,6 @@ function ChatInputComponent({
                 <SortableContext items={sortableFileIDs} strategy={horizontalListSortingStrategy}>
                 {attachments.map((item) => {
                   const badge = resolveFileProcessingBadge(item, (key, values) => tFileStatus(key, values));
-                  const FileIcon = resolveFileIcon(item);
                   const failed = badge.tone === "danger" || badge.tone === "warning";
                   const processing = !failed && badge.tone !== "success";
                   const meta = formatAttachmentMeta(item.fileName, item.sizeBytes);
@@ -1044,7 +1045,18 @@ function ChatInputComponent({
                         {processing ? (
                           <LoaderCircle className="size-5 animate-spin" strokeWidth={1.8} />
                         ) : (
-                          <FileIcon className="size-5" strokeWidth={1.6} />
+                          <FileThumbnail
+                            file={{
+                              fileID: item.fileID,
+                              fileName: item.fileName,
+                              mimeType: item.mimeType,
+                              status: "active",
+                              sha256: item.sha256,
+                            }}
+                            src={item.previewURL}
+                            className="size-6"
+                            iconClassName="size-5"
+                          />
                         )}
                       </AttachmentMedia>
                       <AttachmentContent className="flex min-w-0 flex-1 flex-col justify-center px-0 py-0">
@@ -1293,7 +1305,7 @@ function ChatInputComponent({
                 </DropdownMenuContent>
               </DropdownMenu>
 
-              {!modelOptionPolicyDisabled ? (
+              {showModelControls && !modelOptionPolicyDisabled ? (
                 <ChatModelConfig
                   disabled={loading || uploading || modelLoading}
                   options={modelConfigOptions}
@@ -1437,7 +1449,7 @@ function ChatInputComponent({
                   </TooltipContent>
                 </Tooltip>
               ) : null}
-              {reasoningEffortProtocol ? (
+              {showModelControls && reasoningEffortProtocol ? (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <span className="inline-flex shrink-0">
@@ -1455,7 +1467,7 @@ function ChatInputComponent({
                   </TooltipContent>
                 </Tooltip>
               ) : null}
-              {isImageTask && isImage2Model ? (
+              {showModelControls && isImageTask && isImage2Model ? (
                 <>
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -1505,7 +1517,7 @@ function ChatInputComponent({
                   </Tooltip>
                 </>
               ) : null}
-              {hideModelPicker ? null : (
+              {showModelControls ? (
                 <ChatModelPicker
                   modelOptions={modelOptions}
                   billingDisplayCurrency={billingDisplayCurrency}
@@ -1516,7 +1528,7 @@ function ChatInputComponent({
                   onModelCatalogRefresh={onModelCatalogRefresh}
                   onModelChange={onModelChange}
                 />
-              )}
+              ) : null}
 
               <Tooltip>
                 <TooltipTrigger asChild>

@@ -1,9 +1,9 @@
 "use client";
 
+import { Box, Check, FileCode2, ScrollText, Users, Wrench } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { AnimatePresence, motion } from "motion/react";
-import { Box, Check, FileCode2, FileText, ScrollText, Users, Wrench } from "lucide-react";
 
 import type {
   ChatMentionMenuItem,
@@ -11,6 +11,7 @@ import type {
   ChatMentionMenuLayout,
   ChatMentionMenuSection,
 } from "@/features/chat/hooks/use-chat-mention-menu";
+import { FileThumbnail } from "@/shared/components/file-thumbnail";
 import { ModelIcon } from "@/shared/components/model-icon";
 import { resolveModelIconURL, resolveModelIdentity } from "@/shared/lib/model-identity";
 
@@ -51,9 +52,7 @@ function ChatMentionMenuItemButton({
       {item.kind === "model" ? (
         <ModelIcon iconUrl={iconURL} label={platformModelName} />
       ) : item.kind === "file" ? (
-        <span className="flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground">
-          <FileText className="size-3.5" strokeWidth={1.7} />
-        </span>
+        <FileThumbnail file={item.file} className="size-6" iconClassName="size-4" />
       ) : item.kind === "tool" ? (
         <span className="flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground">
           <Wrench className="size-3.5" strokeWidth={1.7} />

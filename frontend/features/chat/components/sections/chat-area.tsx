@@ -3,6 +3,7 @@
 import { ArrowDownToLine, Check } from "lucide-react";
 import { useTranslations } from "next-intl";
 import * as React from "react";
+import { Badge } from "@/components/ui/badge";
 import { CenteredEmptyState } from "@/components/ui/empty-state";
 import {
   MessageScroller,
@@ -709,6 +710,15 @@ export function ChatArea({
                 </span>
                 <span className="truncate">{agentGroup.name}</span>
               </span>
+            ) : null}
+            {agentGroup ? (
+              <Badge
+                variant="outline"
+                className="min-w-0 shrink-0 cursor-default border-border/70 bg-background/60 px-1.5 py-0 text-xs font-medium text-muted-foreground"
+                title={t("agentGroupMode")}
+              >
+                <span className="truncate">{t("agentGroupMode")}</span>
+              </Badge>
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">

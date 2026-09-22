@@ -33,7 +33,7 @@ export function ChatEmptyState({
     <span className="absolute left-full top-0 ml-1.5">
       <Badge
         variant="outline"
-        className="cursor-default border-border/70 bg-background/60 px-1.5 py-0 text-[9px] font-medium text-muted-foreground"
+        className="cursor-default border-border/70 bg-background/60 px-1.5 py-0 text-xs font-medium text-muted-foreground"
       >
         {badgeLabel}
       </Badge>

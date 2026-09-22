@@ -282,6 +282,7 @@ function CodeEditor({ path, value, original, onChange }: { path: string; value: 
     }
     if (editor.getValue() !== value) editor.setValue(value);
   }, [original, value]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: Value and word-wrap changes are applied to the existing editor without recreating Monaco.
   React.useEffect(() => {
     let disposed = false;
     let subscription: Monaco.IDisposable | undefined;
@@ -321,7 +322,6 @@ function CodeEditor({ path, value, original, onChange }: { path: string; value: 
       editorRef.current = null;
     };
     // wordWrap 通过 toggleWordWrap 的 updateOptions 动态应用，不参与重建。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [original, path, resolvedTheme]);
 
   return (
@@ -444,6 +444,7 @@ export function ProjectFileEditor({ tab, busy, projectID, onPathChange, onConten
   onSave: () => void;
   onDelete: () => void;
 }) {
+  const tWorkspace = useTranslations("chat.workspace");
   const readOnly = Boolean(tab.diff) || tab.deleted;
   const previewable = isPreviewableFile(tab.path);
   const [view, setView] = React.useState<"code" | "preview">("code");
@@ -589,30 +590,32 @@ export function ProjectFileEditor({ tab, busy, projectID, onPathChange, onConten
   }, [view, tab.key, tab.path, tab.content, tab.diff, buildPreviewDocument]);
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="flex items-center gap-2 border-b p-2">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
+      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border/40 px-3">
         <Input
           value={tab.path}
           onChange={(event) => onPathChange(event.target.value)}
           disabled={readOnly || Boolean(tab.fileID)}
           placeholder="src/file.ts"
-          className="h-7 text-xs"
+          className="h-8 min-w-0 border-border/55 bg-background text-xs shadow-none"
         />
         {previewable ? (
           <Button
             variant="ghost"
-            size="icon-sm"
-            title={view === "code" ? "预览渲染效果" : "返回代码编辑"}
+            size="icon"
+            className="size-7 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+            title={view === "code" ? tWorkspace("previewRender") : tWorkspace("backToCode")}
+            aria-label={view === "code" ? tWorkspace("previewRender") : tWorkspace("backToCode")}
             disabled={busy}
             onClick={() => setView(view === "code" ? "preview" : "code")}
           >
-            {view === "code" ? <Eye /> : <Code2 />}
+            {view === "code" ? <Eye className="size-3.5" /> : <Code2 className="size-3.5" />}
           </Button>
         ) : null}
-        <Button variant="ghost" size="icon-sm" title="保存" disabled={busy || readOnly || !tab.path.trim() || (Boolean(tab.fileID) && tab.content === tab.savedContent)} onClick={onSave}><Save /></Button>
-        <Button variant="ghost" size="icon-sm" title={tab.fileID ? "删除文件" : "关闭未保存文件"} disabled={busy} onClick={onDelete}><Trash2 /></Button>
+        <Button variant="ghost" size="icon" className="size-7 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" title={tWorkspace("saveFile")} aria-label={tWorkspace("saveFile")} disabled={busy || readOnly || !tab.path.trim() || (Boolean(tab.fileID) && tab.content === tab.savedContent)} onClick={onSave}><Save className="size-3.5" /></Button>
+        <Button variant="ghost" size="icon" className="size-7 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" title={tab.fileID ? tWorkspace("deleteFile") : tWorkspace("discardFile")} aria-label={tab.fileID ? tWorkspace("deleteFile") : tWorkspace("discardFile")} disabled={busy} onClick={onDelete}><Trash2 className="size-3.5" /></Button>
       </div>
-      {tab.note ? <div className="shrink-0 border-b bg-muted/50 px-3 py-1.5 text-[11px] text-muted-foreground">{tab.note}</div> : null}
+      {tab.note ? <div className="shrink-0 border-b border-border/40 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">{tab.note}</div> : null}
       {previewable && view === "preview" ? (
         <>
           {previewMissing.length > 0 ? (
@@ -912,7 +915,7 @@ export const ChatProjectWorkspace = React.forwardRef<ProjectWorkspaceHandle, {
 
   // 拖入的文件直接进入项目工作区而非对话附件：ZIP 解压导入，文本文件按原路径保存。
   // targetDirectory 非空时以该文件夹路径为前缀写入，实现拖到具体文件夹的定向添加。
-  async function importDroppedFiles(dropped: FileList | File[], targetDirectory = "") {
+  const importDroppedFiles = React.useCallback(async (dropped: FileList | File[], targetDirectory = "") => {
     const items = Array.from(dropped);
     if (items.length === 0) return;
     const prefix = targetDirectory.trim().replace(/^\/+|\/+$/g, "");
@@ -937,7 +940,7 @@ export const ChatProjectWorkspace = React.forwardRef<ProjectWorkspaceHandle, {
       toast.success(prefix ? `文件已添加到 ${prefix}/` : "文件已添加到项目工作区");
     } catch (error) { toast.error(error instanceof Error ? error.message : "文件导入失败"); }
     finally { setBusy(false); }
-  }
+  }, [projectID, refresh]);
 
   // 多选删除：文件按路径精确匹配，文件夹按前缀匹配其下全部文件。
   async function removeSelected() {
@@ -1017,8 +1020,7 @@ export const ChatProjectWorkspace = React.forwardRef<ProjectWorkspaceHandle, {
       if (busy) return;
       void importDroppedFiles(event.dataTransfer.files, directory);
     },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [busy, projectID]);
+  }), [busy, importDroppedFiles]);
 
   // 文件树与每轮变更之间的分栏拖拽：调整文件树高度并持久化。
   const onTreeResizeStart = React.useCallback((event: React.PointerEvent<HTMLDivElement>) => {
@@ -1047,7 +1049,7 @@ export const ChatProjectWorkspace = React.forwardRef<ProjectWorkspaceHandle, {
     <aside
       // 移动端为全宽抽屉覆盖层；桌面为内联侧栏（宽度由外层网格列与拖拽共同决定）。
       className={cn(
-        "relative h-full min-h-0 shrink-0 flex-col border-l bg-background/95",
+        "relative h-full min-h-0 shrink-0 flex-col border-l border-border/55 bg-background",
         isDrawer
           ? "fixed inset-y-0 right-0 z-50 flex w-full border-l-0 shadow-2xl"
           : "hidden md:flex",
@@ -1066,19 +1068,26 @@ export const ChatProjectWorkspace = React.forwardRef<ProjectWorkspaceHandle, {
       }}
     >
       {dropActive ? (
-        <div className="pointer-events-none absolute inset-0 z-40 flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed border-primary/60 bg-primary/10 text-xs font-medium text-primary">
-          <FilePlus2 className="size-5" />
-          <span>{dropTargetDirectory ? `松开以添加到 ${dropTargetDirectory}/` : "松开以导入项目工作区（ZIP 自动解压）"}</span>
+        <div className="pointer-events-none absolute inset-2 z-40 flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-primary/50 bg-background/95 px-5 text-center text-xs font-medium text-foreground shadow-sm backdrop-blur-sm">
+          <FilePlus2 className="size-5 text-primary" />
+          <span>{dropTargetDirectory ? tWorkspace("dropIntoFolder", { path: `${dropTargetDirectory}/` }) : tWorkspace("dropIntoWorkspace")}</span>
         </div>
       ) : null}
-      <header className="flex h-11 shrink-0 items-center gap-2 border-b px-3">
-        <Folder className="size-4" />
-        <span className="flex-1 text-xs font-semibold uppercase tracking-[0.14em]">Project Explorer</span>
-        <Button variant="ghost" size="icon-sm" title={tWorkspace("newFile")} disabled={busy} onClick={() => onNewFile("")}><FilePlus2 /></Button>
-        <Button variant="ghost" size="icon-sm" title={tWorkspace("importZip")} disabled={busy} onClick={() => archiveInputRef.current?.click()}><FileArchive /></Button>
-        <Button variant="ghost" size="icon-sm" title={tWorkspace("downloadZip")} disabled={busy} onClick={() => void downloadArchive()}><FolderArchive /></Button>
-        <Button variant="ghost" size="icon-sm" title={tWorkspace("refresh")} disabled={busy} onClick={() => void refresh()}><RefreshCw className={busy ? "animate-spin" : ""} /></Button>
-        <Button variant="ghost" size="icon-sm" title={tWorkspace("closeIDE")} onClick={onClose}><X /></Button>
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border/40 px-3">
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted/60 text-muted-foreground">
+          <Folder aria-hidden className="size-4" strokeWidth={1.6} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <h2 className="truncate text-sm font-semibold tracking-tight">{tWorkspace("title")}</h2>
+          <p className="truncate text-xs text-muted-foreground">{tWorkspace("fileCount", { count: files.filter((file) => file.EntryType === "file").length })}</p>
+        </div>
+        <div className="flex shrink-0 items-center gap-0.5">
+          <Button variant="ghost" size="icon" className="size-7 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" title={tWorkspace("newFile")} aria-label={tWorkspace("newFile")} disabled={busy} onClick={() => onNewFile("")}><FilePlus2 className="size-3.5" /></Button>
+          <Button variant="ghost" size="icon" className="size-7 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" title={tWorkspace("importZip")} aria-label={tWorkspace("importZip")} disabled={busy} onClick={() => archiveInputRef.current?.click()}><FileArchive className="size-3.5" /></Button>
+          <Button variant="ghost" size="icon" className="size-7 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" title={tWorkspace("downloadZip")} aria-label={tWorkspace("downloadZip")} disabled={busy} onClick={() => void downloadArchive()}><FolderArchive className="size-3.5" /></Button>
+          <Button variant="ghost" size="icon" className="size-7 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" title={tWorkspace("refresh")} aria-label={tWorkspace("refresh")} disabled={busy} onClick={() => void refresh()}><RefreshCw className={cn("size-3.5", busy && "animate-spin")} /></Button>
+          <Button variant="ghost" size="icon" className="size-7 rounded-md text-muted-foreground hover:bg-muted hover:text-foreground" title={tWorkspace("closeWorkspace")} aria-label={tWorkspace("closeWorkspace")} onClick={onClose}><X className="size-3.5" /></Button>
+        </div>
       </header>
       <input
         ref={archiveInputRef}
@@ -1094,19 +1103,20 @@ export const ChatProjectWorkspace = React.forwardRef<ProjectWorkspaceHandle, {
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
-            className={cn("overflow-auto p-2", changeGroups.length > 0 ? "shrink-0 border-b" : "min-h-0 flex-1")}
+            className={cn("overflow-auto p-2", changeGroups.length > 0 ? "shrink-0 border-b border-border/40" : "min-h-0 flex-1")}
             style={changeGroups.length > 0 ? { height: treeHeight } : undefined}
-            onClick={(event) => { if (event.target === event.currentTarget) setSelectedPaths(new Set()); }}
+            onPointerDown={(event) => { if (event.button === 0 && event.pointerType === "mouse" && event.target === event.currentTarget) setSelectedPaths(new Set()); }}
           >
             {workspaceTree.map((node) => node.kind === "directory" ? (
               <ContextMenu key={`dir-${node.path}`}>
                 <ContextMenuTrigger asChild>
-                  <div
+                  <button
+                    type="button"
                     {...directoryDropHandlers(node.path)}
                     className={cn(
-                      "flex h-7 cursor-pointer select-none items-center gap-1.5 rounded text-xs text-muted-foreground transition-colors hover:bg-muted/60",
-                      selectedPaths.has(node.path) && "bg-primary/15 text-primary",
-                      dropTargetDirectory === node.path && "bg-primary/15 text-primary",
+                      "flex h-8 w-full cursor-pointer select-none items-center gap-1.5 rounded-md text-left text-[13px] text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
+                      selectedPaths.has(node.path) && "bg-muted text-foreground",
+                      dropTargetDirectory === node.path && "bg-primary/10 text-foreground ring-1 ring-primary/30",
                     )}
                     style={{ paddingLeft: `${node.depth * 12 + 4}px` }}
                     onClick={(event) => {
@@ -1118,8 +1128,8 @@ export const ChatProjectWorkspace = React.forwardRef<ProjectWorkspaceHandle, {
                     {collapsedDirectories.has(node.path) ? <ChevronRight className="size-3 shrink-0" /> : <ChevronDown className="size-3 shrink-0" />}
                     <Folder className="size-3.5 shrink-0" />
                     <span className="truncate">{node.label}</span>
-                    <span className="ml-auto shrink-0 text-[10px] opacity-60">{node.count}</span>
-                  </div>
+                    <span className="ml-auto shrink-0 text-xs opacity-60">{node.count}</span>
+                  </button>
                 </ContextMenuTrigger>
                 <ContextMenuContent>
                   <ContextMenuItem onClick={() => onNewFile(node.path)}>{tWorkspace("newFileIn", { name: node.label })}</ContextMenuItem>
@@ -1139,8 +1149,8 @@ export const ChatProjectWorkspace = React.forwardRef<ProjectWorkspaceHandle, {
                     }}
                     onContextMenu={() => ensureSelectionForContextMenu(node.file.RelativePath)}
                     className={cn(
-                      "flex h-7 w-full items-center gap-2 rounded px-1.5 text-left text-xs hover:bg-muted",
-                      selectedPaths.has(node.file.RelativePath) ? "bg-primary/15 text-primary" : activeTabPath === node.file.RelativePath && "bg-muted",
+                      "flex h-8 w-full items-center gap-2 rounded-md px-1.5 text-left text-[13px] text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
+                      selectedPaths.has(node.file.RelativePath) ? "bg-muted text-foreground" : activeTabPath === node.file.RelativePath && "bg-muted/70 text-foreground",
                     )}
                     style={{ paddingLeft: `${node.depth * 12 + 4}px` }}
                   >
@@ -1167,16 +1177,28 @@ export const ChatProjectWorkspace = React.forwardRef<ProjectWorkspaceHandle, {
         <>
           <div
             role="separator"
-            aria-label="拖动调整文件列表高度"
-            className="group relative z-10 h-1.5 shrink-0 cursor-row-resize touch-none"
+            aria-label={tWorkspace("resizeFileList")}
+            aria-orientation="horizontal"
+            aria-valuemin={140}
+            aria-valuemax={720}
+            aria-valuenow={treeHeight}
+            tabIndex={0}
+            className="group relative z-10 h-1.5 shrink-0 cursor-row-resize touch-none outline-none focus-visible:ring-2 focus-visible:ring-ring"
             onPointerDown={onTreeResizeStart}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+              event.preventDefault();
+              const next = Math.min(720, Math.max(140, treeHeight + (event.key === "ArrowUp" ? 16 : -16)));
+              setTreeHeight(next);
+              window.localStorage.setItem(PROJECT_TREE_HEIGHT_KEY, String(next));
+            }}
           >
             <div className="absolute inset-x-1 top-1/2 h-[2px] -translate-y-1/2 rounded bg-transparent group-hover:bg-primary/50" />
           </div>
           <section className="min-h-0 flex-1 overflow-auto p-2">
-            <div className="mb-1 flex items-center justify-between px-1">
-              <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">对话变更</span>
-              <span className="text-[10px] text-muted-foreground">{changeGroups.length} 轮</span>
+            <div className="mb-1 flex h-8 items-center justify-between px-2">
+              <span className="text-xs font-medium text-foreground">{tWorkspace("conversationChanges")}</span>
+              <span className="text-xs text-muted-foreground">{tWorkspace("roundCount", { count: changeGroups.length })}</span>
             </div>
             {changeGroups.map((group) => {
               const expanded = expandedChangeGroups.has(group.messageKey);
@@ -1190,22 +1212,22 @@ export const ChatProjectWorkspace = React.forwardRef<ProjectWorkspaceHandle, {
                       else next.add(group.messageKey);
                       return next;
                     })}
-                    className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left hover:bg-muted/60"
+                    className="flex min-h-8 w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
                     title={group.title}
                   >
                     {expanded ? <ChevronDown className="size-3 shrink-0 text-muted-foreground" /> : <ChevronRight className="size-3 shrink-0 text-muted-foreground" />}
-                    <span className="min-w-0 flex-1 truncate text-[11px] font-medium">{group.title}</span>
-                    <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{group.changes.length}</span>
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium">{group.title}</span>
+                    <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{group.changes.length}</span>
                   </button>
                   {expanded ? group.changes.map((change) => (
                     <button
                       key={change.key}
                       type="button"
                       onClick={() => onOpenChange(change)}
-                      className="ml-3 mb-0.5 flex w-[calc(100%-0.75rem)] items-center gap-2 rounded-md border border-border/60 px-2 py-1.5 text-left hover:bg-muted/60"
+                      className="mb-0.5 ml-3 flex min-h-10 w-[calc(100%-0.75rem)] items-center gap-2 rounded-md border border-border/45 px-2 py-1.5 text-left transition-colors hover:bg-muted/60"
                     >
                       {change.name === "project_delete_file" ? <Trash2 className="size-3.5 text-destructive" /> : change.name === "project_create_archive" ? <FolderArchive className="size-3.5 text-muted-foreground" /> : <FileDiff className="size-3.5 text-muted-foreground" />}
-                      <span className="min-w-0 flex-1"><span className="block truncate text-[11px] font-medium">{change.name === "project_create_archive" ? "项目 ZIP 归档" : change.path}</span><span className="block truncate text-[10px] text-muted-foreground">{change.name === "project_create_archive" ? "点击下载" : change.parts && change.parts.length > 1 ? `${change.parts.length} 次修改 · 合并 Diff` : change.name.replace("project_", "")}</span></span>
+                      <span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{change.name === "project_create_archive" ? tWorkspace("projectArchive") : change.path}</span><span className="block truncate text-xs text-muted-foreground">{change.name === "project_create_archive" ? tWorkspace("downloadArchiveHint") : change.parts && change.parts.length > 1 ? tWorkspace("mergedChangeCount", { count: change.parts.length }) : change.name === "project_write_file" ? tWorkspace("changeWriteFile") : change.name === "project_patch_file" ? tWorkspace("changePatchFile") : tWorkspace("changeDeleteFile")}</span></span>
                     </button>
                   )) : null}
                 </div>

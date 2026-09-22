@@ -1,7 +1,7 @@
 "use client";
 
+import { LayoutGrid, List, Rows3 } from "lucide-react";
 import { useTranslations } from "next-intl";
-import { List, LayoutGrid, Rows3 } from "lucide-react";
 import * as React from "react";
 import {
   AlertDialog,
@@ -138,7 +138,7 @@ export function AppFiles() {
               <div className="flex items-center justify-end gap-1 border-b border-border/40 px-1 pb-1">
                 <Button variant={viewMode === "list" ? "secondary" : "ghost"} size="icon" className="size-7" aria-label="列表模式" onClick={() => setViewMode("list")}><List className="size-3.5" /></Button>
                 <Button variant={viewMode === "thumbs" ? "secondary" : "ghost"} size="icon" className="size-7" aria-label="缩略图模式" onClick={() => setViewMode("thumbs")}><LayoutGrid className="size-3.5" /></Button>
-                <Button variant={viewMode === "compact" ? "secondary" : "ghost"} size="icon" className="size-7" aria-label="紧凑列表模式" onClick={() => setViewMode("compact")}><Rows3 className="size-3.5" /></Button>
+                <Button variant={viewMode === "compact" ? "secondary" : "ghost"} size="icon" className="size-7" aria-label="带缩略图的列表模式" onClick={() => setViewMode("compact")}><Rows3 className="size-3.5" /></Button>
               </div>
             ) : null}
             {!sidebarCollapsed ? (

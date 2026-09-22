@@ -1,24 +1,23 @@
 "use client";
 
-import * as React from "react";
 import { useTranslations } from "next-intl";
+import * as React from "react";
 import { toast } from "sonner";
-
-import { resolveUploadPolicyRejection } from "@/features/chat/utils/attachments";
-import { captureScreenshotFile } from "@/features/chat/utils/browser-media";
-import { resolveMaxFilesPerMessage } from "@/features/chat/utils/chat-runtime";
 import type {
   PendingAttachment,
   UploadingAttachment,
 } from "@/features/chat/types/chat-runtime";
+import { resolveUploadPolicyRejection } from "@/features/chat/utils/attachments";
+import { captureScreenshotFile } from "@/features/chat/utils/browser-media";
+import { resolveMaxFilesPerMessage } from "@/features/chat/utils/chat-runtime";
 import { useLocalizedErrorMessage } from "@/i18n/use-localized-error";
-import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import {
   getChatFilePolicy,
   getFileProcessingStatus,
   uploadFile,
 } from "@/shared/api/file";
 import type { ChatFilePolicyDTO } from "@/shared/api/file.types";
+import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 
 function revokeAttachmentPreview(item: PendingAttachment) {
   if (item.previewURL) {
@@ -248,6 +247,7 @@ export function useChatAttachments({
               detectedMime: result.value.file.detectedMIME,
               fileCategory: result.value.file.fileCategory,
               sizeBytes: result.value.file.sizeBytes,
+              sha256: result.value.file.sha256,
               previewURL,
               processingStatus: result.value.file.processingStatus,
               processingReady: result.value.file.processingReady,

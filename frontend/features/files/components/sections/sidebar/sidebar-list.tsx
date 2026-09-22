@@ -17,9 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 import type { FileObjectDTO } from "@/shared/api/file.types";
-import { fetchFileContent } from "@/shared/api/file";
-import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
-import { isImageFile, isFileReady } from "@/shared/lib/file-display";
+import { FileThumbnail } from "@/shared/components/file-thumbnail";
 import { useLoadMoreSentinel } from "@/shared/hooks/use-load-more-sentinel";
 import { resolveFileIcon, resolveFileLabel } from "@/shared/lib/file-display";
 
@@ -83,26 +81,10 @@ function SidebarListItem({
 }) {
   const t = useTranslations("files");
   const fileIcon = resolveFileIcon(item);
-  const [thumbnailURL, setThumbnailURL] = React.useState<string | null>(null);
-  React.useEffect(() => {
-    let disposed = false;
-    let url: string | null = null;
-    if (viewMode === "thumbs" && isImageFile(item) && isFileReady(item.status)) {
-      void (async () => {
-        const token = await resolveAccessToken();
-        if (!token) return;
-        try {
-          const result = await fetchFileContent(token, item.fileID);
-          if (!disposed) { url = URL.createObjectURL(result.blob); setThumbnailURL(url); }
-        } catch { /* fallback icon */ }
-      })();
-    }
-    return () => { disposed = true; if (url) URL.revokeObjectURL(url); setThumbnailURL(null); };
-  }, [item.fileID, item.status, viewMode]);
 
   if (renaming) {
     return (
-      <div className="flex h-8 items-center rounded-md bg-accent/75 px-1.5 text-xs text-foreground">
+      <div className={cn("flex items-center rounded-md bg-accent/75 px-1.5 text-xs text-foreground", viewMode === "thumbs" ? "h-24" : viewMode === "compact" ? "h-12" : "h-8")}>
         {React.createElement(fileIcon, { className: "size-3 text-muted-foreground" })}
         <Input
           autoFocus
@@ -126,7 +108,7 @@ function SidebarListItem({
   }
 
   return (
-    <div className={cn("group relative w-full max-w-full min-w-0 overflow-hidden rounded-md", viewMode === "thumbs" ? "h-24" : viewMode === "compact" ? "h-7" : "h-8")}>
+    <div className={cn("group relative w-full max-w-full min-w-0 overflow-hidden rounded-md", viewMode === "thumbs" ? "h-24" : viewMode === "compact" ? "h-12" : "h-8")}>
       <Checkbox
         checked={checked}
         className="absolute left-1.5 top-1/2 z-20 size-3 -translate-y-1/2"
@@ -139,14 +121,17 @@ function SidebarListItem({
         variant="ghost"
         className={cn(
           "w-full max-w-full justify-start gap-2 overflow-hidden rounded-md py-0 pl-7 pr-12 text-left text-xs font-normal shadow-none",
-          viewMode === "thumbs" ? "h-24 flex-col items-start justify-end pb-2 pt-2" : viewMode === "compact" ? "h-7" : "h-8",
+          viewMode === "thumbs" ? "h-24 flex-col items-start justify-end pb-2 pt-2" : viewMode === "compact" ? "h-12" : "h-8",
           selected ? "bg-accent text-accent-foreground hover:bg-accent" : "text-foreground hover:bg-accent/65 hover:text-foreground",
         )}
         onClick={() => onSelect(item.fileID)}
       >
-        <span className={cn("flex shrink-0 items-center justify-center", viewMode === "thumbs" ? "size-10" : "size-3")}>
-          {thumbnailURL ? <img src={thumbnailURL} alt="" className="size-10 rounded object-cover" /> : React.createElement(fileIcon, { className: viewMode === "thumbs" ? "size-9 text-muted-foreground" : "size-3 text-muted-foreground" })}
-        </span>
+        <FileThumbnail
+          file={item}
+          enabled={viewMode !== "list"}
+          className={viewMode === "thumbs" ? "size-10" : viewMode === "compact" ? "size-8" : "size-3"}
+          iconClassName={viewMode === "thumbs" ? "size-9" : viewMode === "compact" ? "size-4" : "size-3"}
+        />
 
         <span className="min-w-0 flex-1 truncate text-xs" title={`${item.fileName} · ${item.fileID}`}>{resolveFileLabel(item.fileName, item.fileID, duplicateName)}</span>
       </Button>
