@@ -35,7 +35,7 @@ const (
 
 	protocolOpenAIImageGenerations = llm.AdapterOpenAIImageGenerations
 	protocolOpenAIImageEdits       = llm.AdapterOpenAIImageEdits
-	protocolOpenAIVideoGenerations = "openai_video_generations"
+ 	protocolOpenAIVideoGenerations = llm.AdapterOpenAIVideo
 	protocolImageEditsJSON    = llm.AdapterImageEditsJSON
 	protocolGoogleImageGeneration  = llm.AdapterGoogleImageGeneration
 	protocolGeminiInteractions     = llm.AdapterGeminiInteractions
@@ -167,30 +167,10 @@ func systemFallbackProtocols(compatible string) map[string]string {
 	}
 }
 
-func isKnownProtocol(raw string) bool {
-	switch strings.TrimSpace(strings.ToLower(raw)) {
-	case llm.AdapterOpenAIResponses,
-		llm.AdapterOpenRouterChat,
-		llm.AdapterOpenRouterResponses,
-		llm.AdapterOpenAIChatCompletions,
-		llm.AdapterAnthropicMessages,
-		llm.AdapterGoogleGenerateContent,
-		llm.AdapterXAIResponses,
-		protocolOpenAIImageGenerations,
-		protocolOpenAIImageEdits,
-		protocolOpenAIVideoGenerations,
-		protocolImageEditsJSON,
-		protocolGoogleImageGeneration,
-		protocolGeminiInteractions,
-		protocolXAIImage,
-		protocolXAIImageEdits,
-		protocolXAIVideo,
-		protocolXAIVideoExtensions:
-		return true
-	default:
-		return false
-	}
-}
+ func isKnownProtocol(raw string) bool {
+ 	// 协议清单唯一真相在 llm.IsKnownAdapter；此处直接委托，避免两份手工 switch 漂移。
+ 	return llm.IsKnownAdapter(raw)
+ }
 
 func resolveRouteProtocol(explicit string, upCompatible string, defaultsJSON string, kindsJSON string) (string, error) {
 	kind := primaryKindFromKinds(kindsJSON)

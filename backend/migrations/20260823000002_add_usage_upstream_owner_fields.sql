@@ -1,3 +1,4 @@
+-- WARNING: 历史遗留说明性文件，非 GORM AutoMigrate 执行路径；切勿手动执行（MySQL 语法/PG 不兼容；cleanup 文件为不可逆 DELETE）
 -- 迁移脚本：为用量表添加用户渠道归属字段
 -- 创建时间：2026-08-23
 -- 说明：为 billing_usage_ledgers 表添加渠道归属标记，支持用户自有渠道用量统计

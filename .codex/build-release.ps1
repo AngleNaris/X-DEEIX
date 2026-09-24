@@ -13,7 +13,9 @@ tar -xf $Archive -C $Work
 docker buildx build --platform linux/amd64 --provenance=false --file "$Work\Dockerfile" --build-arg "GIT_COMMIT=$Sha" --build-arg "BUILD_TIME=$Stamp" --tag "deeix-chat:$Short" --load $Work
 docker save "deeix-chat:$Short" -o "$Out\deeix-chat-$Short-linux-amd64.tar"
 $ImageId = (docker image inspect "deeix-chat:$Short" --format '{{.Id}}').Trim()
-"commit=$Sha`nversion=$Version`nimage=deeix-chat:$Short`nimage_id=$ImageId`nplatform=linux/amd64`nbuild_time=$Stamp" | Set-Content -NoNewline "$Out\manifest.env"
-(Get-FileHash "$Out\deeix-chat-$Short-linux-amd64.tar" -Algorithm SHA256).Hash.ToLower() + '  ' + "deeix-chat-$Short-linux-amd64.tar" | Set-Content "$Out\SHA256SUMS"
+ $manifestText = "commit=$Sha`nversion=$Version`nimage=deeix-chat:$Short`nimage_id=$ImageId`nplatform=linux/amd64`nbuild_time=$Stamp"
+ [System.IO.File]::WriteAllText("$Out\manifest.env", $manifestText, (New-Object System.Text.UTF8Encoding $false))
+ $shaLine = (Get-FileHash "$Out\deeix-chat-$Short-linux-amd64.tar" -Algorithm SHA256).Hash.ToLower() + "  " + "deeix-chat-$Short-linux-amd64.tar`n"
+ [System.IO.File]::WriteAllText("$Out\SHA256SUMS", $shaLine, (New-Object System.Text.UTF8Encoding $false))
 Get-Content "$Out\SHA256SUMS"
 Write-Output BUILD_OK

@@ -152,9 +152,14 @@ func (s *Service) resolveRouteReferences(ctx context.Context, input ResolveRoute
 		if _, excluded := excludedRouteIDs[row.RouteID]; excluded {
 			continue
 		}
-		if !IsRouteAllowedForTask(input.TaskType, row.ModelKindsJSON, row.Protocol) {
-			continue
-		}
+ 		if !IsRouteAllowedForTask(input.TaskType, row.ModelKindsJSON, row.Protocol) {
+ 			continue
+ 		}
+ 		if NormalizeTaskType(input.TaskType) == TaskTypeChat && isMediaOnlyRouteProtocol(row.Protocol) {
+ 			// chat 任务按设计仅校验协议已知（IsRouteAllowedForTask 不看 kinds），历史/手工绑定可能把 chat 指到纯媒体协议。
+ 			// 保持行为兼容（画布 chat 路由图像模型依赖此路径），仅打 warn 供审计，不拦截。
+ 			s.warn("chat_task_routed_to_media_protocol", zap.String("protocol", strings.TrimSpace(row.Protocol)), zap.String("model", strings.TrimSpace(row.PlatformModelName)))
+ 		}
 		if row.UpstreamModelID == 0 || row.UpstreamID == 0 || strings.TrimSpace(row.BindingCode) == "" || strings.TrimSpace(row.UpstreamModelName) == "" {
 			continue
 		}
@@ -776,3 +781,14 @@ func (s *Service) BuildRouteForUpstream(ctx context.Context, upstreamID uint, pr
 		UpstreamModel:       strings.TrimSpace(upstreamModel),
 	}, nil
 }
+ 
+ // isMediaOnlyRouteProtocol 判断协议是否为纯媒体协议（chat/audio 允许集之外）。
+ // 仅用于 chat 任务路由到媒体协议时的 warn 审计，不改变路由行为。
+ func isMediaOnlyRouteProtocol(protocol string) bool {
+ 	switch llm.NormalizeAdapter(protocol) {
+ 	case llm.AdapterOpenAIImageGenerations, llm.AdapterOpenAIImageEdits, llm.AdapterImageEditsJSON, llm.AdapterGoogleImageGeneration, llm.AdapterXAIImage, llm.AdapterXAIImageEdits, llm.AdapterOpenAIVideo, llm.AdapterXAIVideo, llm.AdapterXAIVideoExtensions:
+ 		return true
+ 	default:
+ 		return false
+ 	}
+ }

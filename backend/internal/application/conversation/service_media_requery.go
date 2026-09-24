@@ -75,13 +75,25 @@ func (s *Service) RequeryMediaVideoRun(ctx context.Context, userID uint, runID s
 		}
 		return nil, err
 	}
-	if run.TaskType != string(MediaVideoTaskGeneration) {
-		return nil, ErrMediaRouteProtocolMismatch
-	}
-	adapter := llm.NormalizeAdapter(run.ProviderProtocol)
-	if _, ok := requeryableVideoProtocols[adapter]; !ok {
-		return nil, ErrMediaRouteProtocolMismatch
-	}
+ 	taskType := strings.TrimSpace(run.TaskType)
+ 	adapter := llm.NormalizeAdapter(run.ProviderProtocol)
+ 	switch taskType {
+ 	case string(MediaVideoTaskGeneration):
+ 		// 生成任务仅允许生成协议；extensions 协议走扩展任务分支，避免与 IsRouteAllowedForTask(video_generation) 背离。
+ 		if adapter == llm.AdapterXAIVideoExtensions {
+ 			return nil, ErrMediaRouteProtocolMismatch
+ 		}
+ 		if _, ok := requeryableVideoProtocols[adapter]; !ok {
+ 			return nil, ErrMediaRouteProtocolMismatch
+ 		}
+ 	case string(MediaVideoTaskExtension):
+ 		// 扩展任务仅允许 extensions 协议回查；RetrieveVideoTask 已支持该协议。
+ 		if adapter != llm.AdapterXAIVideoExtensions {
+ 			return nil, ErrMediaRouteProtocolMismatch
+ 		}
+ 	default:
+ 		return nil, ErrMediaRouteProtocolMismatch
+ 	}
 	if strings.TrimSpace(run.UpstreamTaskID) == "" {
 		// 上游任务从未提交成功（如提交即被拒），没有可回查的对象
 		return nil, ErrMediaVideoInputInvalid

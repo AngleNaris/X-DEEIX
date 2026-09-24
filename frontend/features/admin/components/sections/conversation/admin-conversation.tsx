@@ -291,6 +291,13 @@ generationConfig.safetySettings.threshold`}
   "xai_video_extensions": [
     "duration"
   ],
+  "openai_video_generations": [
+    "aspect_ratio",
+    "duration",
+    "resolution",
+    "seconds",
+    "size"
+  ],
   "openai_chat_completions": [
     "service_tier",
     "thinking.type"

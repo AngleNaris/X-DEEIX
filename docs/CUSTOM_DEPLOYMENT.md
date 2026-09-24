@@ -103,7 +103,22 @@ sha256sum "$BACKUP_DIR"/* > "$BACKUP_DIR/SHA256SUMS"
 
 预检还必须确认：数据库可连接、pgvector/扩展版本满足当前 Schema、旧数据可读、反向代理目标正确、`SANDBOX_META_HMAC_KEY` 两端一致、shared/imports 父目录只允许服务账号写入。
 
+生产配置校验（`backend/internal/infra/config/config.go` 生产分支，约 844-875 行）在应用启动时强制以下条件，切换前必须逐项核对环境文件/`config.yaml`，否则新容器无法通过 readyz：
+
+- `PUBLIC_API_BASE_URL`、`PUBLIC_WEB_BASE_URL` 必须是显式 `https` URL；
+- `JWT_SECRET` 必须显式设置且长度 ≥ 16；
+- `DATA_ENCRYPTION_KEY` 必须显式设置且长度 ≥ 32；
+- `CORS_ALLOW_ORIGIN` 必须显式设置且不得为 `*`。
+
+`app_storage` 是本地文件卷（容器内 `/app/storage`，`config.yaml:storage.root_dir` 指向它），保存上传与生成的文件：上方的 PostgreSQL dump 不包含这些文件，必须对文件卷另行快照（停写后 tar 打包或卷快照），否则回滚基线不完整。
+
 ## 4. 原子切换
+
+**镜像 pin 的权威机制**：生产镜像由 `/opt/deeix-chat/docker-compose.override.yml` pin——该文件用 `image: deeix-chat:<short-sha>` 覆盖根 compose 的默认值（tag 由 §2 发布脚本的构建产物决定）。Compose 自动合并 override 文件，优先级高于任何 `--env-file` 注入的 `DEEIX_CHAT_IMAGE`。
+
+**仲裁规则**：`docker-compose.override.yml` 与 `.env.release` 同时存在且不一致时，**以 override 为准**；切换/回滚前后都必须用 `docker compose config --images` 核对实际生效镜像。MCP 侧以 `/opt/deeix-mcp/.env`（`SANDBOX_MCP_IMAGE`/`SANDBOX_BASE_IMAGE`）为准，切换前先用 `docker inspect` 核对容器实际镜像，发现 `.env` 与实际不一致（stale）时先修正再切换。
+
+标准切换（更新 override pin）：
 
 ```bash
 set -euo pipefail
@@ -112,6 +127,23 @@ sha256sum -c SHA256SUMS
 docker load -i deeix-chat-<short-sha>-linux-amd64.tar
 docker load -i deeix-sandbox-<short-sha>-linux-amd64.tar
 
+cd "$APP_DIR"
+cp -a docker-compose.override.yml "$BACKUP_DIR/docker-compose.override.yml.prev"
+# override 文件应仅含一个 image 行；如结构不同，请手工编辑而非 sed
+sed -i "s|^image:.*|image: deeix-chat:<short-sha>|" docker-compose.override.yml
+docker compose config --images   # 必须显示 deeix-chat:<short-sha>，不得出现 :latest
+docker compose up -d --no-deps app
+
+cd /opt/deeix-mcp
+# 沙箱栈按 /opt/deeix-mcp/.env 中 SANDBOX_MCP_IMAGE / SANDBOX_BASE_IMAGE 精确 tag 生效；
+# 先用 docker inspect 核对容器实际镜像，修正 .env 后再重启
+docker compose --env-file .env up -d --no-deps sandbox-mcp
+```
+
+**历史/备用方式**（线上当前未启用 `.env.release`；仅当 override 机制不可用时使用）：
+
+```bash
+set -euo pipefail
 cd "$APP_DIR"
 printf 'DEEIX_CHAT_IMAGE=deeix-chat:<short-sha>\n' > .env.release.next
 mv .env.release.next .env.release
@@ -158,6 +190,30 @@ fi
 随后通过真实域名完成登录、普通消息、管理员开关、A/B 用户隔离、凭据 CRUD、Agent Group、审批终态、制品 CRUD/分享和刷新持久化验证。仅对计划启用的 Provider 使用受控凭据执行 canary；不得把用户敏感附件作为测试材料。
 
 ## 6. 回滚
+
+回滚 = 把 override pin 改回上一版精确 tag。发布成功后回滚基线写入 `/opt/deeix-chat/deployment-result.env`（不入库，见 `.gitignore`）；**该文件缺失时，从最近一次备份目录 `/opt/backups/deeix-chat-<short>-*/rollback.env` 手动恢复**，以其记录的镜像/版本作为 override pin 依据。
+
+**注意：`app_storage` 文件卷没有自动恢复点。** §3 的数据库备份不包含上传/生成的文件；回滚文件卷只能使用 §3 预检生成的文件卷快照手工恢复，否则保持卷不动。
+
+```bash
+set -euo pipefail
+cd "$APP_DIR"
+docker compose config --images   # 记录当前生效镜像（回滚前后各核对一次）
+cp -a docker-compose.override.yml "$BACKUP_DIR/docker-compose.override.yml.bak"
+# override 文件应仅含一个 image 行；如结构不同，请手工编辑而非 sed
+sed -i "s|^image:.*|image: deeix-chat:<prev-short-sha>|" docker-compose.override.yml
+docker compose config --images   # 确认已回到上一版精确 tag
+docker compose up -d --no-deps app
+curl -fsS http://127.0.0.1:8080/readyz
+curl -fsS http://127.0.0.1:8080/api/v1/version
+
+cd /opt/deeix-mcp
+# 沙箱栈回滚同样以 /opt/deeix-mcp/.env 为准（docker inspect 核对后修正）
+docker compose --env-file .env up -d --no-deps sandbox-mcp
+curl -fsS http://127.0.0.1:8081/healthz
+```
+
+**历史/备用方式**（`.env.release`，仅当 override 机制不可用时使用）：
 
 ```bash
 set -euo pipefail

@@ -1,2 +1,4 @@
 # Auto detect text files and perform LF normalization
-* text=auto
+ * text=auto
+ # 发布脚本必须保持 LF，否则 Linux 远端执行失败（CRLF 会破坏 shebang/heredoc）。
+ *.sh text eol=lf

@@ -1,4 +1,4 @@
-name: deeix-chat
+name: deeix-chat-local
 
 services:
   app:
@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: ./Dockerfile
     image: deeix-chat:local
-    container_name: deeix-chat-app
+    container_name: deeix-chat-app-local
     restart: unless-stopped
     depends_on:
       postgres:
@@ -14,7 +14,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "3700:8080"
+      - "127.0.0.1:3700:8080"
     volumes:
       - ./data/storage:/app/storage
       - ./data/app:/app/data
@@ -30,6 +30,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: deeix_chat
+      # 本地验证专用，禁止用于生产；生产口令由 1Panel/secret 管理
       POSTGRES_PASSWORD: deeix_chat_change_me
       POSTGRES_DB: deeix_chat
     volumes:
@@ -47,6 +48,7 @@ services:
     image: redis:7-bookworm
     container_name: deeix-chat-redis
     restart: unless-stopped
+    # 本地验证专用，禁止用于生产；生产口令由 1Panel/secret 管理
     command: ["redis-server", "--requirepass", "deeix_chat_change_me"]
     volumes:
       - ./data/redis:/data
@@ -57,6 +59,7 @@ services:
       retries: 10
       start_period: 5s
     environment:
+      # 本地验证专用，禁止用于生产；生产口令由 1Panel/secret 管理
       REDIS_PASSWORD: deeix_chat_change_me
     networks:
       - deeix-chat

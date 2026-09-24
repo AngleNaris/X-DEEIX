@@ -57,6 +57,10 @@ export function resolveConfiguredApiBaseURL(): string {
   return configured ? configured.replace(/\/+$/, "") : "";
 }
 
+// 本地联调回退端口：localhost 非 8080 端口访问时，API 请求强制回退到本地后端 8080。
+// 同源部署（前端与后端同域/反代）应优先配置 NEXT_PUBLIC_API_BASE_URL；此回退仅用于本地开发联调，行为保持不变。
+const LOCAL_API_FALLBACK_PORT = "8080";
+
 export function resolveApiBaseURL(): string {
   const configured = resolveConfiguredApiBaseURL();
   if (configured) {
@@ -68,9 +72,9 @@ export function resolveApiBaseURL(): string {
   }
 
   const { hostname, port, origin } = window.location;
-  if ((hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") && port !== "8080") {
+  if ((hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") && port !== LOCAL_API_FALLBACK_PORT) {
     const host = hostname === "::1" ? "[::1]" : hostname;
-    return `http://${host}:8080`;
+    return `http://${host}:${LOCAL_API_FALLBACK_PORT}`;
   }
 
   return origin.replace(/\/+$/, "");

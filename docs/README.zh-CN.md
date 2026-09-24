@@ -219,7 +219,7 @@ docker compose -f docker-compose.full.yml up -d
 | PostgreSQL 数据 | `/var/lib/postgresql/data`，仅全量安装 |
 | Redis 数据 | `/data`，仅全量安装 |
 
-默认应用镜像为 `ghcr.io/deeix-ai/deeix-chat:latest`。测试自定义构建时可通过 `DEEIX_CHAT_IMAGE` 覆盖：
+ 默认应用镜像为 `deeix-chat:local`（仅本地构建）。生产必须经 `docker-compose.override.yml` pin 精确 tag，禁止默认拉取上游 `latest`。测试自定义构建时可通过 `DEEIX_CHAT_IMAGE` 覆盖：
 
 ```bash
 DEEIX_CHAT_IMAGE=deeix-chat:local docker compose up -d --build

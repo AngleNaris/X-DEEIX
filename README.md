@@ -21,8 +21,8 @@
 制品镜像发布在 GitHub 的容器镜像源（ghcr.io），在仓库 Packages 页面可查看：
 
 ```
-ghcr.io/anglenaris/x-deeix:latest     # 最新构建
-ghcr.io/anglenaris/x-deeix:0.3.6      # 版本标签
+ghcr.io/anglenaris/x-deeix:custom     # custom 分支构建（本定制版）
+ghcr.io/anglenaris/x-deeix:<tag>      # 生产部署必须 pin 精确 tag，禁止默认拉取 :latest（流程见 docs/CUSTOM_DEPLOYMENT.md）
 ```
 
 ## 本定制版的新增功能
@@ -415,7 +415,7 @@ The default compose files persist application data:
 | PostgreSQL data | `/var/lib/postgresql/data`, full installation only |
 | Redis data | `/data`, full installation only |
 
-The default application image is `ghcr.io/deeix-ai/deeix-chat:latest`. Override it with `DEEIX_CHAT_IMAGE` when testing a custom build:
+The default application image is `deeix-chat:local` (local build only). Production deployments must pin an exact tag via `docker-compose.override.yml` (see `docs/CUSTOM_DEPLOYMENT.md`) and must never pull `ghcr.io/deeix-ai/deeix-chat:latest` by default. Override it with `DEEIX_CHAT_IMAGE` when testing a custom build:
 
 ```bash
 DEEIX_CHAT_IMAGE=deeix-chat:local docker compose up -d --build

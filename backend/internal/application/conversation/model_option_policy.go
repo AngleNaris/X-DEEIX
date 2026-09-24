@@ -572,8 +572,10 @@ func modelOptionPolicyProtocolKey(protocol string) string {
 		return "openrouter_responses"
 	case llm.AdapterOpenAIImageGenerations:
 		return "openai_image_generations"
-	case llm.AdapterOpenAIImageEdits:
-		return "openai_image_edits"
+ 	case llm.AdapterOpenAIImageEdits:
+ 		return "openai_image_edits"
+ 	case llm.AdapterImageEditsJSON:
+ 		return "image_edits_json"
 	case llm.AdapterAnthropicMessages:
 		return "anthropic_messages"
 	case llm.AdapterXAIImage:

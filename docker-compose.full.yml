@@ -5,7 +5,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: ${DEEIX_CHAT_IMAGE:-ghcr.io/deeix-ai/deeix-chat:latest}
+    # 生产必须由 docker-compose.override.yml pin 精确 tag（发布流程见 docs/CUSTOM_DEPLOYMENT.md §2/§4），
+    # 此默认值仅用于本地构建；绝不默认拉取上游 ghcr.io/deeix-ai/deeix-chat:latest。
+    image: ${DEEIX_CHAT_IMAGE:-deeix-chat:local}
     container_name: deeix-chat-app
     depends_on:
       postgres:

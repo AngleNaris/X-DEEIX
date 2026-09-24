@@ -185,3 +185,9 @@ tools/sandbox-mcp/sandbox-mcp
 .gocache/
 
 .worktrees/
+
+# Release artifacts & deployment state (发布产物 tar/SHA/manifest 不进版本库)
+# release/ 由发布脚本本地生成：deeix-chat-<short>-linux-amd64.tar、deeix-sandbox-<short>-linux-amd64.tar、
+# SHA256SUMS、manifest.env 仅随发布流程 scp 分发；*.tar 一律不提交，仓库不保留任何 release 豁免。
+/release/
+deployment-result.env

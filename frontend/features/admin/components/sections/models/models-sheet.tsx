@@ -175,12 +175,24 @@ function supportedDefaultTaskTypes(kinds: string[]): AdminLLMDefaultTaskType[] {
   return DEFAULT_TASK_TYPE_OPTIONS.filter((taskType) => kinds.includes(DEFAULT_TASK_KIND[taskType]));
 }
 
+// 图片媒体协议（对齐后端 IsImageGenerationAdapter/IsImageEditAdapter 语义，含编辑链路协议）。
 const IMAGE_MEDIA_PROTOCOLS = new Set([
   "openai_image_generations",
   "openai_image_edits",
+  "image_edits_json",
   "google_image_generation",
+  "gemini_interactions",
   "xai_image",
   "xai_image_edits",
+]);
+
+// 支持图片流式的协议子集（对齐后端 SupportsImageGenerationStream）；
+// image_edits_json、xai_image/xai_image_edits 不支持流式，不应展示「图片流式」开关。
+const IMAGE_STREAM_PROTOCOLS = new Set([
+  "openai_image_generations",
+  "openai_image_edits",
+  "google_image_generation",
+  "gemini_interactions",
 ]);
 
 function formatCircuitUntil(until: string, locale: string): string {
@@ -540,7 +552,9 @@ export function ModelSheet({ open, mode, target, models, vendors, displayGroups,
   }
   const imageStreamEnabled = imageStreamEnabledFromCapabilities(form.capabilitiesJSON);
   const visionEnabled = visionEnabledFromCapabilities(form.capabilitiesJSON);
-  const showImageStreamControl = routeProtocols.some((protocol) => IMAGE_MEDIA_PROTOCOLS.has(protocol.trim()));
+  const showImageStreamControl = routeProtocols.some(
+    (protocol) => IMAGE_MEDIA_PROTOCOLS.has(protocol.trim()) && IMAGE_STREAM_PROTOCOLS.has(protocol.trim()),
+  );
   const showPermissionGroupUnassigned =
     !permissionGroupsLoading && permissionGroupsUnassigned && effectivePermissionGroupIDs.length === 0;
 

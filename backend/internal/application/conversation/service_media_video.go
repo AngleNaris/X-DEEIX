@@ -119,15 +119,19 @@ func (s *Service) StreamMediaVideo(ctx context.Context, input MediaVideoInput) (
 		ConversationID:    input.ConversationID,
 		RequestID:         strings.TrimSpace(input.RequestID),
 	})
-	if err != nil {
-		return nil, ErrModelRouteNotConfigured
-	}
-	if !llm.IsVideoGenerationAdapter(route.Protocol) {
-		return nil, ErrMediaRouteProtocolMismatch
-	}
-	if taskType == MediaVideoTaskExtension && llm.NormalizeAdapter(route.Protocol) != llm.AdapterXAIVideoExtensions {
-		return nil, ErrMediaRouteProtocolMismatch
-	}
+ 	if err != nil {
+ 		return nil, ErrModelRouteNotConfigured
+ 	}
+ 	if taskType == MediaVideoTaskExtension && isVideoExtensionDisabledByCapabilities(route.ModelCapabilitiesJSON) {
+ 		// 前端 use-chat-model-options 会按 mediaTasks.video_extension.enabled=false 隐藏入口；服务端同样拦截显式禁用的直接 API 调用。缺省（无该字段）保持放行。
+ 		return nil, ErrMediaVideoInputInvalid
+ 	}
+ 	if !llm.IsVideoGenerationAdapter(route.Protocol) {
+ 		return nil, ErrMediaRouteProtocolMismatch
+ 	}
+ 	if taskType == MediaVideoTaskExtension && llm.NormalizeAdapter(route.Protocol) != llm.AdapterXAIVideoExtensions {
+ 		return nil, ErrMediaRouteProtocolMismatch
+ 	}
 	videoEndpoint := llm.DefaultEndpointForAdapter(route.Protocol)
 	if strings.TrimSpace(conversation.Model) != strings.TrimSpace(route.PlatformModelName) {
 		conversation.Model = strings.TrimSpace(route.PlatformModelName)
@@ -827,3 +831,25 @@ func videoAttachmentsFromFiles(files []model.FileObject, durations []int64) []At
 	}
 	return items
 }
+ 
+ // isVideoExtensionDisabledByCapabilities 仅在 capabilitiesJSON 显式声明 mediaTasks.video_extension.enabled=false 时返回 true。
+ // 无该字段、解析失败或 enabled 非 false 一律放行，避免误伤历史绑定。
+ func isVideoExtensionDisabledByCapabilities(raw string) bool {
+ 	trimmed := strings.TrimSpace(raw)
+ 	if trimmed == "" {
+ 		return false
+ 	}
+ 	var payload struct {
+ 		MediaTasks map[string]struct {
+ 			Enabled *bool `json:"enabled"`
+ 		} `json:"mediaTasks"`
+ 	}
+ 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+ 		return false
+ 	}
+ 	task, ok := payload.MediaTasks["video_extension"]
+ 	if !ok || task.Enabled == nil {
+ 		return false
+ 	}
+ 	return !*task.Enabled
+ }

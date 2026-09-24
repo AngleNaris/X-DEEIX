@@ -4,6 +4,15 @@
 #   mm-core      :8082  Qwen-MM-Plugins core 能力（stdio 经 supergateway 桥接为 Streamable HTTP）
 #   mm-omni-av   :8083  Qwen-MM-Plugins api 能力（上游 omni-av 入口已废弃，迁移至官方 api 入口）
 # 用法：cp .env.example .env && 编辑凭据 -> docker compose up -d
+# ── 镜像版本策略例外说明（勿把 :latest 改成精确 tag）─────────────────────
+# 本文件的 sandbox-mcp / SANDBOX_BASE_IMAGE / mm-gateway 镜像默认 :latest，是主应用
+# 「生产必须 pin 精确 tag（/opt/deeix-chat/docker-compose.override.yml，见
+# docs/CUSTOM_DEPLOYMENT.md）」规则的已知例外：网关镜像仅在本地构建后
+# docker save/load 到 VPS，:latest 指向本地构建产物，改默认值会让 compose 判定
+# 镜像变更而误重建生产网关容器，故保持 :latest 不动。
+# 发布门禁（docs/CUSTOM_TEST_PLAN.md）只覆盖 sandbox-mcp / sandbox-base 链路；
+# mm 网关（mm-core、mm-omni-av 及 isolation wrapper）不在门禁内，
+# 升级 mm 镜像必须单独验收（真实多模态 canary + 人工核验）后再重启 compose。
 services:
   storage-init:
     image: alpine:3.21

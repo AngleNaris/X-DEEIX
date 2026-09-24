@@ -75,6 +75,9 @@ export const COMPACT_LLM_ENABLED_RULE: ConversationVisibilityRule = {
   ],
 };
 
+// 默认白名单与 backend/internal/infra/config/config.go DefaultModelOptionAllowedPathsJSON 对齐；
+// openrouter_responses 按后端 settings 校验（model_option_policy.go validModelOptionProtocolKeys）允许该协议，
+// 字段复用 openrouter_chat_completions 段并按 Responses 语义取子集。
 export const DEFAULT_MODEL_OPTION_ALLOWED_PATHS = `{
   "default": [
     "temperature",
@@ -83,7 +86,6 @@ export const DEFAULT_MODEL_OPTION_ALLOWED_PATHS = `{
     "max_output_tokens",
     "max_completion_tokens",
     "stop",
-    "tools",
     "response_format.type"
   ],
   "openai_chat_completions": [
@@ -107,10 +109,17 @@ export const DEFAULT_MODEL_OPTION_ALLOWED_PATHS = `{
   ],
   "openai_responses": [
     "service_tier",
-    "store",
     "reasoning.effort",
     "reasoning.summary",
     "text.verbosity"
+  ],
+  "openrouter_responses": [
+    "presence_penalty",
+    "frequency_penalty",
+    "reasoning.effort",
+    "reasoning.summary",
+    "verbosity",
+    "stream_options.include_usage"
   ],
   "openai_image_generations": [
     "background",
@@ -137,10 +146,21 @@ export const DEFAULT_MODEL_OPTION_ALLOWED_PATHS = `{
     "size",
     "user"
   ],
+  "image_edits_json": [
+    "background",
+    "input_fidelity",
+    "n",
+    "output_compression",
+    "output_format",
+    "partial_images",
+    "quality",
+    "response_format",
+    "size",
+    "user"
+  ],
   "anthropic_messages": [
     "speed",
     "top_k",
-    "cache_control",
     "thinking.type",
     "thinking.budget_tokens"
   ],
@@ -196,6 +216,13 @@ export const DEFAULT_MODEL_OPTION_ALLOWED_PATHS = `{
   ],
   "xai_video_extensions": [
     "duration"
+  ],
+  "openai_video_generations": [
+    "aspect_ratio",
+    "duration",
+    "resolution",
+    "seconds",
+    "size"
   ]
 }`;
 
