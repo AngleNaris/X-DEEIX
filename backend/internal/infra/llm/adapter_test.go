@@ -95,6 +95,15 @@ func TestImageAdapterCapabilities(t *testing.T) {
 	if !IsImageEditAdapter(AdapterXAIImageEdits) {
 		t.Fatalf("expected xAI image edits protocol to support image editing")
 	}
+	// openai_image_generations 按任务切换到 edits 端点执行编辑请求（路由层亦允许
+	// image_edit 能力绑定该协议），编辑门禁必须放行，否则编辑任务必报
+	// media.route_protocol_mismatch。回归：ai.3efs.com 会话生图（图片编辑）503。
+	if !IsImageGenerationAdapter(AdapterOpenAIImageGenerations) {
+		t.Fatalf("expected openai image generations protocol to support image generation")
+	}
+	if !IsImageEditAdapter(AdapterOpenAIImageGenerations) {
+		t.Fatalf("expected openai image generations protocol to support image editing via endpoint switch")
+	}
 }
 
 func TestXAIVideoAdapterCapabilities(t *testing.T) {

@@ -167,9 +167,12 @@ func IsImageGenerationAdapter(raw string) bool {
 }
 
 // IsImageEditAdapter 返回协议是否属于独立图片编辑链路。
+// openai_image_generations 按任务切换到 edits 端点执行编辑请求（见 openAIImageGenerationsAdapter），
+// 且路由层已允许 image_edit 能力绑定该协议，因此此处必须将其视为编辑链路协议，
+// 否则编辑任务路由命中后会被 StreamMediaImage 的协议门禁误杀（media.route_protocol_mismatch）。
 func IsImageEditAdapter(raw string) bool {
 	switch NormalizeAdapter(raw) {
-	case AdapterOpenAIImageEdits, AdapterGoogleImageGeneration, AdapterGeminiInteractions, AdapterXAIImageEdits, AdapterImageEditsJSON:
+	case AdapterOpenAIImageGenerations, AdapterOpenAIImageEdits, AdapterGoogleImageGeneration, AdapterGeminiInteractions, AdapterXAIImageEdits, AdapterImageEditsJSON:
 		return true
 	default:
 		return false
