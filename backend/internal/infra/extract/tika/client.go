@@ -2,6 +2,7 @@ package tika
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,14 +13,11 @@ import (
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	platformtracing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/observability/tracing"
+	extractport "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/extract"
 )
 
-// Request 表示 Tika 文本提取请求。
-type Request struct {
-	AbsolutePath string
-	FileName     string
-	MimeType     string
-}
+// Request 表示 Tika 文本提取请求，契约定义在 ports/extract。
+type Request = extractport.DocumentRequest
 
 // Client 提供 Apache Tika HTTP 提取能力。
 type Client struct {
@@ -34,10 +32,11 @@ const (
 	errTikaUnauthorized        = "tika_unauthorized"
 	errTikaForbidden           = "tika_forbidden"
 	errTikaUnsupportedMimeType = "tika_unsupported_media_type"
-	DefaultTikaBaseURL         = "http://127.0.0.1:9998"
-	ManagedTikaBaseURL         = "http://deeix-chat-tika:9998"
-	managedTikaHost            = "deeix-chat-tika"
-	tikaSourceManaged          = "managed"
+	// DefaultTikaBaseURL 契约定义在 ports/extract。
+	DefaultTikaBaseURL = extractport.DefaultTikaBaseURL
+	ManagedTikaBaseURL = "http://deeix-chat-tika:9998"
+	managedTikaHost    = "deeix-chat-tika"
+	tikaSourceManaged  = "managed"
 )
 
 // New 创建 Tika 客户端；未配置地址时返回 nil。
@@ -172,21 +171,21 @@ func (c *Client) ExtractText(ctx context.Context, input Request) (string, error)
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNoContent {
-		return "", fmt.Errorf(errTikaEmptyContent)
+		return "", errors.New(errTikaEmptyContent)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		detail := strings.TrimSpace(string(body))
 		switch resp.StatusCode {
 		case http.StatusUnauthorized:
-			return "", fmt.Errorf(errTikaUnauthorized)
+			return "", errors.New(errTikaUnauthorized)
 		case http.StatusForbidden:
-			return "", fmt.Errorf(errTikaForbidden)
+			return "", errors.New(errTikaForbidden)
 		case http.StatusUnsupportedMediaType:
-			return "", fmt.Errorf(errTikaUnsupportedMimeType)
+			return "", errors.New(errTikaUnsupportedMimeType)
 		case http.StatusUnprocessableEntity:
 			if detail == "" {
-				return "", fmt.Errorf(errTikaUnprocessable)
+				return "", errors.New(errTikaUnprocessable)
 			}
 			return "", fmt.Errorf("%s: %s", errTikaUnprocessable, detail)
 		default:
@@ -203,7 +202,7 @@ func (c *Client) ExtractText(ctx context.Context, input Request) (string, error)
 	}
 	text := strings.TrimSpace(string(body))
 	if text == "" {
-		return "", fmt.Errorf(errTikaEmptyContent)
+		return "", errors.New(errTikaEmptyContent)
 	}
 	return text, nil
 }

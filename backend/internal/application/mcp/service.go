@@ -11,32 +11,48 @@ import (
 	systemeventapp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/systemevent"
 	domainmcp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/mcp"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	inframcp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/mcp"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/mcpauth"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/secretbox"
+	portmcp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/mcp"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
 )
 
 var (
-	ErrInvalidServerName           = errors.New("invalid mcp server name")
-	ErrInvalidServerBaseURL        = errors.New("invalid mcp server base url")
-	ErrInvalidServerStatus         = errors.New("invalid mcp server status")
-	ErrInvalidServerHeaders        = errors.New("invalid mcp server headers json")
-	ErrInvalidToolStatus           = errors.New("invalid mcp tool status")
-	ErrInvalidToolName             = errors.New("invalid mcp tool display name")
-	ErrInvalidToolDesc             = errors.New("invalid mcp tool description")
-	ErrInvalidToolAttachmentConfig = errors.New("invalid mcp tool attachment configuration")
-	ErrInvalidToolSelection        = errors.New("invalid mcp tool selection")
-	ErrMCPClientUnavailable        = errors.New("mcp client unavailable")
+	ErrInvalidServerName           = apperr.New("mcp.invalid_server_name", "invalid mcp server name")
+	ErrInvalidServerBaseURL        = apperr.New("mcp.invalid_server_base_url", "invalid mcp server base url")
+	ErrInvalidServerStatus         = apperr.New("mcp.invalid_server_status", "invalid mcp server status")
+	ErrInvalidServerHeaders        = apperr.New("mcp.invalid_server_headers", "invalid mcp server headers json")
+	ErrInvalidToolStatus           = apperr.New("mcp.invalid_tool_status", "invalid mcp tool status")
+	ErrInvalidToolName             = apperr.New("mcp.invalid_tool_name", "invalid mcp tool display name")
+	ErrInvalidToolDesc             = apperr.New("mcp.invalid_tool_description", "invalid mcp tool description")
+	ErrInvalidToolAttachmentConfig = apperr.NewMasked("mcp.invalid_attachment_configuration", "invalid MCP tool attachment configuration", "invalid mcp tool attachment configuration")
+	ErrInvalidToolSelection        = apperr.New("mcp.invalid_tool_selection", "invalid mcp tool selection")
+	ErrInvalidToolPrice            = apperr.New("request.invalid_mcp_tool_price", "invalid mcp tool price")
+	ErrMCPClientUnavailable        = apperr.New("mcp.client_unavailable", "mcp client unavailable")
+	// ErrServerLimitExceeded MCP 服务数量超限。
+	ErrServerLimitExceeded = apperr.New("mcp.server_limit_exceeded", "mcp server limit exceeded")
 )
 
 const mcpServerToolListTimeoutMS = 10000
 
 type Service struct {
-	cfg               *config.Runtime
-	repo              repository.MCPRepository
-	client            *inframcp.Client
-	systemEventWriter systemEventWriter
+	cfg                 *config.Runtime
+	repo                repository.MCPRepository
+	client              toolLister
+	systemEventWriter   systemEventWriter
+	billingModeProvider billingModeProvider
+}
+
+// toolLister 列出远端 MCP 服务暴露的工具。
+type toolLister interface {
+	ListTools(ctx context.Context, cfg portmcp.CallConfig) ([]portmcp.Tool, error)
+}
+
+// billingModeProvider 查询当前计费模式，用于决定用户侧是否下发工具价格。
+type billingModeProvider interface {
+	GetBillingMode(ctx context.Context) (string, error)
 }
 
 type ReorderServerInput struct {
@@ -63,7 +79,9 @@ type ToolInput struct {
 	AttachmentArgument       *string
 	AttachmentEncoding       *string
 	AttachmentPromptArgument *string
-	Status                   *string
+	// PriceNanousd 单次调用价格（nano USD），0 表示不单独计费。
+	PriceNanousd *int64
+	Status       *string
 }
 
 // SyncServerToolsInput 描述一次 MCP 工具同步请求。
@@ -74,7 +92,7 @@ type SyncServerToolsInput struct {
 }
 
 // NewServiceWithRuntime 创建 MCP 应用服务。
-func NewServiceWithRuntime(cfg *config.Runtime, repo repository.MCPRepository, client *inframcp.Client) *Service {
+func NewServiceWithRuntime(cfg *config.Runtime, repo repository.MCPRepository, client toolLister) *Service {
 	return &Service{cfg: cfg, repo: repo, client: client}
 }
 
@@ -83,12 +101,13 @@ func (s *Service) SetSystemEventWriter(writer systemEventWriter) {
 	s.systemEventWriter = writer
 }
 
-func (s *Service) ListServers(ctx context.Context) ([]domainmcp.Server, error) {
-	return s.repo.ListServers(ctx)
+// SetBillingModeProvider 注入计费模式查询器。
+func (s *Service) SetBillingModeProvider(provider billingModeProvider) {
+	s.billingModeProvider = provider
 }
 
-func (s *Service) GetServer(ctx context.Context, serverID uint) (*domainmcp.Server, error) {
-	return s.repo.GetServer(ctx, serverID)
+func (s *Service) ListServers(ctx context.Context) ([]domainmcp.Server, error) {
+	return s.repo.ListServers(ctx)
 }
 
 func (s *Service) CreateServer(ctx context.Context, input ServerInput) (*domainmcp.Server, error) {
@@ -100,13 +119,17 @@ func (s *Service) CreateServer(ctx context.Context, input ServerInput) (*domainm
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.CreateServer(ctx, repository.CreateMCPServerInput{
+	item, err := s.repo.CreateServer(ctx, repository.CreateMCPServerInput{
 		Name:         normalized.Name,
 		BaseURL:      normalized.BaseURL,
 		AuthTokenEnc: tokenEnc,
 		HeadersJSON:  normalized.HeadersJSON,
 		Status:       normalized.Status,
 	})
+	if errors.Is(err, repository.ErrMCPServerLimitExceeded) {
+		return nil, ErrServerLimitExceeded
+	}
+	return item, err
 }
 
 func (s *Service) UpdateServer(ctx context.Context, serverID uint, input ServerInput) (*domainmcp.Server, error) {
@@ -137,9 +160,19 @@ func (s *Service) DeleteServer(ctx context.Context, serverID uint) error {
 func (s *Service) SyncServerTools(ctx context.Context, input SyncServerToolsInput) ([]domainmcp.Tool, error) {
 	serverID := input.ServerID
 	fail := func(err error) ([]domainmcp.Tool, error) {
-		s.writeToolSyncEvent(ctx, input.RequestID, "error", "mcp.tools_sync_failed", serverID, "MCP 工具同步失败", map[string]interface{}{
-			"server_id": serverID,
-			"error":     err.Error(),
+		s.writeToolSyncEvent(ctx, systemeventapp.WriteInput{
+			RequestID:  input.RequestID,
+			Level:      "error",
+			Source:     "mcp",
+			Event:      "mcp.tools_sync_failed",
+			Resource:   "mcp_server",
+			ResourceID: fmt.Sprintf("%d", serverID),
+			Message:    "MCP 工具同步失败",
+			Detail: map[string]any{
+				"server_id":  serverID,
+				"error":      "MCP 工具同步失败",
+				"error_code": mcpSyncErrorCode(err),
+			},
 		})
 		return nil, err
 	}
@@ -162,14 +195,15 @@ func (s *Service) SyncServerTools(ctx context.Context, input SyncServerToolsInpu
 	if err != nil {
 		return fail(err)
 	}
-	tools, err := s.client.ListTools(ctx, inframcp.CallConfig{
+	headers = removeSignedUserContextTemplates(headers)
+	tools, err := s.client.ListTools(ctx, portmcp.CallConfig{
 		BaseURL:   server.BaseURL,
 		AuthToken: token,
 		TimeoutMS: mcpServerToolListTimeoutMS,
 		Headers:   headers,
 	})
 	if err != nil {
-		message := err.Error()
+		message := "MCP 工具同步失败"
 		_, _ = s.repo.UpdateServer(ctx, serverID, repository.UpdateMCPServerInput{LastError: &message})
 		return fail(err)
 	}
@@ -216,12 +250,42 @@ func (s *Service) SyncServerTools(ctx context.Context, input SyncServerToolsInpu
 	if err != nil {
 		return fail(err)
 	}
-	s.writeToolSyncEvent(ctx, input.RequestID, "info", "mcp.tools_synced", serverID, "MCP 工具已同步", map[string]interface{}{
-		"server_id":                     serverID,
-		"tool_count":                    len(result),
-		"overwrite_customized_metadata": input.OverwriteCustomizedMetadata,
+	s.writeToolSyncEvent(ctx, systemeventapp.WriteInput{
+		RequestID:  input.RequestID,
+		Level:      "info",
+		Source:     "mcp",
+		Event:      "mcp.tools_synced",
+		Resource:   "mcp_server",
+		ResourceID: fmt.Sprintf("%d", serverID),
+		Message:    "MCP 工具已同步",
+		Detail: map[string]any{
+			"server_id":                     serverID,
+			"tool_count":                    len(result),
+			"overwrite_customized_metadata": input.OverwriteCustomizedMetadata,
+		},
 	})
 	return result, nil
+}
+
+func removeSignedUserContextTemplates(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return headers
+	}
+	filtered := make(map[string]string, len(headers))
+	for key, value := range headers {
+		if strings.TrimSpace(value) == mcpauth.TemplateSignedUserContext {
+			continue
+		}
+		filtered[key] = value
+	}
+	return filtered
+}
+
+func mcpSyncErrorCode(err error) string {
+	if code := apperr.Code(err); code != "" {
+		return code
+	}
+	return "mcp.tools_sync_failed"
 }
 
 func preserveCompatibleToolAttachmentConfig(discovered *domainmcp.Tool, existing domainmcp.Tool) {
@@ -243,20 +307,12 @@ func preserveCompatibleToolAttachmentConfig(discovered *domainmcp.Tool, existing
 	discovered.AttachmentPromptArgument = config.PromptArgument
 }
 
-func (s *Service) writeToolSyncEvent(ctx context.Context, requestID string, level string, event string, serverID uint, message string, detail interface{}) {
+func (s *Service) writeToolSyncEvent(ctx context.Context, input systemeventapp.WriteInput) {
 	if s.systemEventWriter == nil {
 		return
 	}
-	s.systemEventWriter.Write(ctx, systemeventapp.WriteInput{
-		RequestID:  strings.TrimSpace(requestID),
-		Level:      level,
-		Source:     "mcp",
-		Event:      event,
-		Resource:   "mcp_server",
-		ResourceID: fmt.Sprintf("%d", serverID),
-		Message:    message,
-		Detail:     detail,
-	})
+	input.RequestID = strings.TrimSpace(input.RequestID)
+	s.systemEventWriter.Write(ctx, input)
 }
 
 func (s *Service) ListTools(ctx context.Context, serverID uint, onlyActive bool) ([]domainmcp.Tool, error) {
@@ -266,6 +322,10 @@ func (s *Service) ListTools(ctx context.Context, serverID uint, onlyActive bool)
 func (s *Service) ListAvailableTools(ctx context.Context) ([]domainmcp.Tool, error) {
 	if !s.cfg.Snapshot().MCPEnable {
 		return []domainmcp.Tool{}, nil
+	}
+	hideToolPrice, err := s.shouldHideToolPrice(ctx)
+	if err != nil {
+		return nil, err
 	}
 	servers, err := s.repo.ListServers(ctx)
 	if err != nil {
@@ -282,10 +342,25 @@ func (s *Service) ListAvailableTools(ctx context.Context) ([]domainmcp.Tool, err
 		}
 		for _, tool := range tools {
 			tool.ServerName = server.Name
+			if hideToolPrice {
+				tool.PriceNanousd = 0
+			}
 			result = append(result, tool)
 		}
 	}
 	return result, nil
+}
+
+// shouldHideToolPrice 判断用户侧工具列表是否隐藏价格；自用模式只记录用量，与模型列表保持一致不下发定价。
+func (s *Service) shouldHideToolPrice(ctx context.Context) (bool, error) {
+	if s.billingModeProvider == nil {
+		return false, nil
+	}
+	mode, err := s.billingModeProvider.GetBillingMode(ctx)
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(mode) == "self", nil
 }
 
 func (s *Service) UpdateTool(ctx context.Context, toolID uint, input ToolInput) (*domainmcp.Tool, error) {
@@ -454,6 +529,13 @@ func normalizeToolInput(input ToolInput) (repository.UpdateMCPToolInput, error) 
 		}
 		update.Description = &description
 	}
+	if input.PriceNanousd != nil {
+		price := *input.PriceNanousd
+		if price < 0 {
+			return update, ErrInvalidToolPrice
+		}
+		update.PriceNanousd = &price
+	}
 	if input.Status != nil {
 		status, err := normalizeToolStatus(*input.Status)
 		if err != nil {
@@ -603,7 +685,7 @@ func parseHeadersJSON(raw string) (map[string]string, error) {
 	}
 	payload := map[string]string{}
 	if err := json.Unmarshal([]byte(value), &payload); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidServerHeaders, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidServerHeaders, err)
 	}
 	result := make(map[string]string, len(payload))
 	for key, item := range payload {

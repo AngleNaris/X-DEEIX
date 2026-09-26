@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	portllm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
 var errDeepSeekDSMLToolCallsIncomplete = errors.New("deepseek dsml tool calls ended before a complete tool call envelope")
@@ -47,10 +49,15 @@ func resolveTextEncodedToolCallMode(route RouteConfig, disableTools bool) textEn
 
 // applyTextEncodedToolCalls 将 DeepSeek V4 文本编码的工具调用转换为内部结构化 ToolCall。
 // 这段兼容只在路由层显式判定为 DeepSeek Chat Completions 时调用，避免影响其他 OpenAI-compatible 模型。
+<<<<<<< HEAD
 // 工具禁用轮（strip-only）只剥离标记；若剥离后模型仍试图调用工具，置 TextToolCallsStripped
 // 供上层判断（例如触发阶段合并续轮），而不是静默丢失。
 func applyTextEncodedToolCalls(output *GenerateOutput, mode textEncodedToolCallMode) {
 	if output == nil || mode == textEncodedToolCallsInactive {
+=======
+func applyTextEncodedToolCalls(output *portllm.GenerateOutput) {
+	if output == nil {
+>>>>>>> upstream/dev
 		return
 	}
 	cleanText, toolCalls, ok := parseDSMLToolCalls(output.Text)
@@ -99,8 +106,8 @@ func stripRemainingDSMLToolCallMarkers(text *string) bool {
 }
 
 // deepSeekTextEncodedToolCallsEnabled 判断当前路由是否需要启用 DeepSeek DSML 文本工具调用解析。
-func deepSeekTextEncodedToolCallsEnabled(route RouteConfig) bool {
-	if NormalizeAdapter(route.Protocol) != AdapterOpenAIChatCompletions {
+func deepSeekTextEncodedToolCallsEnabled(route portllm.RouteConfig) bool {
+	if portllm.NormalizeAdapter(route.Protocol) != portllm.AdapterOpenAIChatCompletions {
 		return false
 	}
 	model := strings.ToLower(strings.TrimSpace(route.UpstreamModel))
@@ -110,14 +117,14 @@ func deepSeekTextEncodedToolCallsEnabled(route RouteConfig) bool {
 
 // parseDSMLToolCalls 解析 DeepSeek V4 以 DSML 文本片段返回的工具调用。
 // 解析成功时只移除完整 tool_calls 块；无法形成合法工具调用时保留原文，交由调用方按普通文本或格式错误处理。
-func parseDSMLToolCalls(text string) (string, []ToolCall, bool) {
+func parseDSMLToolCalls(text string) (string, []portllm.ToolCall, bool) {
 	matches := dsmlToolCallsBlockRE.FindAllStringSubmatchIndex(text, -1)
 	if len(matches) == 0 {
 		return text, nil, false
 	}
 
 	var clean strings.Builder
-	toolCalls := make([]ToolCall, 0)
+	toolCalls := make([]portllm.ToolCall, 0)
 	last := 0
 	for _, match := range matches {
 		blockStart, blockEnd := match[0], match[1]
@@ -138,12 +145,12 @@ func parseDSMLToolCalls(text string) (string, []ToolCall, bool) {
 }
 
 // parseDSMLInvokeToolCalls 将 DSML invoke 节点映射为本地函数工具调用。
-func parseDSMLInvokeToolCalls(content string, offset int) []ToolCall {
+func parseDSMLInvokeToolCalls(content string, offset int) []portllm.ToolCall {
 	matches := dsmlInvokeRE.FindAllStringSubmatch(content, -1)
 	if len(matches) == 0 {
 		return nil
 	}
-	result := make([]ToolCall, 0, len(matches))
+	result := make([]portllm.ToolCall, 0, len(matches))
 	for _, match := range matches {
 		attrs := parseDSMLAttributes(match[1])
 		toolName := strings.TrimSpace(attrs["name"])
@@ -158,7 +165,7 @@ func parseDSMLInvokeToolCalls(content string, offset int) []ToolCall {
 		if err != nil {
 			argsJSON = []byte("{}")
 		}
-		result = append(result, ToolCall{
+		result = append(result, portllm.ToolCall{
 			ToolCallID:    "dsml_call_" + strconv.Itoa(offset+len(result)+1),
 			ToolType:      "function",
 			ToolName:      toolName,
@@ -171,8 +178,8 @@ func parseDSMLInvokeToolCalls(content string, offset int) []ToolCall {
 
 // parseDSMLParameters 按 DeepSeek DSML 的 string 标记还原参数类型。
 // 参数名重复时放弃本次 invoke，避免同名覆盖造成工具入参歧义。
-func parseDSMLParameters(content string) map[string]interface{} {
-	params := map[string]interface{}{}
+func parseDSMLParameters(content string) map[string]any {
+	params := map[string]any{}
 	for _, match := range dsmlParameterRE.FindAllStringSubmatch(content, -1) {
 		attrs := parseDSMLAttributes(match[1])
 		name := strings.TrimSpace(attrs["name"])
@@ -187,7 +194,7 @@ func parseDSMLParameters(content string) map[string]interface{} {
 			params[name] = value
 			continue
 		}
-		var decoded interface{}
+		var decoded any
 		if err := json.Unmarshal([]byte(value), &decoded); err == nil {
 			params[name] = decoded
 			continue

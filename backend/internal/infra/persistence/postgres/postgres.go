@@ -34,6 +34,9 @@ func New(cfg config.Config) (*gorm.DB, error) {
 	if err = schema.SeedModelVendors(db); err != nil {
 		return nil, err
 	}
+	if err = schema.SeedUIComponents(db); err != nil {
+		return nil, err
+	}
 
 	if err = schema.SeedPermissionGroups(db); err != nil {
 		return nil, err
@@ -50,7 +53,7 @@ func newGORMConfig(cfg config.Config) *gorm.Config {
 	gormConfig := &gorm.Config{
 		DisableForeignKeyConstraintWhenMigrating: true,
 	}
-	if isProductionEnv(cfg.Env) {
+	if cfg.IsProduction() {
 		gormConfig.Logger = productionGORMLogger()
 	}
 	return gormConfig
@@ -63,15 +66,6 @@ func productionGORMLogger() gormlogger.Interface {
 		IgnoreRecordNotFoundError: true,
 		Colorful:                  false,
 	})
-}
-
-func isProductionEnv(env string) bool {
-	switch strings.ToLower(strings.TrimSpace(env)) {
-	case "prod", "production":
-		return true
-	default:
-		return false
-	}
 }
 
 func configureConnectionPool(db *gorm.DB, cfg config.Config) error {
@@ -509,12 +503,6 @@ func postgresExtensionVersionAtLeast(version string, requiredMajor int, required
 		return false
 	}
 	return major > requiredMajor || (major == requiredMajor && minor >= requiredMinor)
-}
-
-func ensurePostgresVectorColumn(db *gorm.DB, table string, column string, indexName string) error {
-	return withPostgresVectorMigrationLock(db, func(connection *gorm.DB) error {
-		return ensurePostgresVectorColumnLocked(connection, table, column, indexName)
-	})
 }
 
 const postgresVectorMigrationLockName = "deeix_postgres_vector_baseline_v2"

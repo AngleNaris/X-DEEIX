@@ -2,10 +2,12 @@ package conversation
 
 import (
 	"encoding/json"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
 	"strings"
 	"time"
 
 	appconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/conversation"
+	appembedding "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/embedding"
 	appprocessing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/processing"
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
@@ -229,6 +231,7 @@ type ConversationProjectResponse struct {
 	Name                    string    `json:"name"`
 	Description             string    `json:"description"`
 	SystemPrompt            string    `json:"systemPrompt"`
+	DefaultModel            string    `json:"defaultModel"`
 	MCPDefaultMode          string    `json:"mcpDefaultMode"`
 	DefaultMCPToolIDs       []uint    `json:"defaultMCPToolIDs"`
 	DefaultSkillIDs         []uint    `json:"defaultSkillIDs"`
@@ -250,6 +253,7 @@ func toConversationProjectResponse(item *model.ConversationProject) Conversation
 		Name:                    item.Name,
 		Description:             item.Description,
 		SystemPrompt:            item.SystemPrompt,
+		DefaultModel:            item.DefaultModel,
 		MCPDefaultMode:          item.MCPDefaultMode,
 		DefaultMCPToolIDs:       append([]uint{}, item.DefaultMCPToolIDs...),
 		DefaultSkillIDs:         append([]uint{}, item.DefaultSkillIDs...),
@@ -383,6 +387,9 @@ type PublicSharedConversationResponse struct {
 	LastAccessedAt          *time.Time                    `json:"lastAccessedAt" extensions:"x-nullable,!x-omitempty"`
 	DefaultMessagePublicIDs []string                      `json:"defaultMessagePublicIDs"`
 	Messages                []PublicSharedMessageResponse `json:"messages"`
+
+	// UIComponentsEnabled 为 false 时，分享页不渲染 deeix-ui 组件块。
+	UIComponentsEnabled bool `json:"uiComponentsEnabled"`
 }
 
 func toPublicSharedConversationResponse(item *appconversation.PublicSharedConversationResult) PublicSharedConversationResponse {
@@ -398,6 +405,8 @@ func toPublicSharedConversationResponse(item *appconversation.PublicSharedConver
 		LastAccessedAt:          item.LastAccessedAt,
 		DefaultMessagePublicIDs: item.DefaultMessageIDs,
 		Messages:                messages,
+
+		UIComponentsEnabled: item.UIComponentsEnabled,
 	}
 }
 
@@ -406,6 +415,12 @@ type ConversationDeleteResponse struct {
 	Deleted          bool                  `json:"deleted"`
 	DeletedFileCount int                   `json:"deletedFileCount,omitempty"`
 	Quota            *StorageQuotaResponse `json:"quota,omitempty"`
+}
+
+// MessageDeleteResponse 删除消息响应 DTO。
+type MessageDeleteResponse struct {
+	Deleted                bool  `json:"deleted"`
+	ReparentedMessageCount int64 `json:"reparentedMessageCount"`
 }
 
 func toConversationDeleteResponse(result *appconversation.DeleteConversationResult) ConversationDeleteResponse {
@@ -444,15 +459,21 @@ type FileObjectResponse struct {
 	EmbedStatus            string     `json:"embedStatus"`
 	EmbedError             string     `json:"embedError"`
 	ChunkCount             int        `json:"chunkCount"`
+<<<<<<< HEAD
 	RagOptOut              bool       `json:"ragOptOut"`
 	Favorite               bool       `json:"favorite"`
+=======
+	RAGOptOut              bool       `json:"ragOptOut"`
+	CanVectorize           bool       `json:"canVectorize"`
+	VectorizationReason    string     `json:"vectorizationReason"`
+>>>>>>> upstream/dev
 	LastAccessedAt         *time.Time `json:"lastAccessedAt" extensions:"x-nullable,!x-omitempty"`
 	ExpiresAt              *time.Time `json:"expiresAt" extensions:"x-nullable,!x-omitempty"`
 	CreatedAt              time.Time  `json:"createdAt"`
 	UpdatedAt              time.Time  `json:"updatedAt"`
 }
 
-func toFileObjectResponse(item *model.FileObject) FileObjectResponse {
+func toFileObjectResponse(item *model.FileObject, capability appembedding.FileVectorizationCapability) FileObjectResponse {
 	return FileObjectResponse{
 		FileID:                 item.FileID,
 		Purpose:                item.Purpose,
@@ -471,8 +492,14 @@ func toFileObjectResponse(item *model.FileObject) FileObjectResponse {
 		EmbedStatus:            item.EmbedStatus,
 		EmbedError:             item.EmbedError,
 		ChunkCount:             item.ChunkCount,
+<<<<<<< HEAD
 		RagOptOut:              item.RagOptOut,
 		Favorite:               item.Favorite,
+=======
+		RAGOptOut:              item.RAGOptOut,
+		CanVectorize:           capability.CanVectorize,
+		VectorizationReason:    capability.Reason,
+>>>>>>> upstream/dev
 		LastAccessedAt:         item.LastAccessedAt,
 		ExpiresAt:              item.ExpiresAt,
 		CreatedAt:              item.CreatedAt,
@@ -540,15 +567,16 @@ func toDeleteFileResponse(r *appupload.DeleteFileResult) DeleteFileResponse {
 
 // MessageTraceBlockResponse 消息轨迹块响应 DTO。
 type MessageTraceBlockResponse struct {
-	Title           string    `json:"title"`
-	Summary         string    `json:"summary"`
-	ContentMarkdown string    `json:"contentMarkdown"`
-	Status          string    `json:"status"`
-	Stage           string    `json:"stage,omitempty"`
-	RoundID         string    `json:"roundID,omitempty"`
-	ParentEventID   string    `json:"parentEventID,omitempty"`
-	UpdatedAt       time.Time `json:"updatedAt"`
-	PayloadJSON     string    `json:"payloadJSON,omitempty"`
+	Title           string     `json:"title"`
+	Summary         string     `json:"summary"`
+	ContentMarkdown string     `json:"contentMarkdown"`
+	Status          string     `json:"status"`
+	Stage           string     `json:"stage,omitempty"`
+	RoundID         string     `json:"roundID,omitempty"`
+	ParentEventID   string     `json:"parentEventID,omitempty"`
+	StartedAt       *time.Time `json:"startedAt,omitempty"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
+	PayloadJSON     string     `json:"payloadJSON,omitempty"`
 }
 
 // MessageTraceEventResponse 消息轨迹事件响应 DTO。
@@ -726,6 +754,35 @@ func toContextArtifactResponse(item *model.ContextArtifact) ContextArtifactRespo
 	}
 }
 
+// ConversationToolCallDetailResponse 工具调用结果详情响应 DTO。
+type ConversationToolCallDetailResponse struct {
+	RunID           string `json:"runID"`
+	ToolCallID      string `json:"toolCallID"`
+	ToolName        string `json:"toolName"`
+	Status          string `json:"status"`
+	OutputJSON      string `json:"outputJSON"`
+	OutputSizeBytes int64  `json:"outputSizeBytes"`
+	OutputOmitted   bool   `json:"outputOmitted"`
+	ErrorJSON       string `json:"errorJSON"`
+	ErrorSizeBytes  int64  `json:"errorSizeBytes"`
+	ErrorOmitted    bool   `json:"errorOmitted"`
+}
+
+func toConversationToolCallDetailResponse(item *model.ToolCallDetail) ConversationToolCallDetailResponse {
+	return ConversationToolCallDetailResponse{
+		RunID:           item.RunID,
+		ToolCallID:      item.ToolCallID,
+		ToolName:        item.ToolName,
+		Status:          item.Status,
+		OutputJSON:      item.OutputJSON,
+		OutputSizeBytes: item.OutputSizeBytes,
+		OutputOmitted:   item.OutputOmitted,
+		ErrorJSON:       item.ErrorJSON,
+		ErrorSizeBytes:  item.ErrorSizeBytes,
+		ErrorOmitted:    item.ErrorOmitted,
+	}
+}
+
 func toTraceEventResponses(events []model.MessageTraceEvent) []MessageTraceEventResponse {
 	if len(events) == 0 {
 		return nil
@@ -838,6 +895,13 @@ type MessageModerationResponse struct {
 	Categories []string `json:"categories,omitempty"`
 }
 
+func toOptionalTraceTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
+}
+
 func toTraceBlockResponse(b *model.MessageTraceBlock) *MessageTraceBlockResponse {
 	if b == nil {
 		return nil
@@ -850,6 +914,7 @@ func toTraceBlockResponse(b *model.MessageTraceBlock) *MessageTraceBlockResponse
 		Stage:           b.Stage,
 		RoundID:         b.RoundID,
 		ParentEventID:   b.ParentEventID,
+		StartedAt:       toOptionalTraceTime(b.StartedAt),
 		UpdatedAt:       b.UpdatedAt,
 		PayloadJSON:     sanitizeTracePayloadJSON(b.PayloadJSON),
 	}
@@ -867,6 +932,7 @@ func toPublicTraceBlockResponse(b *model.MessageTraceBlock) *MessageTraceBlockRe
 		Stage:           b.Stage,
 		RoundID:         b.RoundID,
 		ParentEventID:   b.ParentEventID,
+		StartedAt:       toOptionalTraceTime(b.StartedAt),
 		UpdatedAt:       b.UpdatedAt,
 		PayloadJSON:     sanitizePublicTracePayloadJSON(b.PayloadJSON),
 	}
@@ -877,7 +943,7 @@ func sanitizeTracePayloadJSON(raw string) string {
 	if value == "" {
 		return ""
 	}
-	payload := map[string]interface{}{}
+	payload := map[string]any{}
 	if err := json.Unmarshal([]byte(value), &payload); err != nil {
 		return value
 	}
@@ -897,7 +963,7 @@ func sanitizePublicTracePayloadJSON(raw string) string {
 	if value == "" {
 		return ""
 	}
-	payload := map[string]interface{}{}
+	payload := map[string]any{}
 	if err := json.Unmarshal([]byte(value), &payload); err != nil {
 		return ""
 	}
@@ -912,18 +978,18 @@ func sanitizePublicTracePayloadJSON(raw string) string {
 	return string(data)
 }
 
-func deleteUpstreamNameFields(payload map[string]interface{}, parentKey string) {
+func deleteUpstreamNameFields(payload map[string]any, parentKey string) {
 	for key, value := range payload {
 		if isUpstreamNameField(key, parentKey) {
 			delete(payload, key)
 			continue
 		}
 		switch child := value.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			deleteUpstreamNameFields(child, key)
-		case []interface{}:
+		case []any:
 			for _, item := range child {
-				if itemMap, ok := item.(map[string]interface{}); ok {
+				if itemMap, ok := item.(map[string]any); ok {
 					deleteUpstreamNameFields(itemMap, key)
 				}
 			}
@@ -931,18 +997,18 @@ func deleteUpstreamNameFields(payload map[string]interface{}, parentKey string) 
 	}
 }
 
-func deletePublicSensitiveTraceFields(payload map[string]interface{}) {
+func deletePublicSensitiveTraceFields(payload map[string]any) {
 	for key, value := range payload {
 		if isPublicSensitiveTraceField(key) {
 			delete(payload, key)
 			continue
 		}
 		switch child := value.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			deletePublicSensitiveTraceFields(child)
-		case []interface{}:
+		case []any:
 			for _, item := range child {
-				if itemMap, ok := item.(map[string]interface{}); ok {
+				if itemMap, ok := item.(map[string]any); ok {
 					deletePublicSensitiveTraceFields(itemMap)
 				}
 			}
@@ -975,7 +1041,7 @@ func isUpstreamNameField(key string, parentKey string) bool {
 }
 
 func messageBillingMode(snapshotJSON string) string {
-	snapshot := map[string]interface{}{}
+	snapshot := map[string]any{}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(snapshotJSON)), &snapshot); err != nil {
 		return ""
 	}
@@ -1007,10 +1073,6 @@ func toMessageBillingCostResponse(m model.Message) *MessageBillingCostResponse {
 		BilledUSD:           messageNanousdToUSD(m.BilledNanousd),
 		PricingSnapshotJSON: snapshotJSON,
 	}
-}
-
-func toMessageResponse(m model.Message) MessageResponse {
-	return toMessageResponseWithRun(m, model.Run{})
 }
 
 // toMessageResponseWithRun 将消息和同 run 的模型快照合并成前端展示 DTO。
@@ -1150,7 +1212,7 @@ func toMessageResponseWithRunAndFallbackAdmin(m model.Message, run model.Run, fa
 	if !strings.EqualFold(strings.TrimSpace(m.Status), "blocked") {
 		return resp
 	}
-	eventID := strings.TrimSpace(firstNonEmptyString(m.ModerationEventID, run.ModerationEventID))
+	eventID := strings.TrimSpace(textutil.FirstNonEmpty(m.ModerationEventID, run.ModerationEventID))
 	placeholder := "[blocked by content moderation"
 	if eventID != "" {
 		placeholder += "; event " + eventID
@@ -1170,15 +1232,6 @@ func toMessageResponseWithRunAndFallbackAdmin(m model.Message, run model.Run, fa
 	return resp
 }
 
-func firstNonEmptyString(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
-		}
-	}
-	return ""
-}
-
 // ---------- Send Message ----------
 
 // SendMessageResponse 发送消息响应 DTO。
@@ -1190,6 +1243,18 @@ type SendMessageResponse struct {
 
 type CancelMessageGenerationResponse struct {
 	Canceled bool `json:"canceled"`
+}
+
+type ActiveMessageGenerationResponse struct {
+	RunID                string `json:"runID"`
+	ConversationPublicID string `json:"conversationPublicID"`
+}
+
+type ActiveMessageGenerationEventResponse struct {
+	Type                 string                            `json:"type"`
+	Runs                 []ActiveMessageGenerationResponse `json:"runs,omitempty"`
+	RunID                string                            `json:"runID,omitempty"`
+	ConversationPublicID string                            `json:"conversationPublicID,omitempty"`
 }
 
 func toSendMessageResponse(r *appconversation.SendMessageResult) SendMessageResponse {
@@ -1300,48 +1365,87 @@ func toRunResponse(r model.Run) RunResponse {
 	}
 }
 
+// ConversationRunStatusResponse 对话运行状态响应 DTO。
+type ConversationRunStatusResponse struct {
+	RunID  string `json:"runID"`
+	Status string `json:"status"`
+}
+
 // ---------- File Processing Status ----------
+
+// FileEmbeddingSkipResponse 表示未提交向量化的文件及原因。
+type FileEmbeddingSkipResponse struct {
+	FileID string `json:"fileID"`
+	Reason string `json:"reason"`
+}
+
+// FileEmbeddingSubmissionResponse 表示定向向量化任务提交结果。
+type FileEmbeddingSubmissionResponse struct {
+	SubmittedFileIDs []string                    `json:"submittedFileIDs"`
+	Skipped          []FileEmbeddingSkipResponse `json:"skipped"`
+}
+
+func toFileEmbeddingSubmissionResponse(result appembedding.TargetedSubmissionResult) FileEmbeddingSubmissionResponse {
+	skipped := make([]FileEmbeddingSkipResponse, 0, len(result.Skipped))
+	for _, item := range result.Skipped {
+		skipped = append(skipped, FileEmbeddingSkipResponse{FileID: item.FileID, Reason: item.Reason})
+	}
+	return FileEmbeddingSubmissionResponse{
+		SubmittedFileIDs: result.SubmittedFileIDs,
+		Skipped:          skipped,
+	}
+}
 
 // FileProcessingStatusResponse 文件处理状态响应 DTO。
 type FileProcessingStatusResponse struct {
-	FileID           string     `json:"fileID"`
-	DetectedMIME     string     `json:"detectedMIME"`
-	FileCategory     string     `json:"fileCategory"`
-	ProcessingStatus string     `json:"processingStatus"`
-	ProcessingReady  bool       `json:"processingReady"`
-	ExtractStatus    string     `json:"extractStatus"`
-	EmbedStatus      string     `json:"embedStatus"`
-	PreviewText      string     `json:"previewText"`
-	OCRUsed          bool       `json:"ocrUsed"`
-	RAGReady         bool       `json:"ragReady"`
-	RAGReason        string     `json:"ragReason"`
-	ErrorCode        string     `json:"errorCode"`
-	ErrorMessage     string     `json:"errorMessage"`
-	ExtractChars     int        `json:"extractChars"`
-	ExtractPages     int        `json:"extractPages"`
-	StartedAt        *time.Time `json:"startedAt" extensions:"x-nullable,!x-omitempty"`
-	CompletedAt      *time.Time `json:"completedAt" extensions:"x-nullable,!x-omitempty"`
+	FileID              string     `json:"fileID"`
+	DetectedMIME        string     `json:"detectedMIME"`
+	FileCategory        string     `json:"fileCategory"`
+	ProcessingStatus    string     `json:"processingStatus"`
+	ProcessingReady     bool       `json:"processingReady"`
+	ExtractStatus       string     `json:"extractStatus"`
+	EmbedStatus         string     `json:"embedStatus"`
+	PreviewText         string     `json:"previewText"`
+	OCRUsed             bool       `json:"ocrUsed"`
+	RAGReady            bool       `json:"ragReady"`
+	RAGReason           string     `json:"ragReason"`
+	ErrorCode           string     `json:"errorCode"`
+	ErrorMessage        string     `json:"errorMessage"`
+	ExtractChars        int        `json:"extractChars"`
+	ExtractPages        int        `json:"extractPages"`
+	ChunkCount          int        `json:"chunkCount"`
+	EmbedError          string     `json:"embedError"`
+	CanVectorize        bool       `json:"canVectorize"`
+	VectorizationReason string     `json:"vectorizationReason"`
+	StartedAt           *time.Time `json:"startedAt" extensions:"x-nullable,!x-omitempty"`
+	CompletedAt         *time.Time `json:"completedAt" extensions:"x-nullable,!x-omitempty"`
+	UpdatedAt           time.Time  `json:"updatedAt"`
 }
 
 func toFileProcessingStatusResponse(d *appprocessing.FileProcessingStatusDTO) FileProcessingStatusResponse {
 	return FileProcessingStatusResponse{
-		FileID:           d.FileID,
-		DetectedMIME:     d.DetectedMIME,
-		FileCategory:     d.FileCategory,
-		ProcessingStatus: d.ProcessingStatus,
-		ProcessingReady:  d.ProcessingReady,
-		ExtractStatus:    d.ExtractStatus,
-		EmbedStatus:      d.EmbedStatus,
-		PreviewText:      d.PreviewText,
-		OCRUsed:          d.OCRUsed,
-		RAGReady:         d.RAGReady,
-		RAGReason:        d.RAGReason,
-		ErrorCode:        d.ErrorCode,
-		ErrorMessage:     appprocessing.HumanizeFileProcessingError(d.FileCategory, d.ErrorCode, d.ErrorMessage),
-		ExtractChars:     d.ExtractChars,
-		ExtractPages:     d.ExtractPages,
-		StartedAt:        d.StartedAt,
-		CompletedAt:      d.CompletedAt,
+		FileID:              d.FileID,
+		DetectedMIME:        d.DetectedMIME,
+		FileCategory:        d.FileCategory,
+		ProcessingStatus:    d.ProcessingStatus,
+		ProcessingReady:     d.ProcessingReady,
+		ExtractStatus:       d.ExtractStatus,
+		EmbedStatus:         d.EmbedStatus,
+		PreviewText:         d.PreviewText,
+		OCRUsed:             d.OCRUsed,
+		RAGReady:            d.RAGReady,
+		RAGReason:           d.RAGReason,
+		ErrorCode:           d.ErrorCode,
+		ErrorMessage:        appprocessing.HumanizeFileProcessingError(d.FileCategory, d.ErrorCode, d.ErrorMessage),
+		ExtractChars:        d.ExtractChars,
+		ExtractPages:        d.ExtractPages,
+		ChunkCount:          d.ChunkCount,
+		EmbedError:          d.EmbedError,
+		CanVectorize:        d.CanVectorize,
+		VectorizationReason: d.VectorizationReason,
+		StartedAt:           d.StartedAt,
+		CompletedAt:         d.CompletedAt,
+		UpdatedAt:           d.UpdatedAt,
 	}
 }
 
@@ -1429,6 +1533,12 @@ type DeleteFileResponseDoc struct {
 type FileUpdateResponseDoc struct {
 	ErrorMsg string             `json:"errorMsg"`
 	Data     FileObjectResponse `json:"data"`
+}
+
+// FileEmbeddingSubmissionResponseDoc 文件向量化提交响应文档。
+type FileEmbeddingSubmissionResponseDoc struct {
+	ErrorMsg string                          `json:"errorMsg"`
+	Data     FileEmbeddingSubmissionResponse `json:"data"`
 }
 
 // ConversationCreateResponseDoc 创建会话响应文档。
@@ -1530,6 +1640,12 @@ type ContextArtifactResponseDoc struct {
 	Data     ContextArtifactResponse `json:"data"`
 }
 
+// ConversationToolCallDetailResponseDoc 工具调用结果详情响应文档。
+type ConversationToolCallDetailResponseDoc struct {
+	ErrorMsg string                             `json:"errorMsg"`
+	Data     ConversationToolCallDetailResponse `json:"data"`
+}
+
 // ConversationUpdateResponseDoc 会话更新响应文档。
 type ConversationUpdateResponseDoc struct {
 	ErrorMsg string               `json:"errorMsg"`
@@ -1540,6 +1656,12 @@ type ConversationUpdateResponseDoc struct {
 type ConversationDeleteResponseDoc struct {
 	ErrorMsg string                     `json:"errorMsg"`
 	Data     ConversationDeleteResponse `json:"data"`
+}
+
+// MessageDeleteResponseDoc 删除消息响应文档。
+type MessageDeleteResponseDoc struct {
+	ErrorMsg string                `json:"errorMsg"`
+	Data     MessageDeleteResponse `json:"data"`
 }
 
 // ConversationShareResponseDoc 会话分享响应文档。
@@ -1562,9 +1684,9 @@ type PublicSharedConversationResponseDoc struct {
 
 // ErrorDoc 错误响应文档。
 type ErrorDoc struct {
-	ErrorMsg  string      `json:"errorMsg"`
-	ErrorCode string      `json:"errorCode,omitempty"`
-	Details   interface{} `json:"details,omitempty"`
-	RequestID string      `json:"requestId,omitempty"`
-	Data      interface{} `json:"data"`
+	ErrorMsg  string `json:"errorMsg"`
+	ErrorCode string `json:"errorCode,omitempty"`
+	Details   any    `json:"details,omitempty"`
+	RequestID string `json:"requestId,omitempty"`
+	Data      any    `json:"data"`
 }

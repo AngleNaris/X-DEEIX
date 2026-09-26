@@ -14,25 +14,40 @@ import (
 	"testing"
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
+	appstorage "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/objectstorage"
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	domainmcp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/mcp"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/mcp"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/objectstore"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
 )
+
+func TestProcessImageAttachmentsRequiresObjectStoreProvider(t *testing.T) {
+	service := &Service{cfg: config.NewRuntime(config.Config{})}
+	_, err := service.processImageAttachments(t.Context(), imageAttachmentProcessingInput{
+		Attachments: []AttachmentInput{{FileID: "file-1", Kind: "image", StoragePath: "images/one.png", Current: true}},
+		Runtime: selectedToolRuntime{attachmentProcessor: &selectedAttachmentProcessor{
+			argument: "image",
+			encoding: domainmcp.AttachmentEncodingBase64,
+		}},
+	})
+	if !errors.Is(err, appstorage.ErrProviderNotConfigured) {
+		t.Fatalf("processImageAttachments() error = %v, want ErrProviderNotConfigured", err)
+	}
+}
 
 func TestProcessImageAttachmentsRoutesOnlyTextToMainModelContext(t *testing.T) {
 	var receivedImage string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		defer request.Body.Close()
 		var rpcRequest struct {
-			ID     interface{} `json:"id"`
-			Method string      `json:"method"`
+			ID     any    `json:"id"`
+			Method string `json:"method"`
 			Params struct {
-				Arguments map[string]interface{} `json:"arguments"`
+				Arguments map[string]any `json:"arguments"`
 			} `json:"params"`
 		}
 		if err := json.NewDecoder(request.Body).Decode(&rpcRequest); err != nil {
@@ -43,21 +58,21 @@ func TestProcessImageAttachmentsRoutesOnlyTextToMainModelContext(t *testing.T) {
 		writer.Header().Set("Content-Type", "application/json")
 		switch rpcRequest.Method {
 		case "initialize":
-			_ = json.NewEncoder(writer).Encode(map[string]interface{}{
+			_ = json.NewEncoder(writer).Encode(map[string]any{
 				"jsonrpc": "2.0",
 				"id":      rpcRequest.ID,
-				"result":  map[string]interface{}{"protocolVersion": "2025-06-18", "capabilities": map[string]interface{}{}},
+				"result":  map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}},
 			})
 		case "notifications/initialized":
 			writer.WriteHeader(http.StatusAccepted)
 		case "tools/call":
 			receivedImage, _ = rpcRequest.Params.Arguments["image"].(string)
-			_ = json.NewEncoder(writer).Encode(map[string]interface{}{
+			_ = json.NewEncoder(writer).Encode(map[string]any{
 				"jsonrpc": "2.0",
 				"id":      rpcRequest.ID,
-				"result": map[string]interface{}{
-					"content":           []map[string]interface{}{{"type": "text", "text": "画面中有一辆红色汽车。"}},
-					"structuredContent": map[string]interface{}{"echo": receivedImage},
+				"result": map[string]any{
+					"content":           []map[string]any{{"type": "text", "text": "画面中有一辆红色汽车。"}},
+					"structuredContent": map[string]any{"echo": receivedImage},
 				},
 			})
 		default:
@@ -81,8 +96,14 @@ func TestProcessImageAttachmentsRoutesOnlyTextToMainModelContext(t *testing.T) {
 	}
 	runtime := selectedToolRuntime{
 		nameMap: map[string]string{"vision_analyze": "vision_analyze"},
-		mcpConfigs: map[string]mcp.CallConfig{
-			"vision_analyze": {BaseURL: server.URL, TimeoutMS: 5000},
+		mcpBindings: map[string]mcpToolCallBinding{
+			"vision_analyze": {
+				Config:       mcp.CallConfig{BaseURL: server.URL, TimeoutMS: 5000},
+				ServerID:     11,
+				ServerName:   "vision-server",
+				ToolName:     "vision_analyze",
+				PriceNanousd: 2_000_000,
+			},
 		},
 		schemas: map[string]json.RawMessage{
 			"vision_analyze": json.RawMessage(`{"type":"object","properties":{"image":{"type":"string"},"prompt":{"type":"string"}},"required":["image"]}`),

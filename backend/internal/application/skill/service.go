@@ -11,11 +11,19 @@ import (
 	"strconv"
 	"strings"
 
+<<<<<<< HEAD
 	appstorage "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/objectstorage"
+=======
+	appaudit "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/audit"
+>>>>>>> upstream/dev
 	domainskill "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/skill"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/objectstore"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+<<<<<<< HEAD
 	"github.com/google/uuid"
+=======
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/pagination"
+>>>>>>> upstream/dev
 )
 
 const (
@@ -33,7 +41,7 @@ type Service struct {
 }
 
 type auditWriter interface {
-	Write(ctx context.Context, requestID string, actorUserID uint, action string, resource string, resourceID string, ip string, userAgent string, detail interface{})
+	Write(ctx context.Context, input appaudit.WriteInput)
 }
 
 // NewService 创建技能服务。
@@ -59,7 +67,7 @@ type AuditInput struct {
 	ResourceID string
 	ClientIP   string
 	UserAgent  string
-	Detail     interface{}
+	Detail     any
 }
 
 // RecordAudit 记录技能审计日志。
@@ -67,17 +75,16 @@ func (s *Service) RecordAudit(ctx context.Context, input AuditInput) {
 	if s.auditWriter == nil {
 		return
 	}
-	s.auditWriter.Write(
-		ctx,
-		strings.TrimSpace(input.RequestID),
-		input.UserID,
-		strings.TrimSpace(input.Action),
-		"skills",
-		strings.TrimSpace(input.ResourceID),
-		strings.TrimSpace(input.ClientIP),
-		strings.TrimSpace(input.UserAgent),
-		input.Detail,
-	)
+	s.auditWriter.Write(ctx, appaudit.WriteInput{
+		RequestID:   input.RequestID,
+		ActorUserID: input.UserID,
+		Action:      input.Action,
+		Resource:    "skills",
+		ResourceID:  input.ResourceID,
+		IP:          input.ClientIP,
+		UserAgent:   input.UserAgent,
+		Detail:      input.Detail,
+	})
 }
 
 // ListVisible 查询当前用户可使用的技能。
@@ -85,12 +92,12 @@ func (s *Service) ListVisible(ctx context.Context, userID uint, input ListInput)
 	if userID == 0 {
 		return nil, 0, repository.ErrInvalidInput
 	}
-	page, pageSize := normalizePage(input.Page, input.PageSize)
+	offset, limit := pagination.Offset(input.Page, input.PageSize)
 	return s.repo.ListSkills(ctx, repository.SkillListFilter{
 		IDs:           input.IDs,
 		Query:         strings.TrimSpace(input.Query),
 		VisibleUserID: &userID,
-	}, (page-1)*pageSize, pageSize)
+	}, offset, limit)
 }
 
 // ListMine 查询当前用户自定义技能。
@@ -98,25 +105,25 @@ func (s *Service) ListMine(ctx context.Context, userID uint, input ListInput) ([
 	if userID == 0 {
 		return nil, 0, repository.ErrInvalidInput
 	}
-	page, pageSize := normalizePage(input.Page, input.PageSize)
+	offset, limit := pagination.Offset(input.Page, input.PageSize)
 	return s.repo.ListSkills(ctx, repository.SkillListFilter{
 		Query:          strings.TrimSpace(input.Query),
 		SearchMarkdown: true,
 		Scope:          domainskill.ScopeUser,
 		OwnerUserID:    &userID,
 		Enabled:        input.Enabled,
-	}, (page-1)*pageSize, pageSize)
+	}, offset, limit)
 }
 
 // ListAdminBuiltin 查询管理员内置技能列表。
 func (s *Service) ListAdminBuiltin(ctx context.Context, input ListInput) ([]domainskill.Skill, int64, error) {
-	page, pageSize := normalizePage(input.Page, input.PageSize)
+	offset, limit := pagination.Offset(input.Page, input.PageSize)
 	return s.repo.ListSkills(ctx, repository.SkillListFilter{
 		Query:          strings.TrimSpace(input.Query),
 		SearchMarkdown: true,
 		Scope:          domainskill.ScopeBuiltin,
 		Enabled:        input.Enabled,
-	}, (page-1)*pageSize, pageSize)
+	}, offset, limit)
 }
 
 // ResolveAvailable 查询当前用户可使用的技能。
@@ -661,20 +668,6 @@ func normalizeTrigger(value string) string {
 
 func runeCount(value string) int {
 	return len([]rune(value))
-}
-
-func normalizePage(page int, pageSize int) (int, int) {
-	if page <= 0 {
-		page = 1
-	}
-	if pageSize <= 0 {
-		pageSize = 20
-	}
-	const maxPageSize = 100
-	if pageSize > maxPageSize {
-		pageSize = maxPageSize
-	}
-	return page, pageSize
 }
 
 func mapRepositoryError(err error) error {

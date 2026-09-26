@@ -46,6 +46,7 @@ type ConversationProject struct {
 	Name                    string
 	Description             string
 	SystemPrompt            string
+	DefaultModel            string
 	MCPDefaultMode          string
 	DefaultMCPToolIDs       []uint
 	DefaultSkillIDs         []uint
@@ -63,6 +64,7 @@ type ConversationProjectPatch struct {
 	Name                    *string
 	Description             *string
 	SystemPrompt            *string
+	DefaultModel            *string
 	MCPDefaultMode          *string
 	DefaultMCPToolIDs       *[]uint
 	DefaultSkillIDs         *[]uint
@@ -99,6 +101,7 @@ type MessageTraceBlock struct {
 	Stage           string
 	RoundID         string
 	ParentEventID   string
+	StartedAt       time.Time
 	UpdatedAt       time.Time
 	PayloadJSON     string
 }
@@ -287,10 +290,43 @@ type FileObject struct {
 	ProcessingPayloadJSON  string
 	ProcessingStartedAt    *time.Time
 	ProcessingCompletedAt  *time.Time
+<<<<<<< HEAD
 	RagOptOut              bool
 	Favorite               bool
+=======
+	RAGOptOut              bool
+>>>>>>> upstream/dev
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
+}
+
+const (
+	FileProcessingStatusUploaded   = "uploaded"
+	FileProcessingStatusQueued     = "queued"
+	FileProcessingStatusExtracting = "extracting"
+	FileProcessingStatusEmbedding  = "embedding"
+	FileSubprocessStatusQueued     = "queued"
+	FileSubprocessStatusProcessing = "processing"
+	// FileSubprocessStatusEmpty 表示提取或 OCR 正常完成但未得到任何文本；是终态，自动重建不再处理。
+	FileSubprocessStatusEmpty = "empty"
+
+	// FileErrorCodeNoExtractableText 是空文本终态对应的错误码。
+	FileErrorCodeNoExtractableText = "no_extractable_text"
+)
+
+// IsFileProcessing 统一判断文件是否仍处于服务端处理阶段。
+func IsFileProcessing(file FileObject) bool {
+	switch file.ProcessingStatus {
+	case FileProcessingStatusUploaded,
+		FileProcessingStatusQueued,
+		FileProcessingStatusExtracting,
+		FileProcessingStatusEmbedding:
+		return true
+	default:
+		return file.ExtractStatus == FileSubprocessStatusProcessing ||
+			file.EmbedStatus == FileSubprocessStatusQueued ||
+			file.EmbedStatus == FileSubprocessStatusProcessing
+	}
 }
 
 // FileObjectProcessing 表示 file_objects 中的服务端处理状态。
@@ -301,11 +337,13 @@ type FileObjectProcessing struct {
 	DetectedMIME       string
 	FileCategory       string
 	ProcessingStatus   string
+	ProcessingReady    bool
 	ExtractStatus      string
 	ExtractEngine      string
 	ExtractStoragePath string
 	ExtractChars       int
 	ExtractPages       int
+	PageCount          int
 	PreviewText        string
 	OCRUsed            bool
 	RAGReady           bool
@@ -316,6 +354,7 @@ type FileObjectProcessing struct {
 	PayloadJSON        string
 	StartedAt          *time.Time
 	CompletedAt        *time.Time
+	ExtractedAt        *time.Time
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -390,6 +429,12 @@ type Run struct {
 	EndedAt                  *time.Time
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
+}
+
+// RunStatus 表示用于状态同步的最小运行快照。
+type RunStatus struct {
+	RunID  string
+	Status string
 }
 
 // MessageTrace 表示消息处理轨迹。
@@ -471,12 +516,32 @@ type EventLog struct {
 	ToolName          string
 	LatencyMS         int64
 	InputJSON         string
+	InputSizeBytes    int64
+	InputOmitted      bool
 	OutputJSON        string
+	OutputSizeBytes   int64
+	OutputOmitted     bool
 	ErrorJSON         string
+	ErrorSizeBytes    int64
+	ErrorOmitted      bool
 	StartedAt         time.Time
 	EndedAt           *time.Time
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+}
+
+// ToolCallDetail 表示当前用户可读取的工具调用结果详情。
+type ToolCallDetail struct {
+	RunID           string
+	ToolCallID      string
+	ToolName        string
+	Status          string
+	OutputJSON      string
+	OutputSizeBytes int64
+	OutputOmitted   bool
+	ErrorJSON       string
+	ErrorSizeBytes  int64
+	ErrorOmitted    bool
 }
 
 // ToolCall 表示工具调用记录。
@@ -489,13 +554,17 @@ type ToolCall struct {
 	ToolCallID     string
 	ToolType       string
 	ToolName       string
-	Status         string
-	LatencyMS      int64
-	InputJSON      string
-	OutputJSON     string
-	ErrorJSON      string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// MCPServerID / MCPServerName 记录 MCP 调用的服务器归属快照；
+	// 不同服务器可能暴露同名工具，缺少归属时用量统计无法区分。
+	MCPServerID   uint
+	MCPServerName string
+	Status        string
+	LatencyMS     int64
+	InputJSON     string
+	OutputJSON    string
+	ErrorJSON     string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // ContextSnapshot 表示上下文压缩快照。

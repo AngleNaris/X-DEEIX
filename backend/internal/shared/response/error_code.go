@@ -1,9 +1,6 @@
 package response
 
-import (
-	"net/http"
-	"strings"
-)
+import "net/http"
 
 const (
 	CodeRequestInvalidBody       = "request.invalid_body"
@@ -34,15 +31,99 @@ const (
 	CodeFileNotReady             = "file.not_ready"
 	CodeFileTypeBlocked          = "file.type_blocked"
 	CodeUpstreamUnavailable      = "upstream.unavailable"
+	CodeUpstreamRateLimited      = "upstream.rate_limited"
 	CodeServiceUnavailable       = "service.unavailable"
 	CodeInternal                 = "internal.error"
 )
 
-type errorSpec struct {
-	Code    string
-	Message string
+// codeMessages 只登记由响应边界直接选择的错误码。应用层错误的文案与错误码由 apperr 自身声明，
+// 不在这里重复维护。
+var codeMessages = map[string]string{
+	CodeRequestInvalidBody:       "invalid request body",
+	CodeRequestInvalid:           "invalid request",
+	CodeRequestInvalidID:         "invalid id",
+	CodeRequestInvalidQuery:      "invalid query parameter",
+	CodeRequestRequired:          "required field missing",
+	CodeAuthUnauthorized:         "unauthorized",
+	CodeAuthForbidden:            "forbidden",
+	CodeAuthInvalidToken:         "invalid token",
+	CodeAuthInvalidCredentials:   "invalid username or password",
+	CodeAuthInvalidCurrentPass:   "invalid current password",
+	CodeAuthInvalidRefreshToken:  "invalid refresh token",
+	CodeAuthInvalidTwoFactorCode: "invalid two factor code",
+	CodeAuthTwoFactorExpired:     "two factor challenge expired",
+	CodeAuthTwoFactorNotStarted:  "two factor setup not started",
+	CodeAuthLastLoginRequired:    "set a password or bind another identity provider first",
+	CodeAuthSessionInvalid:       "session invalid",
+	CodeResourceNotFound:         "resource not found",
+	CodeResourceConflict:         "resource conflict",
+	CodeBillingPaymentRequired:   "payment required",
+	CodeBillingInsufficientFunds: "insufficient balance",
+	CodeBillingPricingRequired:   "model pricing is required",
+	CodeRateLimitExceeded:        "rate limit exceeded",
+	CodeQuotaExceeded:            "quota exceeded",
+	CodeFileInUse:                "file is in use",
+	CodeFileTooLarge:             "file too large",
+	CodeFileNotReady:             "file is not ready",
+	CodeFileTypeBlocked:          "file type is not allowed",
+	CodeUpstreamUnavailable:      "upstream service unavailable",
+	CodeUpstreamRateLimited:      "upstream rate limited",
+	CodeServiceUnavailable:       "service unavailable",
+	CodeInternal:                 "internal server error",
+
+	"auth.provider_email_conflict":                  "provider email belongs to another account",
+	"billing.invalid_redemption_code":               "invalid redemption code",
+	"content_moderation.config_required":            "content moderation service config and policy are required when enabled",
+	"content_moderation.invalid_config":             "invalid content moderation config",
+	"content_moderation.probe_failed":               "content moderation probe failed",
+	"conversation.message_fork_history_incomplete":  "message history is too deep or incomplete",
+	"conversation.message_fork_state_invalid":       "message is still generating",
+	"conversation.message_fork_target_invalid":      "only assistant messages can be forked",
+	"cors.origin_forbidden":                         "origin is not allowed",
+	"embedding.service_not_configured":              "embedding service is not configured",
+	"embedding.service_unavailable":                 "embedding service is not available",
+	"embedding.submit_failed":                       "failed to submit embedding jobs",
+	"embedding.too_many_files":                      "too many files for embedding",
+	"file.not_found":                                "file not found",
+	"identity_provider.delete_conflict":             "deleting this identity provider would remove the only login method for some users",
+	"knowledge_base.conflict":                       "knowledge base conflict",
+	"knowledge_base.disabled":                       "knowledge base feature is disabled",
+	"knowledge_base.file_cleanup_unavailable":       "platform file cleanup unavailable",
+	"knowledge_base.internal":                       "knowledge base operation failed",
+	"knowledge_base.invalid":                        "invalid knowledge base request",
+	"knowledge_base.not_found":                      "knowledge base not found",
+	"knowledge_base.owner_file_reference":           "user owns files referenced by builtin knowledge bases",
+	"knowledge_base.platform_file_in_use":           "platform file is in use",
+	"llm.empty_response":                            "model returned empty response",
+	"llm.model_icon_asset_in_use":                   "model icon asset is in use",
+	"llm.model_vendor_builtin":                      "built-in model vendor cannot be deleted",
+	"llm.model_vendor_in_use":                       "model vendor is in use",
+	"llm.remote_models_empty_confirmation_required": "remote models snapshot is empty",
+	"llm.remote_models_snapshot_changed":            "remote models snapshot changed",
+	"llm.upstream_model_binding_changed":            "upstream model binding changed; reload and retry",
+	"llm.upstream_model_conflict":                   "model upstream source conflict",
+	"media.artifact_unavailable":                    "generated media artifact is temporarily unavailable",
+	"media.image_stream_unsupported":                "upstream may not support image streaming; disable image.stream for this model",
+	"payment.checkout_failed":                       "create checkout failed",
+	"payment.epay_gateway_invalid":                  "epay gateway url is invalid",
+	"payment.provider_unavailable":                  "payment provider is unavailable",
+	"settings.invalid_namespace":                    "invalid setting namespace",
+	"settings.invalid_key":                          "invalid setting key",
+	"settings.invalid_value":                        "invalid setting value",
+	"settings.smtp_invalid":                         "invalid SMTP settings",
+	"settings.billing_payment_invalid":              "invalid billing payment settings",
+	"settings.embedding_invalid":                    "invalid embedding settings",
+	"settings.extract_invalid":                      "invalid file extraction settings",
+	"settings.model_option_policy_invalid":          "invalid model option policy settings",
+	"skill.too_many_ids":                            "too many skill ids",
+	"usage_statistics.invalid_billing_scope":        "invalid billing scope",
+	"usage_statistics.invalid_date_range":           "invalid usage statistics date range",
+	"usage_statistics.invalid_rank_by":              "invalid usage ranking field",
+	"usage_statistics.invalid_section":              "invalid usage statistics section",
+	"usage_statistics.subject_conflict":             "user and permission group filters are mutually exclusive",
 }
 
+<<<<<<< HEAD
 var exactErrorSpecs = map[string]errorSpec{
 	"unauthorized":                                               {Code: CodeAuthUnauthorized, Message: "unauthorized"},
 	"forbidden":                                                  {Code: CodeAuthForbidden, Message: "forbidden"},
@@ -316,508 +397,35 @@ var exactErrorSpecs = map[string]errorSpec{
 	"content blocked by moderation":                                          {Code: "content_moderation.blocked", Message: "content blocked by moderation"},
 
 	"deleting this identity provider would remove the only login method for some users": {Code: "identity_provider.delete_conflict", Message: "deleting this identity provider would remove the only login method for some users"},
+=======
+func canonicalMessage(code string) (string, bool) {
+	message, ok := codeMessages[code]
+	return message, ok
+>>>>>>> upstream/dev
 }
 
-// InferErrorCode provides a compatibility code for legacy response.Error calls.
-// New code should prefer ErrorWithCode/ErrorWithDetails with an explicit code.
-func InferErrorCode(status int, msg string) string {
-	if spec, ok := resolveErrorSpec(status, msg); ok {
-		return spec.Code
-	}
-	switch {
-	case status == http.StatusBadGateway:
-		return CodeUpstreamUnavailable
-	case status == http.StatusServiceUnavailable:
-		return CodeServiceUnavailable
-	case status >= http.StatusInternalServerError:
-		return CodeInternal
-	}
-	text := normalizeErrorText(msg)
-	switch {
-	case strings.Contains(text, "invalid request body"):
-		return CodeRequestInvalidBody
-	case strings.Contains(text, "invalid ") && strings.Contains(text, " id"):
-		return invalidIDCode(text)
-	case strings.Contains(text, "is required"):
-		return CodeRequestRequired
-	case strings.Contains(text, "not found"):
-		return notFoundCode(text)
-	case strings.Contains(text, "already exists") || strings.Contains(text, "conflict"):
-		return CodeResourceConflict
-	case strings.Contains(text, "quota exceeded") || strings.Contains(text, "exceeded"):
-		return CodeQuotaExceeded
-	case strings.Contains(text, "insufficient"):
-		return CodeBillingInsufficientFunds
-	case strings.Contains(text, "pricing"):
-		return CodeBillingPricingRequired
-	case strings.Contains(text, "payment required"):
-		return CodeBillingPaymentRequired
-	case strings.Contains(text, "file too large"):
-		return CodeFileTooLarge
-	case strings.Contains(text, "file processing not ready") || strings.Contains(text, "file extract not ready"):
-		return CodeFileNotReady
-	case strings.Contains(text, "mime blocked") || strings.Contains(text, "dangerous file type"):
-		return CodeFileTypeBlocked
-	case strings.Contains(text, "model access denied by group policy"):
-		return "llm.model_access_denied"
-	case strings.Contains(text, "remote models unavailable") || strings.Contains(text, "model route not configured"):
-		return CodeUpstreamUnavailable
-	case strings.Contains(text, "verification code"):
-		return "auth.verification_code_invalid"
-	}
-
+func defaultDescription(status int) Description {
 	switch status {
-	case http.StatusBadRequest:
-		return CodeRequestInvalid
 	case http.StatusUnauthorized:
-		return CodeAuthUnauthorized
+		return Description{Status: status, Code: CodeAuthUnauthorized, Message: codeMessages[CodeAuthUnauthorized]}
 	case http.StatusForbidden:
-		return CodeAuthForbidden
+		return Description{Status: status, Code: CodeAuthForbidden, Message: codeMessages[CodeAuthForbidden]}
 	case http.StatusNotFound:
-		return CodeResourceNotFound
+		return Description{Status: status, Code: CodeResourceNotFound, Message: codeMessages[CodeResourceNotFound]}
 	case http.StatusConflict:
-		return CodeResourceConflict
+		return Description{Status: status, Code: CodeResourceConflict, Message: codeMessages[CodeResourceConflict]}
 	case http.StatusPaymentRequired:
-		return CodeBillingPaymentRequired
+		return Description{Status: status, Code: CodeBillingPaymentRequired, Message: codeMessages[CodeBillingPaymentRequired]}
 	case http.StatusTooManyRequests:
-		return CodeRateLimitExceeded
+		return Description{Status: status, Code: CodeRateLimitExceeded, Message: codeMessages[CodeRateLimitExceeded]}
 	case http.StatusBadGateway:
-		return CodeUpstreamUnavailable
+		return Description{Status: status, Code: CodeUpstreamUnavailable, Message: codeMessages[CodeUpstreamUnavailable]}
 	case http.StatusServiceUnavailable:
-		return CodeServiceUnavailable
+		return Description{Status: status, Code: CodeServiceUnavailable, Message: codeMessages[CodeServiceUnavailable]}
 	default:
 		if status >= http.StatusInternalServerError {
-			return CodeInternal
+			return Description{Status: status, Code: CodeInternal, Message: codeMessages[CodeInternal]}
 		}
-		return CodeRequestInvalid
+		return Description{Status: status, Code: CodeRequestInvalid, Message: codeMessages[CodeRequestInvalid]}
 	}
-}
-
-// PublicErrorMessage normalizes legacy handler messages into a safe API fallback.
-// It intentionally preserves client-side validation context while hiding 5xx
-// internals behind requestId + server logs.
-func PublicErrorMessage(status int, code string, msg string) string {
-	msg = strings.TrimSpace(msg)
-	if spec, ok := resolveErrorSpec(status, msg); ok {
-		return spec.Message
-	}
-	if msg == "" {
-		msg = fallbackMessage(status, code)
-	}
-
-	switch {
-	case status >= http.StatusInternalServerError:
-		return fallbackMessage(status, code)
-	case status == http.StatusBadGateway:
-		return fallbackMessage(status, code)
-	case status == http.StatusServiceUnavailable:
-		return fallbackMessage(status, code)
-	}
-
-	switch code {
-	case CodeAuthUnauthorized:
-		return "unauthorized"
-	case CodeAuthForbidden:
-		return "forbidden"
-	case CodeRateLimitExceeded:
-		return "rate limit exceeded"
-	default:
-		return msg
-	}
-}
-
-func fallbackMessage(status int, code string) string {
-	if msg, ok := fallbackMessages[code]; ok {
-		return msg
-	}
-	switch code {
-	case CodeRequestInvalidBody:
-		return "invalid request body"
-	case CodeRequestInvalidID:
-		return "invalid id"
-	case CodeRequestRequired:
-		return "required field missing"
-	case CodeAuthUnauthorized:
-		return "unauthorized"
-	case CodeAuthForbidden:
-		return "forbidden"
-	case CodeAuthInvalidToken:
-		return "invalid token"
-	case CodeAuthInvalidCredentials:
-		return "invalid username or password"
-	case CodeAuthInvalidCurrentPass:
-		return "invalid current password"
-	case CodeAuthInvalidRefreshToken:
-		return "invalid refresh token"
-	case CodeAuthInvalidTwoFactorCode:
-		return "invalid two factor code"
-	case CodeAuthTwoFactorExpired:
-		return "two factor challenge expired"
-	case CodeAuthTwoFactorNotStarted:
-		return "two factor setup not started"
-	case CodeAuthLastLoginRequired:
-		return "set a password or bind another identity provider first"
-	case CodeAuthSessionInvalid:
-		return "session invalid"
-	case CodeResourceNotFound:
-		return "resource not found"
-	case CodeResourceConflict:
-		return "resource conflict"
-	case CodeBillingInsufficientFunds:
-		return "insufficient balance"
-	case CodeBillingPricingRequired:
-		return "model pricing is required"
-	case CodeBillingPaymentRequired:
-		return "payment required"
-	case CodeQuotaExceeded:
-		return "quota exceeded"
-	case CodeFileTooLarge:
-		return "file too large"
-	case CodeFileNotReady:
-		return "file is not ready"
-	case CodeFileTypeBlocked:
-		return "file type is not allowed"
-	case CodeUpstreamUnavailable:
-		return "upstream service unavailable"
-	case CodeServiceUnavailable:
-		return "service unavailable"
-	}
-	switch status {
-	case http.StatusBadRequest:
-		return "invalid request"
-	case http.StatusUnauthorized:
-		return "unauthorized"
-	case http.StatusForbidden:
-		return "forbidden"
-	case http.StatusNotFound:
-		return "resource not found"
-	case http.StatusConflict:
-		return "resource conflict"
-	case http.StatusPaymentRequired:
-		return "payment required"
-	case http.StatusTooManyRequests:
-		return "rate limit exceeded"
-	case http.StatusBadGateway:
-		return "upstream service unavailable"
-	case http.StatusServiceUnavailable:
-		return "service unavailable"
-	default:
-		if status >= http.StatusInternalServerError {
-			return "internal server error"
-		}
-		return "request failed"
-	}
-}
-
-var fallbackMessages = map[string]string{
-	CodeRequestInvalidQuery:                             "invalid query parameter",
-	"auth.admin_required":                               "admin permission required",
-	"auth.superadmin_required":                          "superadmin permission required",
-	"auth.password_reset_required":                      "password reset required",
-	"auth.password_reset_failed":                        "password reset failed",
-	"auth.username_change_required":                     "username change required",
-	"auth.invalid_password":                             "invalid password",
-	"auth.password_reuse_not_allowed":                   "new password must be different",
-	"auth.provider_callback_misconfigured":              "configure the provider callback URL to the frontend callback endpoint",
-	"auth.verification_code_invalid":                    "verification code is invalid or expired",
-	"auth.verification_code_recent":                     "verification code was sent recently",
-	"auth.email_registration_disabled":                  "email registration is disabled",
-	"auth.email_verification_disabled":                  "email verification is disabled",
-	"auth.email_already_exists":                         "email already exists",
-	"auth.email_not_verified":                           "email is not verified",
-	"auth.email_unchanged":                              "new email must be different",
-	"auth.email_alias_not_allowed":                      "email aliases are not allowed",
-	"auth.email_domain_not_allowed":                     "email domain is not allowed",
-	"auth.email_bootstrap_not_allowed":                  "email bootstrap is not allowed",
-	"auth.provider_login_disabled":                      "provider login is disabled",
-	"auth.provider_registration_disabled":               "provider registration is disabled",
-	"auth.authorization_code_required":                  "authorization code is required",
-	"auth.two_factor_already_enabled":                   "two factor authentication is already enabled",
-	"auth.provider_bind_endpoint_required":              "provider bind must use account binding endpoint",
-	"auth.provider_email_conflict":                      "provider email belongs to another account",
-	"auth.provider_invalid":                             "provider authentication failed",
-	"auth.provider_upstream_failed":                     "provider authentication failed",
-	"auth.provider_subject_missing":                     "provider subject is missing",
-	"auth.provider_identity_conflict":                   "provider identity is already bound to another account",
-	"auth.provider_already_bound":                       "provider is already bound",
-	"auth.provider_account_not_registered":              "provider account is not registered",
-	"auth.oauth_intent_mismatch":                        "oauth intent mismatch",
-	"auth.oauth_state_invalid":                          "invalid oauth state",
-	"auth.oauth_state_expired":                          "oauth state expired",
-	"auth.invalid_redirect_uri":                         "invalid redirect uri",
-	"auth.invalid_pkce":                                 "invalid pkce parameters",
-	"auth.provider_id_required":                         "provider id is required",
-	"auth.provider_order_invalid":                       "provider ids must be unique",
-	"auth.provider_type_invalid":                        "provider type must be oidc or oauth2",
-	"auth.provider_name_required":                       "provider name is required",
-	"auth.provider_slug_required":                       "provider slug is required",
-	"auth.provider_default_role_invalid":                "default role must be user, admin or superadmin",
-	"auth.provider_superadmin_default_role_protected":   "only superadmin can set superadmin default role",
-	"auth.provider_logo_url_invalid":                    "logo url must be a valid http(s) or absolute path",
-	"auth.provider_registration_requires_login":         "provider registration requires provider login to be enabled",
-	"auth.provider_client_id_required":                  "client id is required",
-	"auth.provider_client_secret_required":              "client secret is required",
-	"auth.provider_oidc_issuer_required":                "OIDC issuer url or discovery url is required",
-	"auth.provider_oauth_urls_required":                 "OAuth2 auth url, token url and userinfo url are required",
-	"auth.provider_auth_url_not_configured":             "provider auth url is not configured",
-	"user.invalid_time_zone":                            "invalid time zone",
-	"user.invalid_avatar_url":                           "invalid avatar url",
-	"user.invalid_username":                             "invalid username",
-	"user.invalid_location":                             "invalid location",
-	"user.invalid_email":                                "invalid user email",
-	"user.invalid_phone":                                "invalid user phone",
-	"user.invalid_locale":                               "invalid user locale",
-	"user.invalid_status":                               "invalid user status",
-	"user.invalid_role":                                 "invalid user role",
-	"user.username_already_exists":                      "username already exists",
-	"user.username_change_used":                         "username change already used",
-	"user.superadmin_management_protected":              "superadmin management is not allowed",
-	"conversation.invalid_id":                           "invalid conversation id",
-	"conversation.not_found":                            "conversation not found",
-	"conversation.invalid_title":                        "invalid conversation title",
-	"conversation.no_titleable_content":                 "conversation has no titleable content",
-	"conversation_share.invalid":                        "invalid conversation share",
-	"conversation_share.not_found":                      "conversation share not found",
-	"conversation_share.invalid_id":                     "invalid share id",
-	"message.invalid_id":                                "invalid message id",
-	"message.not_found":                                 "message not found",
-	"file.invalid_id":                                   "invalid file id",
-	"file.not_found":                                    "file not found",
-	"file.required":                                     "file is required",
-	"file.invalid_stream":                               "invalid file stream",
-	"file.invalid_reference":                            "invalid file reference",
-	"context_artifact.invalid_id":                       "invalid context artifact id",
-	"context_artifact.not_found":                        "context artifact not found",
-	"billing.invalid_plan":                              "invalid billing plan",
-	"billing.plan_not_found":                            "billing plan not found",
-	"billing.invalid_permission_group":                  "invalid permission group",
-	"admin.permission_group_not_found":                  "permission group not found",
-	"admin.invalid_permission_group_name":               "invalid permission group name",
-	"admin.invalid_permission_group_rate_multiplier":    "invalid permission group rate multiplier",
-	"admin.invalid_permission_group_models":             "invalid permission group models",
-	"admin.invalid_permission_group_users":              "invalid permission group users",
-	"admin.default_permission_group_delete_not_allowed": "default permission group cannot be deleted",
-	"admin.default_permission_group_users_implicit":     "default permission group users are implicit",
-	"admin.permission_group_referenced_by_plan":         "permission group is referenced by a billing plan",
-	"llm.model_route_not_configured":                    "model route is not configured",
-	"llm.model_access_denied":                           "you do not have access to this model",
-	"llm.remote_models_unavailable":                     "remote models unavailable",
-	"llm.no_active_api_key":                             "no active api key",
-	"llm.model_vendor_builtin":                          "built-in model vendor cannot be deleted",
-	"llm.model_vendor_in_use":                           "model vendor is in use",
-	"llm.circuit_breaker_disabled":                      "circuit breaker is disabled",
-	"llm.invalid_adapter":                               "invalid adapter",
-	"llm.invalid_compatible":                            "invalid compatible",
-	"llm.invalid_platform_model_name":                   "invalid platform model name",
-	"llm.invalid_route_protocol_combination":            "invalid route protocol combination",
-	"llm.system_prompt_too_long":                        "system prompt too long",
-	"llm.platform_model_name_required":                  "platform model name is required",
-	"llm.protocol_required":                             "protocol is required",
-	"media.artifact_unavailable":                        "generated media artifact is temporarily unavailable",
-	"media.image_stream_unsupported":                    "upstream may not support image streaming; disable image.stream for this model",
-	"billing.period_credit_exceeded":                    "period usage credit exceeded",
-	"billing.invalid_subscription_tier":                 "invalid subscription tier",
-	"billing.subscription_expiry_required":              "subscription expiry required",
-	"billing.invalid_subscription_expiry":               "invalid subscription expiry",
-	"billing.subscription_entitlement_active":           "subscription entitlement is active",
-	"billing.invalid_model_pricing":                     "invalid model pricing",
-	"billing.invalid_daily_usage_date_range":            "invalid daily usage date range",
-	"billing.invalid_daily_usage_days":                  "invalid daily usage days",
-	"billing.redemption_secret_unavailable":             "redemption code service is unavailable",
-	"billing.invalid_redemption_code":                   "invalid redemption code",
-	"billing.redemption_code_conflict":                  "redemption code already exists",
-	"billing.redemption_code_unavailable":               "redemption code is unavailable",
-	"billing.redemption_code_plaintext_unavailable":     "redemption code plaintext unavailable",
-	"billing.redemption_code_exhausted":                 "redemption code exhausted",
-	"billing.redemption_user_limit_exceeded":            "redemption user limit exceeded",
-	"payment.provider_unavailable":                      "payment provider is unavailable",
-	"payment.epay_gateway_invalid":                      "epay gateway url is invalid",
-	"payment.checkout_failed":                           "create checkout failed",
-	"payment.notification_mismatch":                     "payment notification does not match the order",
-	"payment.epay_type_unsupported":                     "epay payment type is not supported",
-	"payment.return_url_invalid":                        "payment return url is invalid",
-	"payment.return_url_cross_origin":                   "payment return url must use the configured public web origin",
-	"payment.webhook_not_configured":                    "stripe webhook is not configured",
-	"payment.invalid_webhook_body":                      "invalid webhook body",
-	"payment.webhook_body_too_large":                    "webhook body too large",
-	"payment.invalid_signature":                         "invalid stripe signature",
-	"payment.invalid_event":                             "invalid stripe event",
-	"payment.order_no_required":                         "order_no is required",
-	"settings.invalid_namespace":                        "invalid namespace",
-	"settings.invalid_key":                              "invalid setting key",
-	"settings.not_found":                                "setting not found",
-	"settings.invalid_value":                            "invalid setting value",
-	"settings.smtp_invalid":                             "invalid smtp settings",
-	"settings.billing_payment_invalid":                  "invalid billing payment settings",
-	"settings.model_option_policy_invalid":              "invalid model option policy settings",
-	"settings.embedding_invalid":                        "invalid embedding settings",
-	"settings.extract_invalid":                          "invalid file extraction settings",
-	"embedding.service_unavailable":                     "embedding service is not available",
-	"embedding.service_not_configured":                  "embedding service is not configured",
-	"user_settings.unknown_key":                         "unknown setting key",
-	"user_settings.invalid_value":                       "invalid user setting value",
-	"memory.key_required":                               "memory_key is required",
-	"rate_limit.refresh_exceeded":                       "too many refresh attempts",
-	"rate_limit.authentication_exceeded":                "too many authentication attempts",
-	"cors.origin_forbidden":                             "origin is not allowed",
-}
-
-func resolveErrorSpec(status int, msg string) (errorSpec, bool) {
-	text := normalizeErrorText(msg)
-	if text == "" {
-		return errorSpec{}, false
-	}
-	if spec, ok := exactErrorSpecs[text]; ok {
-		return spec, true
-	}
-	if strings.HasPrefix(text, "invalid setting: ") {
-		detail := strings.TrimSpace(strings.TrimPrefix(text, "invalid setting: "))
-		switch {
-		case strings.HasPrefix(detail, "invalid namespace:"):
-			return errorSpec{Code: "settings.invalid_namespace", Message: detail}, true
-		case strings.HasPrefix(detail, "invalid setting key:"):
-			return errorSpec{Code: "settings.invalid_key", Message: detail}, true
-		case strings.Contains(detail, "smtp"):
-			return errorSpec{Code: "settings.smtp_invalid", Message: detail}, true
-		case strings.Contains(detail, "payment_providers") || strings.Contains(detail, "billing:epay_"):
-			return errorSpec{Code: "settings.billing_payment_invalid", Message: detail}, true
-		case strings.Contains(detail, "model_option_"):
-			return errorSpec{Code: "settings.model_option_policy_invalid", Message: detail}, true
-		case strings.Contains(detail, "embedding") || strings.Contains(detail, "rag") || strings.Contains(detail, "semantic"):
-			return errorSpec{Code: "settings.embedding_invalid", Message: detail}, true
-		case strings.Contains(detail, "extract:"):
-			return errorSpec{Code: "settings.extract_invalid", Message: detail}, true
-		default:
-			return errorSpec{Code: "settings.invalid_value", Message: detail}, true
-		}
-	}
-	if strings.HasPrefix(text, "unknown setting key:") {
-		return errorSpec{Code: "user_settings.unknown_key", Message: "unknown setting key"}, true
-	}
-	if strings.HasPrefix(text, "invalid value for ") {
-		return errorSpec{Code: "user_settings.invalid_value", Message: text}, true
-	}
-	if status < http.StatusInternalServerError && status != http.StatusBadGateway && (strings.Contains(text, "provider") || strings.Contains(text, "oauth") || strings.Contains(text, "pkce")) {
-		return providerErrorSpec(text)
-	}
-	if strings.HasPrefix(text, "invalid ") && strings.HasSuffix(text, " id") {
-		return errorSpec{Code: invalidIDCode(text), Message: text}, true
-	}
-	if strings.HasPrefix(text, "invalid ") && strings.HasSuffix(text, "_id") {
-		return errorSpec{Code: CodeRequestInvalidID, Message: text}, true
-	}
-	if strings.HasPrefix(text, "invalid ") {
-		return errorSpec{Code: "request.invalid_" + slug(strings.TrimPrefix(text, "invalid ")), Message: text}, true
-	}
-	if strings.HasSuffix(text, " not found") {
-		return errorSpec{Code: notFoundCode(text), Message: text}, true
-	}
-	if strings.HasSuffix(text, " already exists") {
-		return errorSpec{Code: slug(strings.TrimSuffix(text, " already exists")) + ".already_exists", Message: text}, true
-	}
-	if strings.Contains(text, "verification code is invalid or expired") {
-		return errorSpec{Code: "auth.verification_code_invalid", Message: "verification code is invalid or expired"}, true
-	}
-	if strings.Contains(text, "verification code was sent recently") {
-		return errorSpec{Code: "auth.verification_code_recent", Message: "verification code was sent recently"}, true
-	}
-	if strings.Contains(text, "verification code attempts exceeded") {
-		return errorSpec{Code: "auth.verification_code_attempts_exceeded", Message: "verification code attempts exceeded"}, true
-	}
-	if strings.Contains(text, "email already exists") {
-		return errorSpec{Code: "auth.email_already_exists", Message: "email already exists"}, true
-	}
-	if strings.Contains(text, "invalid email") || strings.Contains(text, "user email is invalid") {
-		return errorSpec{Code: "auth.invalid_email", Message: "invalid email"}, true
-	}
-	if strings.Contains(text, "email verification is disabled") {
-		return errorSpec{Code: "auth.email_verification_disabled", Message: "email verification is disabled"}, true
-	}
-	if strings.Contains(text, "email bootstrap is not allowed") {
-		return errorSpec{Code: "auth.email_bootstrap_not_allowed", Message: "email bootstrap is not allowed"}, true
-	}
-	if strings.Contains(text, "smtp") {
-		return errorSpec{Code: "settings.smtp_invalid", Message: text}, true
-	}
-	if strings.Contains(text, "payment") || strings.Contains(text, "stripe") || strings.Contains(text, "checkout") {
-		return errorSpec{Code: CodeBillingPaymentRequired, Message: fallbackMessage(status, CodeBillingPaymentRequired)}, true
-	}
-	if strings.Contains(text, "required") {
-		return errorSpec{Code: CodeRequestRequired, Message: text}, true
-	}
-	return errorSpec{}, false
-}
-
-func normalizeErrorText(msg string) string {
-	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(msg)), " "))
-}
-
-func invalidIDCode(text string) string {
-	resource := strings.TrimPrefix(text, "invalid ")
-	resource = strings.TrimSuffix(resource, " id")
-	resource = strings.TrimSpace(resource)
-	if resource == "" {
-		return CodeRequestInvalidID
-	}
-	return slug(resource) + ".invalid_id"
-}
-
-func notFoundCode(text string) string {
-	resource := strings.TrimSuffix(text, " not found")
-	resource = strings.TrimSpace(resource)
-	if resource == "" || resource == "resource" || resource == "record" {
-		return CodeResourceNotFound
-	}
-	return slug(resource) + ".not_found"
-}
-
-func providerErrorSpec(text string) (errorSpec, bool) {
-	switch {
-	case strings.Contains(text, "third-party login is disabled"):
-		return errorSpec{Code: "auth.provider_login_disabled", Message: "third-party login is disabled"}, true
-	case strings.Contains(text, "provider login is disabled"):
-		return errorSpec{Code: "auth.provider_login_disabled", Message: "provider login is disabled"}, true
-	case strings.Contains(text, "provider registration is disabled"):
-		return errorSpec{Code: "auth.provider_registration_disabled", Message: "provider registration is disabled"}, true
-	case strings.Contains(text, "authorization code is required"):
-		return errorSpec{Code: CodeRequestRequired, Message: "authorization code is required"}, true
-	case strings.Contains(text, "oauth intent mismatch"):
-		return errorSpec{Code: "auth.oauth_intent_mismatch", Message: "oauth intent mismatch"}, true
-	case strings.Contains(text, "provider subject is missing"):
-		return errorSpec{Code: "auth.provider_subject_missing", Message: "provider subject is missing"}, true
-	case strings.Contains(text, "provider identity is already bound"):
-		return errorSpec{Code: "auth.provider_identity_conflict", Message: "provider identity is already bound to another account"}, true
-	case strings.Contains(text, "provider is already bound"):
-		return errorSpec{Code: "auth.provider_already_bound", Message: "provider is already bound"}, true
-	case strings.Contains(text, "provider account is not registered"):
-		return errorSpec{Code: "auth.provider_account_not_registered", Message: "provider account is not registered"}, true
-	case strings.Contains(text, "invalid oauth state") || strings.Contains(text, "oauth state mismatch"):
-		return errorSpec{Code: "auth.oauth_state_invalid", Message: "invalid oauth state"}, true
-	case strings.Contains(text, "oauth state expired"):
-		return errorSpec{Code: "auth.oauth_state_expired", Message: "oauth state expired"}, true
-	case strings.Contains(text, "redirect uri"):
-		return errorSpec{Code: "auth.invalid_redirect_uri", Message: "invalid redirect uri"}, true
-	case strings.Contains(text, "pkce"):
-		return errorSpec{Code: "auth.invalid_pkce", Message: text}, true
-	case strings.Contains(text, "provider token") || strings.Contains(text, "provider userinfo") || strings.Contains(text, "provider discovery"):
-		return errorSpec{Code: "auth.provider_upstream_failed", Message: "provider authentication failed"}, true
-	default:
-		return errorSpec{Code: "auth.provider_invalid", Message: text}, true
-	}
-}
-
-func slug(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "resource"
-	}
-	replacer := strings.NewReplacer(
-		" ", "_",
-		"-", "_",
-		".", "_",
-		":", "_",
-		"/", "_",
-		"\\", "_",
-	)
-	return replacer.Replace(value)
 }

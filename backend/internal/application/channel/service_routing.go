@@ -7,15 +7,19 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	domainchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/channel"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/background"
 	"go.uber.org/zap"
 )
+
+const routeBookkeepingTimeout = 5 * time.Second
 
 // ---------------------------------------------------------------------------
 // 路由解析：权重随机负载均衡 + 上游/模型两级熔断
@@ -68,6 +72,7 @@ func (s *Service) ResolveRoute(ctx context.Context, input ResolveRouteInput) (*R
 		return nil, ErrAllRoutesUnavailable
 	}
 
+	var shortestRateLimitBackoff time.Duration
 	for start := 0; start < len(available); {
 		priority := available[start].RoutePriority
 		group := make([]routeCandidate, 0, 4)
@@ -86,7 +91,10 @@ func (s *Service) ResolveRoute(ctx context.Context, input ResolveRouteInput) (*R
 				s.warn("unsafe_upstream_base_url_skipped", zap.Uint("upstream_id", row.UpstreamID), zap.Error(err))
 				continue
 			}
-			if s.isUpstreamRateLimited(ctx, row.UpstreamID) {
+			if remaining := s.routeRateLimitBackoff(ctx, row.UpstreamID, row.RouteID); remaining > 0 {
+				if shortestRateLimitBackoff == 0 || remaining < shortestRateLimitBackoff {
+					shortestRateLimitBackoff = remaining
+				}
 				continue
 			}
 
@@ -148,6 +156,9 @@ func (s *Service) ResolveRoute(ctx context.Context, input ResolveRouteInput) (*R
 		}
 	}
 
+	if shortestRateLimitBackoff > 0 {
+		return nil, &RoutesRateLimitedError{RetryAfter: shortestRateLimitBackoff}
+	}
 	return nil, ErrAllRoutesUnavailable
 }
 
@@ -182,10 +193,18 @@ func routeScopeAllowsModelAccess(routeScope string, modelAccessScope string) boo
 
 // MarkRouteSuccess 标记上游调用成功，清除失败计数。
 func (s *Service) MarkRouteSuccess(ctx context.Context, route *ResolvedRoute) {
-	if route == nil || route.UpstreamID == 0 {
+	if route == nil || route.UpstreamID == 0 || s.cache == nil {
 		return
 	}
-	metaCtx := bookkeepingContext(ctx)
+	metaCtx, cancel := background.WithTimeout(ctx, routeBookkeepingTimeout)
+	defer cancel()
+	if err := s.cache.ClearRateLimitBackoff(metaCtx, route.UpstreamID, route.RouteID); err != nil {
+		s.warn("clear_route_rate_limit_backoff_failed",
+			zap.Uint("upstream_id", route.UpstreamID),
+			zap.Uint("route_id", route.RouteID),
+			zap.Error(err),
+		)
+	}
 	if route.UpstreamProbeGranted {
 		if err := s.cache.ClearUpstreamCircuitKeys(metaCtx, route.UpstreamID); err != nil {
 			s.warn("clear_upstream_circuit_keys_failed", zap.Uint("upstream_id", route.UpstreamID), zap.Error(err))
@@ -206,12 +225,13 @@ func (s *Service) MarkRouteSuccess(ctx context.Context, route *ResolvedRoute) {
 
 // MarkRouteFailure 标记上游调用失败，按照错误分类执行熔断或退避。
 func (s *Service) MarkRouteFailure(ctx context.Context, route *ResolvedRoute, cause error) {
-	if route == nil || route.UpstreamID == 0 {
+	if route == nil || route.UpstreamID == 0 || s.cache == nil {
 		return
 	}
 
-	metaCtx := bookkeepingContext(ctx)
-	lastErrMsg := truncateMessage(strings.TrimSpace(errorMessage(cause)), 255)
+	metaCtx, cancel := background.WithTimeout(ctx, routeBookkeepingTimeout)
+	defer cancel()
+	lastErrMsg := routeFailureSummary(cause)
 	s.cache.RecordFailureMetadata(metaCtx, route.UpstreamID, lastErrMsg)
 
 	switch s.classifyRouteFailure(metaCtx, cause) {
@@ -220,11 +240,8 @@ func (s *Service) MarkRouteFailure(ctx context.Context, route *ResolvedRoute, ca
 		return
 	case routeFailureRateLimit:
 		s.releaseGrantedRouteProbes(metaCtx, route)
-		s.recordRateLimitBackoff(metaCtx, route.UpstreamID)
+		s.recordRateLimitBackoff(metaCtx, route, cause)
 	default:
-		if s.cache == nil {
-			return
-		}
 		defaults := s.loadBreakerDefaults(metaCtx)
 		if !defaults.Enabled {
 			s.releaseGrantedRouteProbes(metaCtx, route)
@@ -237,14 +254,6 @@ func (s *Service) MarkRouteFailure(ctx context.Context, route *ResolvedRoute, ca
 // ---------------------------------------------------------------------------
 // 熔断辅助
 // ---------------------------------------------------------------------------
-
-// bookkeepingContext 返回一个不受请求取消影响的 context，用于后台计量写入。
-func bookkeepingContext(ctx context.Context) context.Context {
-	if ctx == nil {
-		return context.Background()
-	}
-	return context.WithoutCancel(ctx)
-}
 
 func (s *Service) recordCircuitFailure(ctx context.Context, route *ResolvedRoute, defaults domainchannel.BreakerDefaults) {
 	modelCircuitKey := routeModelCircuitKey(route)
@@ -314,11 +323,20 @@ func (s *Service) recordCircuitFailure(ctx context.Context, route *ResolvedRoute
 	}
 }
 
-func (s *Service) isUpstreamRateLimited(ctx context.Context, upstreamID uint) bool {
-	if upstreamID == 0 {
-		return false
+func (s *Service) routeRateLimitBackoff(ctx context.Context, upstreamID uint, routeID uint) time.Duration {
+	if s.cache == nil || upstreamID == 0 || routeID == 0 {
+		return 0
 	}
-	return s.cache.IsRateLimited(ctx, upstreamID)
+	remaining, err := s.cache.GetRateLimitBackoff(ctx, upstreamID, routeID)
+	if err != nil {
+		s.warn("get_route_rate_limit_backoff_failed",
+			zap.Uint("upstream_id", upstreamID),
+			zap.Uint("route_id", routeID),
+			zap.Error(err),
+		)
+		return 0
+	}
+	return remaining
 }
 
 func (s *Service) checkUpstreamCircuitState(ctx context.Context, upstreamID uint) (string, error) {
@@ -515,11 +533,11 @@ func (s *Service) nextAPIKeyIndex(ctx context.Context, upstreamID uint) uint64 {
 			return uint64(idx)
 		}
 	}
-	return nextLocalAPIKeyIndex(upstreamID)
+	return s.nextLocalAPIKeyIndex(upstreamID)
 }
 
-func nextLocalAPIKeyIndex(upstreamID uint) uint64 {
-	counter, _ := localAPIKeyCounters.LoadOrStore(upstreamID, &atomic.Uint64{})
+func (s *Service) nextLocalAPIKeyIndex(upstreamID uint) uint64 {
+	counter, _ := s.localAPIKeyCounters.LoadOrStore(upstreamID, &atomic.Uint64{})
 	return counter.(*atomic.Uint64).Add(1) - 1
 }
 
@@ -569,20 +587,8 @@ func isCircuitFailure(cause error) bool {
 	if errors.Is(cause, context.DeadlineExceeded) {
 		return true
 	}
-	message := strings.ToLower(errorMessage(cause))
-	switch {
-	case strings.Contains(message, "timeout"),
-		strings.Contains(message, "deadline exceeded"),
-		strings.Contains(message, "connection refused"),
-		strings.Contains(message, "connection reset"),
-		strings.Contains(message, "broken pipe"),
-		strings.Contains(message, "dial tcp"),
-		strings.Contains(message, "no such host"),
-		strings.Contains(message, "eof"):
-		return true
-	default:
-		return false
-	}
+	var networkErr net.Error
+	return errors.As(cause, &networkErr)
 }
 
 // ShouldFailoverRoute reports whether a request can be retried on a different
@@ -616,18 +622,51 @@ func matchesFailureRule(rules []string, target string) bool {
 	return false
 }
 
-func (s *Service) recordRateLimitBackoff(ctx context.Context, upstreamID uint) {
-	if upstreamID == 0 {
+func (s *Service) recordRateLimitBackoff(ctx context.Context, route *ResolvedRoute, cause error) {
+	if s.cache == nil || route == nil || route.UpstreamID == 0 || route.RouteID == 0 {
 		return
 	}
 	defaults := s.loadRateLimitDefaults(ctx)
-	if err := s.cache.RecordRateLimitBackoff(ctx, upstreamID, repository.RateLimitBackoffParams{
+	if err := s.cache.RecordRateLimitBackoff(ctx, repository.RateLimitBackoffParams{
+		UpstreamID:        route.UpstreamID,
+		RouteID:           route.RouteID,
 		BackoffBaseSec:    defaults.BackoffBaseSec,
 		BackoffMaxSec:     defaults.BackoffMaxSec,
 		BackoffMultiplier: defaults.BackoffMultiplier,
+		RetryAfterSec:     upstreamRetryAfterSeconds(cause, time.Now()),
 	}); err != nil {
-		s.warn("record_rate_limit_backoff_failed", zap.Uint("upstream_id", upstreamID), zap.Error(err))
+		s.warn("record_rate_limit_backoff_failed",
+			zap.Uint("upstream_id", route.UpstreamID),
+			zap.Uint("route_id", route.RouteID),
+			zap.Error(err),
+		)
 	}
+}
+
+func upstreamRetryAfterSeconds(cause error, now time.Time) int {
+	var upstreamErr *llm.UpstreamError
+	if !errors.As(cause, &upstreamErr) || upstreamErr.Debug == nil {
+		return 0
+	}
+	raw := ""
+	for key, value := range upstreamErr.Debug.Response.Headers {
+		if strings.EqualFold(strings.TrimSpace(key), "Retry-After") {
+			raw = strings.TrimSpace(value)
+			break
+		}
+	}
+	if raw == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(raw); err == nil {
+		return max(seconds, 0)
+	}
+	retryAt, err := http.ParseTime(raw)
+	if err != nil || !retryAt.After(now) {
+		return 0
+	}
+	remaining := retryAt.Sub(now)
+	return int((remaining + time.Second - 1) / time.Second)
 }
 
 // loadBreakerErrorClassification 从 repository 读取熔断错误分类配置（含默认值）。
@@ -696,9 +735,19 @@ func (s *Service) loadRateLimitDefaults(ctx context.Context) domainchannel.RateL
 	return cfg
 }
 
-func errorMessage(err error) string {
+func routeFailureSummary(err error) string {
 	if err == nil {
 		return ""
 	}
-	return err.Error()
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "upstream request timed out"
+	}
+	var upstreamErr *llm.UpstreamError
+	if errors.As(err, &upstreamErr) {
+		if upstreamErr.StatusCode > 0 {
+			return "upstream request failed with status " + strconv.Itoa(upstreamErr.StatusCode)
+		}
+		return "upstream request failed"
+	}
+	return "upstream request failed"
 }

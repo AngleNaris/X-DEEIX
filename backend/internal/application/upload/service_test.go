@@ -3,17 +3,54 @@ package upload
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
+	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	appstorage "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/objectstorage"
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	domainuser "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/user"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/objectstore"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 )
+
+func TestOpenObjectStoreRequiresProvider(t *testing.T) {
+	service := NewServiceWithRuntime(config.NewRuntime(config.Config{}), nil, nil, Hooks{}, ErrorSet{}, "")
+	if _, err := service.openObjectStore(t.Context()); !errors.Is(err, appstorage.ErrProviderNotConfigured) {
+		t.Fatalf("openObjectStore() error = %v, want ErrProviderNotConfigured", err)
+	}
+}
+
+func TestPrepareTemporaryFileUsesUploadPolicyWithoutPersistence(t *testing.T) {
+	service := NewServiceWithRuntime(config.NewRuntime(config.Config{
+		MaxUploadFileBytes:   1024,
+		FileAllowedMIMETypes: "text/plain",
+	}), nil, nil, Hooks{}, ErrorSet{}, "")
+	prepared, err := service.PrepareTemporaryFile(t.Context(), TemporaryFileInput{
+		FileName:     "notes.txt",
+		MimeType:     "text/plain",
+		DeclaredSize: int64(len("temporary content")),
+		Reader:       strings.NewReader("temporary content"),
+	})
+	if err != nil {
+		t.Fatalf("prepare temporary file: %v", err)
+	}
+	if prepared.FileCategory != "text" || prepared.DetectedMIME != "text/plain" {
+		t.Fatalf("unexpected prepared metadata: %#v", prepared)
+	}
+	if _, err = os.Stat(prepared.AbsolutePath); err != nil {
+		t.Fatalf("temporary file missing before cleanup: %v", err)
+	}
+	prepared.Cleanup()
+	if _, err = os.Stat(prepared.AbsolutePath); !os.IsNotExist(err) {
+		t.Fatalf("temporary file still exists after cleanup: %v", err)
+	}
+}
 
 func TestUploadFileReturnsExistingActiveDuplicate(t *testing.T) {
 	ctx := context.Background()
@@ -47,6 +84,66 @@ func TestUploadFileReturnsExistingActiveDuplicate(t *testing.T) {
 	}
 	if second.File.LastAccessedAt == nil {
 		t.Fatal("duplicate upload should touch the existing file access time")
+	}
+}
+
+func TestUploadFileSerializesConcurrentIdenticalUploads(t *testing.T) {
+	ctx := context.Background()
+	repo := newUploadTestRepo()
+	repo.createDelay = 25 * time.Millisecond
+	store := newUploadTestStore()
+	service := newUploadTestService(repo, store)
+	start := make(chan struct{})
+	results := make(chan *UploadFileResult, 2)
+	errors := make(chan error, 2)
+	var uploads sync.WaitGroup
+
+	for _, name := range []string{"notes.md", "copy.md"} {
+		uploads.Add(1)
+		go func(fileName string) {
+			defer uploads.Done()
+			<-start
+			result, err := service.UploadFile(ctx, uploadTestInput(fileName, "same content"))
+			if err != nil {
+				errors <- err
+				return
+			}
+			results <- result
+		}(name)
+	}
+	close(start)
+	uploads.Wait()
+	close(results)
+	close(errors)
+
+	for err := range errors {
+		t.Fatalf("concurrent upload failed: %v", err)
+	}
+	var fileID string
+	reusedCount := 0
+	resultCount := 0
+	for result := range results {
+		resultCount++
+		if fileID == "" {
+			fileID = result.File.FileID
+		} else if result.File.FileID != fileID {
+			t.Fatalf("concurrent duplicates returned different file ids: %s and %s", fileID, result.File.FileID)
+		}
+		if result.Reused {
+			reusedCount++
+		}
+	}
+	if resultCount != 2 {
+		t.Fatalf("concurrent uploads returned %d results, want 2", resultCount)
+	}
+	if reusedCount != 1 {
+		t.Fatalf("concurrent uploads reused count = %d, want 1", reusedCount)
+	}
+	if got := repo.activeFileCount(); got != 1 {
+		t.Fatalf("concurrent uploads created %d active rows, want 1", got)
+	}
+	if got := store.objectCount(); got != 1 {
+		t.Fatalf("concurrent uploads left %d physical objects, want 1", got)
 	}
 }
 
@@ -456,6 +553,7 @@ func (p uploadTestStoreProvider) Open(ctx context.Context) (objectstore.Store, e
 }
 
 type uploadTestStore struct {
+	mu      sync.Mutex
 	objects map[string][]byte
 }
 
@@ -469,27 +567,36 @@ func (s *uploadTestStore) Put(ctx context.Context, key string, body io.Reader, o
 	if err != nil {
 		return objectstore.ObjectInfo{}, err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.objects[key] = append([]byte(nil), data...)
 	return objectstore.ObjectInfo{Key: key, SizeBytes: int64(len(data)), ContentType: opts.ContentType, ModTime: time.Now()}, nil
 }
 
 func (s *uploadTestStore) Open(ctx context.Context, key string) (io.ReadCloser, objectstore.ObjectInfo, error) {
 	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	data, ok := s.objects[key]
 	if !ok {
 		return nil, objectstore.ObjectInfo{}, objectstore.ErrNotFound
 	}
-	return io.NopCloser(bytes.NewReader(data)), objectstore.ObjectInfo{Key: key, SizeBytes: int64(len(data)), ModTime: time.Now()}, nil
+	copyOfData := append([]byte(nil), data...)
+	return io.NopCloser(bytes.NewReader(copyOfData)), objectstore.ObjectInfo{Key: key, SizeBytes: int64(len(copyOfData)), ModTime: time.Now()}, nil
 }
 
 func (s *uploadTestStore) Delete(ctx context.Context, key string) error {
 	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	delete(s.objects, key)
 	return nil
 }
 
 func (s *uploadTestStore) Materialize(ctx context.Context, key string) (string, func(), error) {
 	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if _, ok := s.objects[key]; !ok {
 		return "", nil, objectstore.ErrNotFound
 	}
@@ -497,10 +604,13 @@ func (s *uploadTestStore) Materialize(ctx context.Context, key string) (string, 
 }
 
 func (s *uploadTestStore) objectCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return len(s.objects)
 }
 
 type uploadTestRepo struct {
+	mu                      sync.Mutex
 	user                    domainuser.User
 	nextID                  uint
 	files                   []domainconversation.FileObject
@@ -508,6 +618,7 @@ type uploadTestRepo struct {
 	missNextDuplicateLookup bool
 	failNextCreateDuplicate bool
 	referencedFileIDs       map[string]bool
+	createDelay             time.Duration
 }
 
 func newUploadTestRepo() *uploadTestRepo {
@@ -521,7 +632,7 @@ func newUploadTestRepo() *uploadTestRepo {
 	}
 }
 
-func (r *uploadTestRepo) ListFileObjectsByUserWithFilter(context.Context, uint, int, int, string, string, string) ([]domainconversation.FileObject, int64, error) {
+func (r *uploadTestRepo) ListFileObjectsByUserWithFilter(context.Context, repository.ListFileObjectsInput) ([]domainconversation.FileObject, int64, error) {
 	return nil, 0, nil
 }
 
@@ -543,13 +654,15 @@ func (r *uploadTestRepo) RenameFileObjectByID(context.Context, uint, string, str
 	return nil, nil
 }
 
-func (r *uploadTestRepo) UpdateFileObjectRagOptOut(context.Context, uint, string, bool) (*domainconversation.FileObject, error) {
+func (r *uploadTestRepo) UpdateFileObjectRAGOptOut(context.Context, uint, string, bool) (*domainconversation.FileObject, error) {
 	return nil, nil
 }
 
 func (r *uploadTestRepo) UpdateFileObjectFavorite(context.Context, uint, string, bool) (*domainconversation.FileObject, error) { return nil, nil }
 
 func (r *uploadTestRepo) TouchFileObjectLastAccessedAt(_ context.Context, userID uint, fileID string, accessedAt time.Time) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for i := range r.files {
 		if r.files[i].UserID == userID && r.files[i].FileID == fileID && r.files[i].Status == "active" {
 			r.files[i].LastAccessedAt = &accessedAt
@@ -600,6 +713,8 @@ func (r *uploadTestRepo) GetUserByID(context.Context, uint) (*domainuser.User, e
 }
 
 func (r *uploadTestRepo) GetLatestActiveFileObjectBySHA(_ context.Context, userID uint, sha256 string, sizeBytes int64) (*domainconversation.FileObject, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.missNextDuplicateLookup {
 		r.missNextDuplicateLookup = false
 		return nil, nil
@@ -615,6 +730,11 @@ func (r *uploadTestRepo) GetLatestActiveFileObjectBySHA(_ context.Context, userI
 }
 
 func (r *uploadTestRepo) CreateFileObjectAndConsumeQuota(_ context.Context, item *domainconversation.FileObject, quotaLimit int64) (*domainconversation.StorageQuota, error) {
+	if r.createDelay > 0 {
+		time.Sleep(r.createDelay)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.failNextCreateDuplicate {
 		r.failNextCreateDuplicate = false
 		return nil, repository.ErrDuplicate
@@ -670,6 +790,8 @@ func (r *uploadTestRepo) DeleteFileObjectAndReleaseQuota(_ context.Context, user
 }
 
 func (r *uploadTestRepo) GetOrInitUserStorageQuota(_ context.Context, _ uint, quotaLimit int64) (*domainconversation.StorageQuota, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if quotaLimit < 0 {
 		quotaLimit = 0
 	}
@@ -678,6 +800,8 @@ func (r *uploadTestRepo) GetOrInitUserStorageQuota(_ context.Context, _ uint, qu
 }
 
 func (r *uploadTestRepo) activeFileCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	count := 0
 	for _, item := range r.files {
 		if item.Status == "active" {
@@ -688,6 +812,8 @@ func (r *uploadTestRepo) activeFileCount() int {
 }
 
 func (r *uploadTestRepo) fileStatus(fileID string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	for _, item := range r.files {
 		if item.FileID == fileID {
 			return item.Status

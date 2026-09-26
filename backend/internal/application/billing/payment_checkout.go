@@ -3,19 +3,19 @@ package billing
 import (
 	"context"
 	"fmt"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
 	"net/url"
 
 	domainbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/billing"
-	epayinfra "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/payment/epay"
-	stripeinfra "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/payment/stripe"
+	paymentport "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/payment"
 )
 
 type stripeCheckoutProvider interface {
-	CreateCheckoutSession(ctx context.Context, input stripeinfra.CheckoutInput) (stripeinfra.CheckoutResult, error)
+	CreateCheckoutSession(ctx context.Context, input paymentport.StripeCheckoutInput) (paymentport.CheckoutResult, error)
 }
 
 type epayCheckoutProvider interface {
-	CreateCheckout(ctx context.Context, input epayinfra.CheckoutInput) (epayinfra.CheckoutResult, error)
+	CreateCheckout(ctx context.Context, input paymentport.EPayCheckoutInput) (paymentport.CheckoutResult, error)
 	VerifySignature(values url.Values, key string) bool
 }
 
@@ -77,7 +77,7 @@ func (s *PaymentCheckoutService) CreateEPayCheckout(ctx context.Context, input E
 		return PaymentCheckoutResult{}, fmt.Errorf("payment order is required")
 	}
 	product := DescribePaymentProduct(input.Order, input.Plan)
-	result, err := s.epay.CreateCheckout(ctx, epayinfra.CheckoutInput{
+	result, err := s.epay.CreateCheckout(ctx, paymentport.EPayCheckoutInput{
 		GatewayURL:     input.GatewayURL,
 		MerchantID:     input.MerchantID,
 		MerchantKey:    input.MerchantKey,
@@ -104,7 +104,7 @@ func (s *PaymentCheckoutService) CreateStripeCheckoutSession(ctx context.Context
 		return PaymentCheckoutResult{}, fmt.Errorf("payment order is required")
 	}
 	product := DescribePaymentProduct(input.Order, input.Plan)
-	result, err := s.stripe.CreateCheckoutSession(ctx, stripeinfra.CheckoutInput{
+	result, err := s.stripe.CreateCheckoutSession(ctx, paymentport.StripeCheckoutInput{
 		SecretKey:          input.SecretKey,
 		SuccessURL:         input.SuccessURL,
 		CancelURL:          input.CancelURL,
@@ -134,13 +134,13 @@ func DescribePaymentProduct(order *domainbilling.PaymentOrder, plan *domainbilli
 		}
 		return PaymentProduct{
 			Name:        "按量余额充值",
-			Description: fmt.Sprintf("充值 %s %.2f 至按量余额", firstNonEmpty(order.PayCurrency, order.BaseCurrency, "USD"), float64(amountCents)/100),
+			Description: fmt.Sprintf("充值 %s %.2f 至按量余额", textutil.FirstNonEmpty(order.PayCurrency, order.BaseCurrency, "USD"), float64(amountCents)/100),
 		}
 	}
 	if plan != nil {
 		return PaymentProduct{
-			Name:        firstNonEmpty(plan.Name, plan.Code),
-			Description: firstNonEmpty(plan.Description, plan.Code),
+			Name:        textutil.FirstNonEmpty(plan.Name, plan.Code),
+			Description: textutil.FirstNonEmpty(plan.Description, plan.Code),
 		}
 	}
 	return PaymentProduct{Name: "订阅方案", Description: "订阅方案支付"}

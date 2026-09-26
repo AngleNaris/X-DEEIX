@@ -9,21 +9,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"sort"
 	"strings"
 	"time"
 
+	appaudit "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/audit"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/billing"
 	appstorage "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/objectstorage"
 	userapp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/user"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/userview"
 	domainuser "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/user"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/geoip"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/identityprovider"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/conv"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/token"
+	idpport "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/identityprovider"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/requestmeta"
 	"github.com/google/uuid"
@@ -39,14 +40,26 @@ const accessTokenSessionClockSkew = 2 * time.Minute
 type Service struct {
 	cfg                  *config.Runtime
 	repo                 repository.AuthRepository
-	geoResolver          *geoip.Client
+	geoResolver          GeoResolver
 	subscriptionResolver subscriptionResolver
-	providerHTTPClient   *identityprovider.Client
+	providerHTTPClient   identityProviderClient
 	logger               *zap.Logger
 	storeProvider        appstorage.Provider
 	auditWriter          auditWriter
 	avatarFileValidator  avatarFileValidator
 	providerAuthBridge   repository.ProviderAuthBridgeRepository
+}
+
+// GeoResolver 解析客户端 IP 的地理与网络归属信息。
+// 导出供组合根声明变量：GeoIP 关闭时应传 nil 接口，而不是 typed-nil 指针。
+type GeoResolver interface {
+	Lookup(ctx context.Context, rawIP string) (requestmeta.SessionAuditContext, error)
+}
+
+// identityProviderClient 面向可信端点白名单的身份源 HTTP 客户端。
+type identityProviderClient interface {
+	Get(ctx context.Context, targetURL string, trustedEndpoints []string, headers map[string]string) (idpport.Response, error)
+	PostForm(ctx context.Context, targetURL string, trustedEndpoints []string, form url.Values, headers map[string]string) (idpport.Response, error)
 }
 
 type subscriptionResolver interface {
@@ -58,7 +71,7 @@ type subscriptionResolver interface {
 }
 
 type auditWriter interface {
-	Write(ctx context.Context, requestID string, actorUserID uint, action string, resource string, resourceID string, ip string, userAgent string, detail interface{})
+	Write(ctx context.Context, input appaudit.WriteInput)
 }
 
 type avatarFileValidator interface {
@@ -69,15 +82,14 @@ type avatarFileValidator interface {
 func NewServiceWithRuntime(
 	cfg *config.Runtime,
 	repo repository.AuthRepository,
-	geoResolver *geoip.Client,
-	providerHTTPClient *identityprovider.Client,
+	geoResolver GeoResolver,
+	providerHTTPClient identityProviderClient,
 ) *Service {
 	return &Service{
 		cfg:                cfg,
 		repo:               repo,
 		geoResolver:        geoResolver,
 		providerHTTPClient: providerHTTPClient,
-		storeProvider:      appstorage.NewRuntimeProvider(cfg, nil),
 	}
 }
 
@@ -123,16 +135,7 @@ func (s *Service) SetAuditWriter(writer auditWriter) {
 }
 
 // AuditInput 描述认证域审计写入。
-type AuditInput struct {
-	UserID     uint
-	RequestID  string
-	Action     string
-	Resource   string
-	ResourceID string
-	ClientIP   string
-	UserAgent  string
-	Detail     interface{}
-}
+type AuditInput = appaudit.WriteInput
 
 // BootstrapSuperAdmin 表示首次启动时自动创建的超级管理员凭据。
 type BootstrapSuperAdmin struct {
@@ -145,17 +148,7 @@ func (s *Service) RecordAudit(ctx context.Context, input AuditInput) {
 	if s.auditWriter == nil {
 		return
 	}
-	s.auditWriter.Write(
-		ctx,
-		strings.TrimSpace(input.RequestID),
-		input.UserID,
-		strings.TrimSpace(input.Action),
-		strings.TrimSpace(input.Resource),
-		strings.TrimSpace(input.ResourceID),
-		strings.TrimSpace(input.ClientIP),
-		strings.TrimSpace(input.UserAgent),
-		input.Detail,
-	)
+	s.auditWriter.Write(ctx, input)
 }
 
 func (s *Service) warn(message string, fields ...zap.Field) {
@@ -203,15 +196,18 @@ func (s *Service) EnsureBootstrapSuperAdmin(ctx context.Context) (*BootstrapSupe
 		Locale:      "en-US",
 	}
 
-	if err = s.repo.CreateWithCredential(ctx, item, domainuser.Credential{
-		PasswordHash:      string(passwordHash),
-		PasswordAlgo:      "bcrypt",
-		PasswordEnabled:   true,
-		PasswordUpdatedAt: &now,
-		PasswordSetAt:     &now,
-		PasswordOrigin:    domainuser.PasswordOriginAdminCreated,
-		MustResetPassword: true,
-	}, 0, 0, nil, false); err != nil {
+	if err = s.repo.CreateWithCredential(ctx, repository.CreateWithCredentialInput{
+		User: item,
+		Credential: domainuser.Credential{
+			PasswordHash:      string(passwordHash),
+			PasswordAlgo:      "bcrypt",
+			PasswordEnabled:   true,
+			PasswordUpdatedAt: &now,
+			PasswordSetAt:     &now,
+			PasswordOrigin:    domainuser.PasswordOriginAdminCreated,
+			MustResetPassword: true,
+		},
+	}); err != nil {
 		return nil, err
 	}
 	return &BootstrapSuperAdmin{Username: username, Password: bootstrapPassword}, nil
@@ -241,29 +237,55 @@ func (s *Service) Login(
 			reason = "account_locked"
 		}
 		s.RecordAuthEvent(
-			ctx, 0, requestID, "login", "failure", reason,
-			normalizedAuditCtx.ClientIP, normalizedAuditCtx.UserAgent,
-			marshalAuthEventDetail(map[string]string{"username": strings.TrimSpace(username)}),
+			ctx,
+			repository.AuthEventInput{
+				RequestID: requestID,
+				EventType: "login",
+				Result:    "failure",
+				Reason:    reason,
+				ClientIP:  normalizedAuditCtx.ClientIP,
+				UserAgent: normalizedAuditCtx.UserAgent,
+				DetailJSON: marshalAuthEventDetail(map[string]string{
+					"username": strings.TrimSpace(username),
+				}),
+			},
 		)
 		return nil, err
 	}
 	if result.TwoFactorRequired {
 		s.RecordAuthEvent(
-			ctx, result.User.ID, requestID, "login", "challenge", "two_factor_required",
-			normalizedAuditCtx.ClientIP, normalizedAuditCtx.UserAgent,
-			marshalAuthEventDetail(map[string]string{"username": result.User.Username}),
+			ctx,
+			repository.AuthEventInput{
+				UserID:    result.User.ID,
+				RequestID: requestID,
+				EventType: "login",
+				Result:    "challenge",
+				Reason:    "two_factor_required",
+				ClientIP:  normalizedAuditCtx.ClientIP,
+				UserAgent: normalizedAuditCtx.UserAgent,
+				DetailJSON: marshalAuthEventDetail(map[string]string{
+					"username": result.User.Username,
+				}),
+			},
 		)
 		return result, nil
 	}
 	s.RecordAuthEvent(
-		ctx, result.User.ID, requestID, "login", "success", "",
-		normalizedAuditCtx.ClientIP, normalizedAuditCtx.UserAgent,
-		marshalAuthEventDetail(map[string]interface{}{
-			"username":       result.User.Username,
-			"session_id":     result.SessionID,
-			"client_ip":      normalizedAuditCtx.ClientIP,
-			"location_label": normalizedAuditCtx.LocationLabel(),
-		}),
+		ctx,
+		repository.AuthEventInput{
+			UserID:    result.User.ID,
+			RequestID: requestID,
+			EventType: "login",
+			Result:    "success",
+			ClientIP:  normalizedAuditCtx.ClientIP,
+			UserAgent: normalizedAuditCtx.UserAgent,
+			DetailJSON: marshalAuthEventDetail(map[string]any{
+				"username":       result.User.Username,
+				"session_id":     result.SessionID,
+				"client_ip":      normalizedAuditCtx.ClientIP,
+				"location_label": normalizedAuditCtx.LocationLabel(),
+			}),
+		},
 	)
 	return result, nil
 }
@@ -323,24 +345,27 @@ func (s *Service) doLogin(
 		}
 	}
 
-	if item.Status == domainuser.StatusLocked {
-		return nil, ErrAccountLocked
-	}
-	if item.Status != domainuser.StatusActive {
-		return nil, ErrInvalidCredentials
-	}
-	if credential.LockedUntil != nil && now.Before(*credential.LockedUntil) {
+	// 锁定期间先复核密码：只有持正确密码的账户本人能看到"账户已锁定"，
+	// 其余请求继续返回通用凭据错误，避免通过响应差异探测账号是否存在。
+	lockedUntil := credential.LockedUntil
+	if item.Status == domainuser.StatusLocked || (lockedUntil != nil && now.Before(*lockedUntil)) {
 		if item.Status != domainuser.StatusLocked {
 			if lockErr := s.repo.UpdateUserStatus(ctx, item.ID, domainuser.StatusLocked); lockErr != nil {
 				s.warn("lock_account_failed", zap.Uint("user_id", item.ID), zap.Error(lockErr))
 			}
 		}
-		return nil, ErrAccountLocked
+		if bcrypt.CompareHashAndPassword([]byte(credential.PasswordHash), []byte(password)) == nil {
+			return nil, newAccountLockedError(lockedUntil, now)
+		}
+		return nil, ErrInvalidCredentials
+	}
+	if item.Status != domainuser.StatusActive {
+		return nil, ErrInvalidCredentials
 	}
 
 	if err = bcrypt.CompareHashAndPassword([]byte(credential.PasswordHash), []byte(password)); err != nil {
-		lockUntil := now.Add(s.loginLockDuration())
-		updatedCredential, markErr := s.repo.MarkLoginFailure(ctx, item.ID, s.loginLockThreshold(), lockUntil)
+		threshold, lockDuration := s.loginLockPolicy()
+		updatedCredential, markErr := s.repo.MarkLoginFailure(ctx, item.ID, threshold, now.Add(lockDuration))
 		if markErr != nil {
 			return nil, markErr
 		}
@@ -348,7 +373,6 @@ func (s *Service) doLogin(
 			if lockErr := s.repo.UpdateUserStatus(ctx, item.ID, domainuser.StatusLocked); lockErr != nil {
 				s.warn("lock_account_failed", zap.Uint("user_id", item.ID), zap.Error(lockErr))
 			}
-			return nil, ErrAccountLocked
 		}
 		return nil, ErrInvalidCredentials
 	}
@@ -445,6 +469,7 @@ type UpdateProfileInput struct {
 	AppearancePreferences *string
 }
 
+// UpdateUsernameInput contains the one-time username change request.
 type UpdateUsernameInput struct {
 	Username string
 }
@@ -524,6 +549,7 @@ func shouldRequireInitialUsername(item domainuser.User, adminUsername string) bo
 	return false
 }
 
+// CompleteOnboarding completes required first-login account setup.
 func (s *Service) CompleteOnboarding(
 	ctx context.Context,
 	userID uint,
@@ -549,7 +575,7 @@ func (s *Service) CompleteOnboarding(
 			return nil, false, policyErr
 		}
 		if isBootstrapSuperAdminAdminCreatedPassword(*item, credential) && passwordMatchesCredential(trimmedPassword, credential) {
-			return nil, false, fmt.Errorf("new password must be different from the bootstrap password")
+			return nil, false, ErrPasswordReuse
 		}
 		passwordHash, hashErr := bcrypt.GenerateFromPassword([]byte(trimmedPassword), passwordHashCost)
 		if hashErr != nil {
@@ -574,9 +600,18 @@ func (s *Service) CompleteOnboarding(
 		}
 		normalizedAuditCtx := s.resolveSessionAuditContext(ctx, auditCtx)
 		s.RecordAuthEvent(
-			ctx, userID, requestID, "password_change", "success", "",
-			normalizedAuditCtx.ClientIP, normalizedAuditCtx.UserAgent,
-			marshalAuthEventDetail(map[string]interface{}{"initial_onboarding": true}),
+			ctx,
+			repository.AuthEventInput{
+				UserID:    userID,
+				RequestID: requestID,
+				EventType: "password_change",
+				Result:    "success",
+				ClientIP:  normalizedAuditCtx.ClientIP,
+				UserAgent: normalizedAuditCtx.UserAgent,
+				DetailJSON: marshalAuthEventDetail(map[string]any{
+					"initial_onboarding": true,
+				}),
+			},
 		)
 	}
 	return updated, passwordChanged, nil
@@ -631,9 +666,36 @@ func (s *Service) resolveSessionAuditContext(
 
 	enriched, err := s.geoResolver.Lookup(ctx, normalized.ClientIP)
 	if err != nil {
+		s.warnGeoLookupFailure("audit_context", normalized.ClientIP, err)
 		return normalized
 	}
 	return mergeSessionAuditContext(normalized, enriched)
+}
+
+func (s *Service) warnGeoLookupFailure(stage string, rawIP string, err error) {
+	if err == nil {
+		return
+	}
+	clientIP, parseErr := netip.ParseAddr(strings.TrimSpace(rawIP))
+	if parseErr != nil ||
+		!clientIP.IsGlobalUnicast() ||
+		clientIP.IsPrivate() ||
+		clientIP.IsLoopback() ||
+		clientIP.IsLinkLocalUnicast() {
+		return
+	}
+	reason := "lookup_failed"
+	if errors.Is(err, context.Canceled) {
+		reason = "request_canceled"
+	} else if errors.Is(err, context.DeadlineExceeded) {
+		reason = "timeout"
+	}
+	s.warn(
+		"session_geo_lookup_failed",
+		zap.String("stage", stage),
+		zap.String("reason", reason),
+		zap.String("error_type", fmt.Sprintf("%T", err)),
+	)
 }
 
 // mergeSessionAuditContext 将 enriched 中的地理信息补填到 base 中，仅覆盖 base 的空字段。
@@ -670,24 +732,31 @@ func mergeSessionAuditContext(
 	return result
 }
 
-func sessionActivityInputFromSnapshot(snapshot sessionAuditSnapshot, lastSeenAt time.Time) repository.UpdateSessionActivityInput {
-	return repository.UpdateSessionActivityInput{
-		LastSeenAt:   &lastSeenAt,
-		ClientIP:     &snapshot.ClientIP,
-		UserAgent:    &snapshot.UserAgent,
-		DeviceName:   &snapshot.DeviceName,
-		BrowserName:  &snapshot.BrowserName,
-		OSName:       &snapshot.OSName,
-		DeviceType:   &snapshot.DeviceType,
-		GeoSource:    &snapshot.GeoSource,
-		GeoAccuracy:  &snapshot.GeoAccuracy,
-		CountryCode:  &snapshot.CountryCode,
-		RegionName:   &snapshot.RegionName,
-		CityName:     &snapshot.CityName,
-		TimezoneName: &snapshot.TimezoneName,
-		IPLatitude:   &snapshot.IPLatitude,
-		IPLongitude:  &snapshot.IPLongitude,
+func sessionActivityInputFromSnapshot(
+	snapshot sessionAuditSnapshot,
+	lastSeenAt time.Time,
+	includeGeo bool,
+) repository.UpdateSessionActivityInput {
+	input := repository.UpdateSessionActivityInput{
+		LastSeenAt:  &lastSeenAt,
+		ClientIP:    &snapshot.ClientIP,
+		UserAgent:   &snapshot.UserAgent,
+		DeviceName:  &snapshot.DeviceName,
+		BrowserName: &snapshot.BrowserName,
+		OSName:      &snapshot.OSName,
+		DeviceType:  &snapshot.DeviceType,
 	}
+	if includeGeo {
+		input.GeoSource = &snapshot.GeoSource
+		input.GeoAccuracy = &snapshot.GeoAccuracy
+		input.CountryCode = &snapshot.CountryCode
+		input.RegionName = &snapshot.RegionName
+		input.CityName = &snapshot.CityName
+		input.TimezoneName = &snapshot.TimezoneName
+		input.IPLatitude = &snapshot.IPLatitude
+		input.IPLongitude = &snapshot.IPLongitude
+	}
+	return input
 }
 
 // UpdateProfile 更新当前用户资料。
@@ -697,8 +766,8 @@ func (s *Service) UpdateProfile(ctx context.Context, userID uint, input UpdatePr
 
 	if input.AvatarURL != nil {
 		nextAvatarURL := strings.TrimSpace(*input.AvatarURL)
-		if err := validateAvatarURL(nextAvatarURL); err != nil {
-			return nil, err
+		if !domainuser.IsValidAvatarURL(nextAvatarURL) {
+			return nil, ErrInvalidAvatarURL
 		}
 		if fileID, ok := domainuser.ParseFileAvatarURL(nextAvatarURL); ok {
 			avatarFileReferenceRequested = true
@@ -768,11 +837,6 @@ func normalizeAppearancePreferences(raw string) (string, error) {
 	normalized := make(map[string]string, len(payload))
 	for key, value := range payload {
 		switch key {
-		case "theme":
-			if value != "light" && value != "dark" && value != "system" {
-				return "", ErrInvalidAppearancePreferences
-			}
-			normalized[key] = value
 		case "preset":
 			if value != "default" && value != "azure" && value != "cobalt" && value != "graphite" && value != "lagoon" && value != "ink" && value != "ochre" && value != "sepia" {
 				return "", ErrInvalidAppearancePreferences
@@ -871,17 +935,24 @@ func (s *Service) DeleteAccount(
 		return ErrAccountDeleteVerificationRequired
 	}
 	if !containsSecurityVerificationMethod(methods, method) {
-		return fmt.Errorf("verification method is unavailable")
+		return ErrSecurityVerificationMethodUnavailable
 	}
 	normalizedEmail := ""
 	if method == SecurityVerificationMethodEmail {
 		normalizedEmail, err = normalizeRegistrationEmail(item.Email)
 		if err != nil {
-			return fmt.Errorf("user email is invalid")
+			return ErrSecurityVerificationEmailInvalid
 		}
 	}
-	if err = s.verifySecurityCodeWithMethod(ctx, item, method, domainuser.ContactVerificationPurposeAccountDelete, normalizedEmail, code, time.Now()); err != nil {
-		return fmt.Errorf("verification code is invalid or expired")
+	if err = s.verifySecurityCodeWithMethod(ctx, verifySecurityCodeInput{
+		User:       item,
+		Method:     method,
+		Purpose:    domainuser.ContactVerificationPurposeAccountDelete,
+		Target:     normalizedEmail,
+		Code:       code,
+		VerifiedAt: time.Now(),
+	}); err != nil {
+		return ErrSecurityVerificationCodeInvalid
 	}
 
 	normalizedAuditCtx := s.resolveSessionAuditContext(ctx, auditCtx)
@@ -889,18 +960,20 @@ func (s *Service) DeleteAccount(
 	if err != nil {
 		s.RecordAuthEvent(
 			ctx,
-			userID,
-			requestID,
-			"account_delete",
-			"failure",
-			"list_storage_paths_failed",
-			normalizedAuditCtx.ClientIP,
-			normalizedAuditCtx.UserAgent,
-			marshalAuthEventDetail(map[string]interface{}{
-				"user_id":   userID,
-				"username":  item.Username,
-				"public_id": item.PublicID,
-			}),
+			repository.AuthEventInput{
+				UserID:    userID,
+				RequestID: requestID,
+				EventType: "account_delete",
+				Result:    "failure",
+				Reason:    "list_storage_paths_failed",
+				ClientIP:  normalizedAuditCtx.ClientIP,
+				UserAgent: normalizedAuditCtx.UserAgent,
+				DetailJSON: marshalAuthEventDetail(map[string]any{
+					"user_id":   userID,
+					"username":  item.Username,
+					"public_id": item.PublicID,
+				}),
+			},
 		)
 		return err
 	}
@@ -908,19 +981,21 @@ func (s *Service) DeleteAccount(
 	if err = s.repo.DeleteAccountHard(ctx, userID); err != nil {
 		s.RecordAuthEvent(
 			ctx,
-			userID,
-			requestID,
-			"account_delete",
-			"failure",
-			"delete_account_failed",
-			normalizedAuditCtx.ClientIP,
-			normalizedAuditCtx.UserAgent,
-			marshalAuthEventDetail(map[string]interface{}{
-				"user_id":            userID,
-				"username":           item.Username,
-				"public_id":          item.PublicID,
-				"storage_file_count": len(storagePaths),
-			}),
+			repository.AuthEventInput{
+				UserID:    userID,
+				RequestID: requestID,
+				EventType: "account_delete",
+				Result:    "failure",
+				Reason:    "delete_account_failed",
+				ClientIP:  normalizedAuditCtx.ClientIP,
+				UserAgent: normalizedAuditCtx.UserAgent,
+				DetailJSON: marshalAuthEventDetail(map[string]any{
+					"user_id":            userID,
+					"username":           item.Username,
+					"public_id":          item.PublicID,
+					"storage_file_count": len(storagePaths),
+				}),
+			},
 		)
 		return err
 	}
@@ -928,38 +1003,41 @@ func (s *Service) DeleteAccount(
 	failedPaths := s.cleanupDeletedAccountFiles(ctx, storagePaths)
 	s.RecordAuthEvent(
 		ctx,
-		userID,
-		requestID,
-		"account_delete",
-		"success",
-		"",
-		normalizedAuditCtx.ClientIP,
-		normalizedAuditCtx.UserAgent,
-		marshalAuthEventDetail(map[string]interface{}{
-			"user_id":                  userID,
-			"username":                 item.Username,
-			"public_id":                item.PublicID,
-			"client_ip":                normalizedAuditCtx.ClientIP,
-			"location":                 normalizedAuditCtx.LocationLabel(),
-			"storage_file_count":       len(storagePaths),
-			"storage_cleanup_failures": len(failedPaths),
-		}),
+		repository.AuthEventInput{
+			UserID:    userID,
+			RequestID: requestID,
+			EventType: "account_delete",
+			Result:    "success",
+			ClientIP:  normalizedAuditCtx.ClientIP,
+			UserAgent: normalizedAuditCtx.UserAgent,
+			DetailJSON: marshalAuthEventDetail(map[string]any{
+				"user_id":                  userID,
+				"username":                 item.Username,
+				"public_id":                item.PublicID,
+				"client_ip":                normalizedAuditCtx.ClientIP,
+				"location":                 normalizedAuditCtx.LocationLabel(),
+				"storage_file_count":       len(storagePaths),
+				"storage_cleanup_failures": len(failedPaths),
+			}),
+		},
 	)
 	if len(failedPaths) > 0 {
 		s.RecordAuthEvent(
 			ctx,
-			userID,
-			requestID,
-			"account_delete_cleanup",
-			"failure",
-			"storage_cleanup_failed",
-			normalizedAuditCtx.ClientIP,
-			normalizedAuditCtx.UserAgent,
-			marshalAuthEventDetail(map[string]interface{}{
-				"user_id":           userID,
-				"failed_path_count": len(failedPaths),
-				"failed_paths":      trimStringSlice(failedPaths, 10),
-			}),
+			repository.AuthEventInput{
+				UserID:    userID,
+				RequestID: requestID,
+				EventType: "account_delete_cleanup",
+				Result:    "failure",
+				Reason:    "storage_cleanup_failed",
+				ClientIP:  normalizedAuditCtx.ClientIP,
+				UserAgent: normalizedAuditCtx.UserAgent,
+				DetailJSON: marshalAuthEventDetail(map[string]any{
+					"user_id":           userID,
+					"failed_path_count": len(failedPaths),
+					"failed_paths":      trimStringSlice(failedPaths, 10),
+				}),
+			},
 		)
 	}
 
@@ -987,22 +1065,29 @@ func (s *Service) RequestAccountDeleteVerification(ctx context.Context, userID u
 		return nil, ErrAccountDeleteVerificationRequired
 	}
 	if !containsSecurityVerificationMethod(methods, method) {
-		return nil, fmt.Errorf("verification method is unavailable")
+		return nil, ErrSecurityVerificationMethodUnavailable
 	}
 	if method != SecurityVerificationMethodEmail {
 		return &EmailChangeVerificationStartResult{Sent: false, Method: method, AvailableMethods: methods}, nil
 	}
 	normalizedEmail, err := normalizeRegistrationEmail(item.Email)
 	if err != nil {
-		return nil, fmt.Errorf("user email is invalid")
+		return nil, ErrSecurityVerificationEmailInvalid
 	}
-	return s.requestEmailVerificationCode(ctx, userID, domainuser.ContactVerificationPurposeAccountDelete, normalizedEmail, "account_delete_code", requestID, auditCtx)
+	return s.requestEmailVerificationCode(ctx, requestEmailVerificationCodeInput{
+		UserID:       userID,
+		Purpose:      domainuser.ContactVerificationPurposeAccountDelete,
+		Target:       normalizedEmail,
+		EventType:    "account_delete_code",
+		RequestID:    requestID,
+		AuditContext: auditCtx,
+	})
 }
 
 // cleanupDeletedAccountFiles 从对象存储删除用户文件，返回删除失败的路径列表。
 func (s *Service) cleanupDeletedAccountFiles(ctx context.Context, storagePaths []string) []string {
-	if s.storeProvider == nil {
-		s.storeProvider = appstorage.NewRuntimeProvider(s.cfg, nil)
+	if s == nil || s.storeProvider == nil {
+		return append([]string(nil), storagePaths...)
 	}
 	store, err := s.storeProvider.Open(ctx)
 	if err != nil {
@@ -1048,24 +1133,24 @@ func (s *Service) Refresh(
 	cfg := s.cfg.Snapshot()
 	claims, err := token.Parse(cfg.JWTSecret, trimmedRefreshToken)
 	if err != nil {
-		s.RecordAuthEvent(ctx, 0, requestID, "token_refresh", "failure", "invalid_refresh_token_parse", normalizedAuditCtx.ClientIP, normalizedAuditCtx.UserAgent, "")
+		s.RecordAuthEvent(ctx, repository.AuthEventInput{RequestID: requestID, EventType: "token_refresh", Result: "failure", Reason: "invalid_refresh_token_parse", ClientIP: normalizedAuditCtx.ClientIP, UserAgent: normalizedAuditCtx.UserAgent})
 		return nil, ErrInvalidRefreshToken
 	}
 	if claims.TokenType != "refresh" || claims.SessionID == "" || claims.UserID == 0 {
-		s.RecordAuthEvent(ctx, claims.UserID, requestID, "token_refresh", "failure", "invalid_refresh_claims", normalizedAuditCtx.ClientIP, normalizedAuditCtx.UserAgent, "")
+		s.RecordAuthEvent(ctx, repository.AuthEventInput{UserID: claims.UserID, RequestID: requestID, EventType: "token_refresh", Result: "failure", Reason: "invalid_refresh_claims", ClientIP: normalizedAuditCtx.ClientIP, UserAgent: normalizedAuditCtx.UserAgent})
 		return nil, ErrInvalidRefreshToken
 	}
 
 	session, err := s.repo.GetSessionByUserAndSessionID(ctx, claims.UserID, claims.SessionID)
 	if err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
-			s.RecordAuthEvent(ctx, claims.UserID, requestID, "token_refresh", "failure", "session_not_found", normalizedAuditCtx.ClientIP, normalizedAuditCtx.UserAgent, "")
+			s.RecordAuthEvent(ctx, repository.AuthEventInput{UserID: claims.UserID, RequestID: requestID, EventType: "token_refresh", Result: "failure", Reason: "session_not_found", ClientIP: normalizedAuditCtx.ClientIP, UserAgent: normalizedAuditCtx.UserAgent})
 			return nil, ErrInvalidRefreshToken
 		}
 		return nil, err
 	}
 	if session.RevokedAt != nil || time.Now().After(session.ExpiresAt) {
-		s.RecordAuthEvent(ctx, claims.UserID, requestID, "token_refresh", "failure", "session_revoked_or_expired", normalizedAuditCtx.ClientIP, normalizedAuditCtx.UserAgent, "")
+		s.RecordAuthEvent(ctx, repository.AuthEventInput{UserID: claims.UserID, RequestID: requestID, EventType: "token_refresh", Result: "failure", Reason: "session_revoked_or_expired", ClientIP: normalizedAuditCtx.ClientIP, UserAgent: normalizedAuditCtx.UserAgent})
 		return nil, ErrSessionRevoked
 	}
 
@@ -1074,7 +1159,7 @@ func (s *Service) Refresh(
 		return nil, err
 	}
 	if userItem.Status != domainuser.StatusActive {
-		s.RecordAuthEvent(ctx, claims.UserID, requestID, "token_refresh", "failure", "user_not_active", normalizedAuditCtx.ClientIP, normalizedAuditCtx.UserAgent, "")
+		s.RecordAuthEvent(ctx, repository.AuthEventInput{UserID: claims.UserID, RequestID: requestID, EventType: "token_refresh", Result: "failure", Reason: "user_not_active", ClientIP: normalizedAuditCtx.ClientIP, UserAgent: normalizedAuditCtx.UserAgent})
 		return nil, ErrSessionRevoked
 	}
 
@@ -1098,28 +1183,35 @@ func (s *Service) Refresh(
 			PreviousTokenGrace:   refreshTokenPreviousHashGrace,
 		},
 	); err != nil {
+		if errors.Is(err, repository.ErrRefreshTokenReuse) {
+			// 令牌重用：会话已在仓储层吊销，持有新令牌的一方（可能是攻击者）同样失效。
+			s.RecordAuthEvent(ctx, repository.AuthEventInput{UserID: claims.UserID, RequestID: requestID, EventType: "token_refresh", Result: "failure", Reason: "refresh_token_reuse_detected", ClientIP: normalizedAuditCtx.ClientIP, UserAgent: normalizedAuditCtx.UserAgent, DetailJSON: marshalSessionAuthEventDetail(claims.SessionID, buildSessionAuditSnapshotForSession(session, normalizedAuditCtx))})
+			return nil, ErrSessionRevoked
+		}
 		if errors.Is(err, repository.ErrInvalidInput) {
-			s.RecordAuthEvent(ctx, claims.UserID, requestID, "token_refresh", "failure", "refresh_token_hash_mismatch", normalizedAuditCtx.ClientIP, normalizedAuditCtx.UserAgent, "")
+			s.RecordAuthEvent(ctx, repository.AuthEventInput{UserID: claims.UserID, RequestID: requestID, EventType: "token_refresh", Result: "failure", Reason: "refresh_token_hash_mismatch", ClientIP: normalizedAuditCtx.ClientIP, UserAgent: normalizedAuditCtx.UserAgent})
 			return nil, ErrInvalidRefreshToken
 		}
 		return nil, err
 	}
 
-	sessionSnapshot := buildSessionAuditSnapshot(normalizedAuditCtx)
-	if err = s.repo.TouchSessionActivity(ctx, userItem.ID, claims.SessionID, sessionActivityInputFromSnapshot(sessionSnapshot, now)); err != nil {
+	sessionSnapshot := buildSessionAuditSnapshotForSession(session, normalizedAuditCtx)
+	includeGeo := sessionClientIPChanged(session, normalizedAuditCtx) || sessionAuditContextHasGeo(normalizedAuditCtx)
+	if err = s.repo.TouchSessionActivity(ctx, userItem.ID, claims.SessionID, sessionActivityInputFromSnapshot(sessionSnapshot, now, includeGeo)); err != nil {
 		return nil, err
 	}
 
 	s.RecordAuthEvent(
 		ctx,
-		userItem.ID,
-		requestID,
-		"token_refresh",
-		"success",
-		"",
-		sessionSnapshot.ClientIP,
-		sessionSnapshot.UserAgent,
-		marshalSessionAuthEventDetail(claims.SessionID, sessionSnapshot),
+		repository.AuthEventInput{
+			UserID:     userItem.ID,
+			RequestID:  requestID,
+			EventType:  "token_refresh",
+			Result:     "success",
+			ClientIP:   sessionSnapshot.ClientIP,
+			UserAgent:  sessionSnapshot.UserAgent,
+			DetailJSON: marshalSessionAuthEventDetail(claims.SessionID, sessionSnapshot),
+		},
 	)
 
 	userView, err := s.buildUserView(ctx, *userItem)
@@ -1155,28 +1247,31 @@ func (s *Service) Logout(
 	if err := s.repo.RevokeSession(ctx, userID, normalizedSessionID, "user_logout"); err != nil {
 		s.RecordAuthEvent(
 			ctx,
-			userID,
-			requestID,
-			"logout",
-			"failure",
-			"revoke_session_failed",
-			normalizedAuditCtx.ClientIP,
-			normalizedAuditCtx.UserAgent,
-			marshalSessionAuthEventDetail(normalizedSessionID, sessionSnapshot),
+			repository.AuthEventInput{
+				UserID:     userID,
+				RequestID:  requestID,
+				EventType:  "logout",
+				Result:     "failure",
+				Reason:     "revoke_session_failed",
+				ClientIP:   normalizedAuditCtx.ClientIP,
+				UserAgent:  normalizedAuditCtx.UserAgent,
+				DetailJSON: marshalSessionAuthEventDetail(normalizedSessionID, sessionSnapshot),
+			},
 		)
 		return err
 	}
 
 	s.RecordAuthEvent(
 		ctx,
-		userID,
-		requestID,
-		"logout",
-		"success",
-		"",
-		normalizedAuditCtx.ClientIP,
-		normalizedAuditCtx.UserAgent,
-		marshalSessionAuthEventDetail(normalizedSessionID, sessionSnapshot),
+		repository.AuthEventInput{
+			UserID:     userID,
+			RequestID:  requestID,
+			EventType:  "logout",
+			Result:     "success",
+			ClientIP:   normalizedAuditCtx.ClientIP,
+			UserAgent:  normalizedAuditCtx.UserAgent,
+			DetailJSON: marshalSessionAuthEventDetail(normalizedSessionID, sessionSnapshot),
+		},
 	)
 
 	return nil
@@ -1191,11 +1286,11 @@ func (s *Service) LogoutAll(
 ) error {
 	normalizedAuditCtx := auditCtx.Normalize()
 	if err := s.repo.RevokeAllSessions(ctx, userID, "user_logout_all"); err != nil {
-		s.RecordAuthEvent(ctx, userID, requestID, "logout_all", "failure", "revoke_all_sessions_failed", normalizedAuditCtx.ClientIP, normalizedAuditCtx.UserAgent, "")
+		s.RecordAuthEvent(ctx, repository.AuthEventInput{UserID: userID, RequestID: requestID, EventType: "logout_all", Result: "failure", Reason: "revoke_all_sessions_failed", ClientIP: normalizedAuditCtx.ClientIP, UserAgent: normalizedAuditCtx.UserAgent})
 		return err
 	}
 
-	s.RecordAuthEvent(ctx, userID, requestID, "logout_all", "success", "", normalizedAuditCtx.ClientIP, normalizedAuditCtx.UserAgent, "")
+	s.RecordAuthEvent(ctx, repository.AuthEventInput{UserID: userID, RequestID: requestID, EventType: "logout_all", Result: "success", ClientIP: normalizedAuditCtx.ClientIP, UserAgent: normalizedAuditCtx.UserAgent})
 	return nil
 }
 
@@ -1226,9 +1321,11 @@ func (s *Service) ValidateAccessSession(
 	}
 
 	now := time.Now()
-	sessionSnapshot := buildSessionAuditSnapshot(auditCtx)
+	normalizedAuditCtx := auditCtx.Normalize()
+	sessionSnapshot := buildSessionAuditSnapshotForSession(session, normalizedAuditCtx)
 	if shouldTouchSessionActivity(session, sessionSnapshot, now) {
-		if err = s.repo.TouchSessionActivity(ctx, userID, strings.TrimSpace(sessionID), sessionActivityInputFromSnapshot(sessionSnapshot, now)); err != nil {
+		includeGeo := sessionClientIPChanged(session, normalizedAuditCtx) || sessionAuditContextHasGeo(normalizedAuditCtx)
+		if err = s.repo.TouchSessionActivity(ctx, userID, strings.TrimSpace(sessionID), sessionActivityInputFromSnapshot(sessionSnapshot, now, includeGeo)); err != nil {
 			return err
 		}
 	}
@@ -1307,6 +1404,7 @@ func (s *Service) ensureSessionGeoResolved(
 
 	enriched, err := s.geoResolver.Lookup(ctx, session.ClientIP)
 	if err != nil {
+		s.warnGeoLookupFailure("active_session_enrichment", session.ClientIP, err)
 		return session, err
 	}
 	merged := mergeSessionAuditContext(
@@ -1405,15 +1503,22 @@ func (s *Service) UpdateCurrentSessionLocation(
 			session := item
 			normalizedAuditCtx := s.resolveSessionAuditContext(ctx, auditCtx)
 			s.RecordAuthEvent(
-				ctx, userID, requestID, "session_location_update", "success", "",
-				normalizedAuditCtx.ClientIP, normalizedAuditCtx.UserAgent,
-				marshalAuthEventDetail(map[string]interface{}{
-					"session_id":              normalizedSessionID,
-					"precise_latitude":        session.PreciseLatitude,
-					"precise_longitude":       session.PreciseLongitude,
-					"precise_accuracy_meters": session.PreciseAccuracyM,
-					"timezone_name":           session.TimezoneName,
-				}),
+				ctx,
+				repository.AuthEventInput{
+					UserID:    userID,
+					RequestID: requestID,
+					EventType: "session_location_update",
+					Result:    "success",
+					ClientIP:  normalizedAuditCtx.ClientIP,
+					UserAgent: normalizedAuditCtx.UserAgent,
+					DetailJSON: marshalAuthEventDetail(map[string]any{
+						"session_id":              normalizedSessionID,
+						"precise_latitude":        session.PreciseLatitude,
+						"precise_longitude":       session.PreciseLongitude,
+						"precise_accuracy_meters": session.PreciseAccuracyM,
+						"timezone_name":           session.TimezoneName,
+					}),
+				},
 			)
 			return &session, nil
 		}
@@ -1422,31 +1527,11 @@ func (s *Service) UpdateCurrentSessionLocation(
 }
 
 // RecordAuthEvent 写入认证事件。
-func (s *Service) RecordAuthEvent(
-	ctx context.Context,
-	userID uint,
-	requestID string,
-	eventType string,
-	result string,
-	reason string,
-	clientIP string,
-	userAgent string,
-	detailJSON string,
-) {
-	if err := s.repo.RecordAuthEvent(
-		ctx,
-		userID,
-		requestID,
-		eventType,
-		result,
-		reason,
-		clientIP,
-		userAgent,
-		detailJSON,
-	); err != nil {
+func (s *Service) RecordAuthEvent(ctx context.Context, input repository.AuthEventInput) {
+	if err := s.repo.RecordAuthEvent(ctx, input); err != nil {
 		s.warn("record_auth_event_failed",
-			zap.Uint("user_id", userID),
-			zap.String("event", eventType),
+			zap.Uint("user_id", input.UserID),
+			zap.String("event", input.EventType),
 			zap.Error(err),
 		)
 	}
@@ -1460,26 +1545,18 @@ type issuedTokens struct {
 	RefreshExpiresAt time.Time
 }
 
-// loginLockThreshold 返回触发账户锁定的连续失败次数阈值，默认 5。
-func (s *Service) loginLockThreshold() int {
+// loginLockPolicy 返回登录失败锁定策略：连续失败阈值与锁定时长。
+// 阈值或时长任一配置为 <=0 时视为关闭锁定，与其它数值型设置的约定一致。
+func (s *Service) loginLockPolicy() (int, time.Duration) {
 	cfg := s.cfg.Snapshot()
-	if cfg.LoginMaxFailures <= 0 {
-		return 5
+	if cfg.LoginMaxFailures <= 0 || cfg.LoginLockMinutes <= 0 {
+		return 0, 0
 	}
-	return cfg.LoginMaxFailures
-}
-
-// loginLockDuration 返回账户锁定时长，默认 15 分钟。
-func (s *Service) loginLockDuration() time.Duration {
-	cfg := s.cfg.Snapshot()
-	if cfg.LoginLockMinutes <= 0 {
-		return 15 * time.Minute
-	}
-	return time.Duration(cfg.LoginLockMinutes) * time.Minute
+	return cfg.LoginMaxFailures, time.Duration(cfg.LoginLockMinutes) * time.Minute
 }
 
 // marshalAuthEventDetail 将事件详情序列化为 JSON 字符串；序列化失败时返回空字符串。
-func marshalAuthEventDetail(detail interface{}) string {
+func marshalAuthEventDetail(detail any) string {
 	if detail == nil {
 		return ""
 	}
@@ -1505,29 +1582,29 @@ func (s *Service) buildSessionTokenPair(user *domainuser.User, sessionID string,
 	accessJTI := conv.NormalizePublicID(uuid.NewString())
 	refreshJTI := conv.NormalizePublicID(uuid.NewString())
 
-	accessToken, err := token.GenerateWithClaims(
-		cfg.JWTSecret,
-		user.ID,
-		user.Username,
-		user.Role,
-		sessionID,
-		accessJTI,
-		"access",
-		accessTTL,
-	)
+	accessToken, err := token.GenerateWithClaims(token.GenerateClaimsInput{
+		Secret:    cfg.JWTSecret,
+		UserID:    user.ID,
+		Username:  user.Username,
+		Role:      user.Role,
+		SessionID: sessionID,
+		TokenID:   accessJTI,
+		TokenType: "access",
+		TTL:       accessTTL,
+	})
 	if err != nil {
 		return nil, err
 	}
-	refreshToken, err := token.GenerateWithClaims(
-		cfg.JWTSecret,
-		user.ID,
-		user.Username,
-		user.Role,
-		sessionID,
-		refreshJTI,
-		"refresh",
-		refreshTTL,
-	)
+	refreshToken, err := token.GenerateWithClaims(token.GenerateClaimsInput{
+		Secret:    cfg.JWTSecret,
+		UserID:    user.ID,
+		Username:  user.Username,
+		Role:      user.Role,
+		SessionID: sessionID,
+		TokenID:   refreshJTI,
+		TokenType: "refresh",
+		TTL:       refreshTTL,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -1553,26 +1630,4 @@ func normalizeEditableUsername(raw string) (string, error) {
 		return "", ErrInvalidUsername
 	}
 	return username, nil
-}
-
-// validateAvatarURL 校验头像 URL 合法性；空值、相对路径、generated: 前缀和 file: 引用均视为合法。
-func validateAvatarURL(raw string) error {
-	if raw == "" || strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "generated:github:") {
-		return nil
-	}
-	if strings.HasPrefix(raw, "file:") {
-		if _, ok := domainuser.ParseFileAvatarURL(raw); !ok {
-			return ErrInvalidAvatarURL
-		}
-		return nil
-	}
-
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return ErrInvalidAvatarURL
-	}
-	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
-		return ErrInvalidAvatarURL
-	}
-	return nil
 }

@@ -33,9 +33,25 @@ const (
 	defaultHTTPReadTimeoutSeconds       = 120
 	defaultHTTPIdleTimeoutSeconds       = 120
 	defaultHTTPMaxHeaderBytes           = 1 << 20
+	// defaultHTTPShutdownTimeoutSeconds 是优雅关停排空 in-flight 请求的默认窗口。
+	// 容器编排下应小于 terminationGracePeriodSeconds，为强断兜底与资源释放留余量。
+	defaultHTTPShutdownTimeoutSeconds = 10
 	// DefaultFileFullContextMaxBytes 是全文注入的默认提取文本大小上限（2 MiB）。
 	DefaultFileFullContextMaxBytes int64 = 2 * 1024 * 1024
+
+	// DefaultContextWindowFallbackTokens 是无法从模型能力配置或内置目录识别窗口时的默认值。
+	DefaultContextWindowFallbackTokens = 128_000
+	// MinContextWindowFallbackTokens 与 MaxContextWindowFallbackTokens 限制管理员可配置的安全范围。
+	MinContextWindowFallbackTokens = 16_384
+	MaxContextWindowFallbackTokens = 16_000_000
+	// DefaultContextCompactTriggerPercent 在有效输入预算的 80% 处主动压缩。
+	DefaultContextCompactTriggerPercent = 80
+	MinContextCompactTriggerPercent     = 10
+	MaxContextCompactTriggerPercent     = 95
 )
+
+// defaultCORSAllowOrigin 末尾两项是 Tauri 桌面端 webview 的 Origin（macOS/Linux 用 tauri://，Windows 用 http://tauri.localhost）。
+const defaultCORSAllowOrigin = "http://127.0.0.1:8080,http://localhost:8080,tauri://localhost,http://tauri.localhost"
 
 const (
 	// DefaultTurnstileSiteverifyURL 是 Cloudflare Turnstile 默认校验端点。
@@ -45,6 +61,11 @@ const (
 	DefaultMCPMaxSelectedToolsPerMessage = 32
 	// MaxMCPSelectedToolsPerMessage 是运行时配置允许的安全上限，防止一次请求暴露过多工具 schema。
 	MaxMCPSelectedToolsPerMessage = 128
+
+	// EmbeddingDimensionsPolicySend 在 Embedding 请求中携带 dimensions 参数。
+	EmbeddingDimensionsPolicySend = "send"
+	// EmbeddingDimensionsPolicyOmit 省略 dimensions 参数，返回向量仍按 EmbeddingOutputDimensions 校验。
+	EmbeddingDimensionsPolicyOmit = "omit"
 )
 
 // DefaultModelOptionAllowedPathsJSON 返回用户可透传模型参数的默认白名单。
@@ -68,25 +89,11 @@ func DefaultModelOptionAllowedPathsJSON() string {
     "thinking.type",
     "stream_options.include_usage"
   ],
-  "openrouter_chat_completions": [
-    "presence_penalty",
-    "frequency_penalty",
-    "reasoning_effort",
-    "reasoning.effort",
-    "reasoning.summary",
-    "verbosity",
-    "thinking.type",
-    "stream_options.include_usage"
-  ],
   "openai_responses": [
     "service_tier",
     "reasoning.effort",
     "reasoning.summary",
     "text.verbosity"
-  ],
-  "openrouter_responses": [
-    "reasoning.effort",
-    "reasoning.summary"
   ],
   "openai_image_generations": [
     "background",
@@ -171,6 +178,37 @@ func DefaultModelOptionAllowedPathsJSON() string {
   ],
   "xai_video_extensions": [
     "duration"
+  ],
+  "openrouter_chat_completions": [
+    "presence_penalty",
+    "frequency_penalty",
+    "reasoning_effort",
+    "reasoning.effort",
+    "reasoning.summary",
+    "verbosity",
+    "thinking.type",
+    "stream_options.include_usage"
+  ],
+  "openrouter_responses": [
+    "reasoning.effort",
+    "reasoning.summary"
+  ],
+  "openrouter_images": [
+    "aspect_ratio",
+    "background",
+    "n",
+    "output_compression",
+    "output_format",
+    "provider.allow_fallbacks",
+    "provider.ignore",
+    "provider.only",
+    "provider.order",
+    "provider.sort",
+    "quality",
+    "resolution",
+    "seed",
+    "size",
+    "user"
   ]
 }`
 }
@@ -227,9 +265,11 @@ type yamlConfig struct {
 		ReadTimeoutSeconds       int    `yaml:"read_timeout_seconds"`
 		IdleTimeoutSeconds       int    `yaml:"idle_timeout_seconds"`
 		MaxHeaderBytes           int    `yaml:"max_header_bytes"`
+		ShutdownTimeoutSeconds   int    `yaml:"shutdown_timeout_seconds"`
 	} `yaml:"server"`
 	Security struct {
 		JWTSecret              string `yaml:"jwt_secret"`
+		MCPUserContextSecret   string `yaml:"mcp_user_context_secret"`
 		DataEncryptionKey      string `yaml:"data_encryption_key"`
 		SSRFProtectionEnabled  *bool  `yaml:"ssrf_protection_enabled"`
 		SSRFAllowedHosts       string `yaml:"ssrf_allowed_hosts"`
@@ -308,18 +348,23 @@ type yamlConfig struct {
 // 静态字段由 YAML/ENV 加载；动态字段由 settings.RuntimeSettings.ApplyTo 从数据库覆盖。
 type Config struct {
 	// ── 静态配置（YAML/ENV） ──
-	AppName                      string
-	Env                          string
-	BrandTitle                   string
-	BrandShortName               string
-	BrandDescription             string
-	BrandLogoURL                 string
-	BrandFaviconURL              string
-	BrandPWAIcon192URL           string
-	BrandPWAIcon512URL           string
-	BrandPWAMaskableIcon512URL   string
-	BrandAppleTouchIcon180URL    string
-	HTTPPort                     string
+	AppName                    string
+	Env                        string
+	BrandTitle                 string
+	BrandShortName             string
+	BrandDescription           string
+	BrandLogoURL               string
+	BrandFaviconURL            string
+	BrandPWAIcon192URL         string
+	BrandPWAIcon512URL         string
+	BrandPWAMaskableIcon512URL string
+	BrandAppleTouchIcon180URL  string
+	HTTPPort                   string
+	// HTTPListenAddr 非空时优先于 HTTPPort，形如 "127.0.0.1:0"（本地模式）。
+	HTTPListenAddr string
+	// LocalMode 表示作为桌面 sidecar 运行；LocalDataDir 是其数据目录。
+	LocalMode                    bool
+	LocalDataDir                 string
 	CORSAllowOrigin              string
 	TrustedProxies               string
 	PublicAPIBaseURL             string
@@ -329,7 +374,9 @@ type Config struct {
 	HTTPReadTimeoutSeconds       int
 	HTTPIdleTimeoutSeconds       int
 	HTTPMaxHeaderBytes           int
+	HTTPShutdownTimeoutSeconds   int
 	JWTSecret                    string
+	MCPUserContextSecret         string
 	DataEncryptionKey            string
 	SSRFProtectionEnabled        bool
 	SSRFAllowedHosts             string
@@ -409,21 +456,24 @@ type Config struct {
 	TurnstileSiteKey             string
 	TurnstileSecretKey           string
 	// 对话配置
-	MaxContextMessages       int
-	ContextMaxTurns          int
-	ContextMaxInputTokens    int
-	ContextCompactEnabled    bool
-	ContextCompactTrigger    int
-	ContextCompactPreserve   int
-	ConversationDefaultModel string
-	ConversationTaskModel    string
-	ConversationTitlePrompt  string
-	ConversationLabelsPrompt string
-	DefaultSystemPrompt      string
-	SkillsPrompt             string
-	ModelOptionPolicyMode    string
-	ModelOptionAllowedPaths  string
-	ModelOptionDeniedPaths   string
+	MaxContextMessages           int
+	ContextMaxTurns              int
+	ContextCompactEnabled        bool
+	UIComponentsEnabled          bool // 是否向模型注入交互式组件目录
+	ContextWindowFallbackTokens  int
+	ContextCompactTriggerPercent int
+	ContextCompactPreserve       int
+	ConversationDefaultModel     string
+	ConversationTaskModel        string
+	ConversationTitlePrompt      string
+	ConversationLabelsPrompt     string
+	DefaultSystemPrompt          string
+	SkillsPrompt                 string
+	ModelOptionPolicyMode        string
+	ModelOptionAllowedPaths      string
+	ModelOptionDeniedPaths       string
+	// 知识库配置
+	KnowledgeBaseEnabled bool
 	// 存储配置
 	UserStorageQuotaBytes int64
 	MaxUploadFileBytes    int64
@@ -487,6 +537,7 @@ type Config struct {
 	EmbeddingKey                      string // Embedding HTTP 服务鉴权 Key，可选
 	EmbeddingTimeoutSeconds           int    // Embedding 请求超时（秒）
 	EmbeddingOutputDimensions         int    // 写库/检索统一输出维度
+	EmbeddingDimensionsPolicy         string // Embedding 请求 dimensions 参数策略
 	EmbeddingNormalize                bool   // 是否做归一化
 	EmbeddingModelSignature           string // 当前生效的模型签名（派生值，由 settings 变更时自动更新）
 	EmbedTriggerOnUpload              bool   // 上传后是否异步触发 embedding
@@ -559,16 +610,18 @@ func Load() Config {
 		BrandPWAMaskableIcon512URL:   valueOrDefault(yc.Branding.PWAMaskableIcon512URL, defaultBrandPWAMaskableIcon512URL),
 		BrandAppleTouchIcon180URL:    valueOrDefault(yc.Branding.AppleTouchIcon180URL, defaultBrandAppleTouchIcon180URL),
 		HTTPPort:                     envOr("HTTP_PORT", yc.Server.HTTPPort, "8080"),
-		CORSAllowOrigin:              envOr("CORS_ALLOW_ORIGIN", yc.Server.CORSAllowOrigin, "http://127.0.0.1:8080,http://localhost:8080"),
+		CORSAllowOrigin:              envOr("CORS_ALLOW_ORIGIN", yc.Server.CORSAllowOrigin, defaultCORSAllowOrigin),
 		TrustedProxies:               envOr("TRUSTED_PROXIES", yc.Server.TrustedProxies, ""),
 		PublicAPIBaseURL:             envOr("PUBLIC_API_BASE_URL", yc.Server.PublicAPIBaseURL, ""),
 		PublicWebBaseURL:             envOr("PUBLIC_WEB_BASE_URL", yc.Server.PublicWebBaseURL, ""),
-		FrontendDistDir:              envOrPath("FRONTEND_DIST_DIR", yc.Server.FrontendDistDir, "../frontend/out", yc.sourceDir),
+		FrontendDistDir:              envOrPath("FRONTEND_DIST_DIR", yc.Server.FrontendDistDir, "../apps/web/out", yc.sourceDir),
 		HTTPReadHeaderTimeoutSeconds: envOrInt("HTTP_READ_HEADER_TIMEOUT_SECONDS", yc.Server.ReadHeaderTimeoutSeconds, defaultHTTPReadHeaderTimeoutSeconds),
 		HTTPReadTimeoutSeconds:       envOrInt("HTTP_READ_TIMEOUT_SECONDS", yc.Server.ReadTimeoutSeconds, defaultHTTPReadTimeoutSeconds),
 		HTTPIdleTimeoutSeconds:       envOrInt("HTTP_IDLE_TIMEOUT_SECONDS", yc.Server.IdleTimeoutSeconds, defaultHTTPIdleTimeoutSeconds),
 		HTTPMaxHeaderBytes:           envOrInt("HTTP_MAX_HEADER_BYTES", yc.Server.MaxHeaderBytes, defaultHTTPMaxHeaderBytes),
+		HTTPShutdownTimeoutSeconds:   envOrInt("HTTP_SHUTDOWN_TIMEOUT_SECONDS", yc.Server.ShutdownTimeoutSeconds, defaultHTTPShutdownTimeoutSeconds),
 		JWTSecret:                    envOr("JWT_SECRET", yc.Security.JWTSecret, defaultJWTSecret),
+		MCPUserContextSecret:         envOr("MCP_USER_CONTEXT_SECRET", yc.Security.MCPUserContextSecret, ""),
 		DataEncryptionKey:            envOr("DATA_ENCRYPTION_KEY", yc.Security.DataEncryptionKey, defaultDataEncryptionKey),
 		SSRFProtectionEnabled:        envOrBoolPtr("SSRF_PROTECTION_ENABLED", yc.Security.SSRFProtectionEnabled, false),
 		SSRFAllowedHosts:             envOr("SSRF_ALLOWED_HOSTS", yc.Security.SSRFAllowedHosts, ""),
@@ -648,9 +701,10 @@ func Load() Config {
 		TurnstileSecretKey:                "",
 		MaxContextMessages:                20,
 		ContextMaxTurns:                   48,
-		ContextMaxInputTokens:             32000,
 		ContextCompactEnabled:             false,
-		ContextCompactTrigger:             65536,
+		UIComponentsEnabled:               true,
+		ContextWindowFallbackTokens:       DefaultContextWindowFallbackTokens,
+		ContextCompactTriggerPercent:      DefaultContextCompactTriggerPercent,
 		ContextCompactPreserve:            8,
 		ConversationDefaultModel:          "",
 		ConversationTaskModel:             "follow",
@@ -661,6 +715,7 @@ func Load() Config {
 		ModelOptionPolicyMode:             "allowlist",
 		ModelOptionAllowedPaths:           DefaultModelOptionAllowedPathsJSON(),
 		ModelOptionDeniedPaths:            DefaultModelOptionDeniedPathsJSON(),
+		KnowledgeBaseEnabled:              true,
 		UserStorageQuotaBytes:             104857600,
 		MaxUploadFileBytes:                20971520,
 		MaxMessageFiles:                   10,
@@ -722,6 +777,7 @@ func Load() Config {
 		EmbeddingKey:                      "",
 		EmbeddingTimeoutSeconds:           60,
 		EmbeddingOutputDimensions:         1536,
+		EmbeddingDimensionsPolicy:         EmbeddingDimensionsPolicySend,
 		EmbeddingNormalize:                true,
 		EmbedTriggerOnUpload:              true,
 		EmbedChunkSizeTokens:              1024,
@@ -804,6 +860,11 @@ func (c Config) Validate() error {
 
 	if strings.TrimSpace(c.CORSAllowOrigin) == "" || strings.TrimSpace(c.CORSAllowOrigin) == "*" {
 		return errors.New("invalid production config: CORS_ALLOW_ORIGIN must be explicitly set (wildcard * is not allowed)")
+	}
+	if c.LocalMode {
+		// 本地 sidecar 只在回环地址上服务，公共 URL 在监听后由实际端口填入；
+		// 其余生产级校验（密钥强度、CORS 白名单）对本地模式同样生效。
+		return nil
 	}
 	if err := validatePublicURL(c.PublicAPIBaseURL, "PUBLIC_API_BASE_URL"); err != nil {
 		return err
@@ -952,6 +1013,11 @@ func normalizeEnv(value string) string {
 	default:
 		return strings.ToLower(strings.TrimSpace(value))
 	}
+}
+
+// IsProduction 判断配置是否使用生产环境语义。
+func (c Config) IsProduction() bool {
+	return normalizeEnv(c.Env) == "prod"
 }
 
 func normalizeDatabaseDriver(value string) string {
@@ -1164,7 +1230,7 @@ func (c Config) StrictOutboundPolicy() sharedsecurity.OutboundPolicy {
 }
 
 func (c Config) ssrfProtectionEnforced() bool {
-	return normalizeEnv(c.Env) == "prod" && c.SSRFProtectionEnabled
+	return c.IsProduction() && c.SSRFProtectionEnabled
 }
 
 func splitCommaSeparated(raw string) []string {

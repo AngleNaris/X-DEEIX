@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -58,7 +59,7 @@ func (h *Handler) GetEmbeddingRuntime(c *gin.Context) {
 	defer cancel()
 	if _, err := h.embeddingSvc.EmbedTexts(ctx, []string{"health check"}); err != nil {
 		view.Status = "unhealthy"
-		view.Message = err.Error()
+		view.Message = "Embedding 服务连接失败，请检查服务配置和运行状态"
 		response.Success(c, view)
 		return
 	}
@@ -73,18 +74,18 @@ func (h *Handler) GetEmbeddingRuntime(c *gin.Context) {
 // @Tags admin/settings
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} response.Envelope
+// @Success 200 {object} EmbeddingIndexStatusResponseDoc
 // @Router /admin/settings/embedding/status [get]
 func (h *Handler) GetEmbeddingStatus(c *gin.Context) {
 	if h.embeddingSvc == nil {
-		response.Error(c, http.StatusServiceUnavailable, "embedding service not available")
+		response.ErrorFrom(c, http.StatusServiceUnavailable, errEmbeddingServiceNotAvailable)
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 	status, err := h.embeddingSvc.GetIndexStatus(ctx)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "get embedding status failed")
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, toEmbeddingIndexStatusResponse(status))
@@ -92,25 +93,28 @@ func (h *Handler) GetEmbeddingStatus(c *gin.Context) {
 
 // TriggerReindex godoc
 // @Summary 触发向量重建（重索引所有 stale/failed 文件）
+// @Description include_empty=true 时同时重试提取无文本的 empty 文件，适用于更换 OCR 引擎后
 // @Tags admin/settings
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} response.Envelope
+// @Param include_empty query bool false "是否包含 empty 终态文件"
+// @Success 200 {object} EmbeddingReindexResponseDoc
 // @Router /admin/settings/embedding/reindex [post]
 func (h *Handler) TriggerReindex(c *gin.Context) {
 	if h.embeddingSvc == nil {
-		response.Error(c, http.StatusServiceUnavailable, "embedding service not available")
+		response.ErrorFrom(c, http.StatusServiceUnavailable, errEmbeddingServiceNotAvailable)
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
-	submitted, err := h.embeddingSvc.ReindexStaleFiles(ctx)
+	includeEmpty, _ := strconv.ParseBool(c.Query("include_empty"))
+	submitted, err := h.embeddingSvc.ReindexStaleFiles(ctx, includeEmpty)
 	if err != nil {
 		if errors.Is(err, appembedding.ErrEmbeddingServiceNotConfigured) {
 			response.ErrorFrom(c, http.StatusBadRequest, err)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "reindex failed")
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, EmbeddingReindexResponse{Submitted: submitted, Message: "reindex jobs submitted"})

@@ -4,23 +4,33 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
 	"strconv"
 	"strings"
 
 	domainmcp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/mcp"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/mcp"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/secretbox"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/mcp"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
 )
 
 type selectedToolRuntime struct {
 	definitions         []llm.ToolDefinition
 	nameMap             map[string]string
-	mcpConfigs          map[string]mcp.CallConfig
+	mcpBindings         map[string]mcpToolCallBinding
 	schemas             map[string]json.RawMessage
 	attachmentProcessor *selectedAttachmentProcessor
+}
+
+// mcpToolCallBinding 绑定模型侧工具名对应的 MCP 调用配置与计量元数据。
+// 服务器归属与价格在解析选中工具时快照，保证同名工具跨服务器可区分、计费按调用时价格结算。
+type mcpToolCallBinding struct {
+	Config       mcp.CallConfig
+	ServerID     uint
+	ServerName   string
+	ToolName     string
+	PriceNanousd int64
 }
 
 type selectedAttachmentProcessor struct {
@@ -66,76 +76,6 @@ func defaultMCPToolGuidancePrompt() string {
 	return strings.TrimSpace(builder.String())
 }
 
-func summarizeToolInputSchema(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	var schema map[string]interface{}
-	if err := json.Unmarshal(raw, &schema); err != nil {
-		return ""
-	}
-	properties, _ := schema["properties"].(map[string]interface{})
-	if len(properties) == 0 {
-		return "无需参数"
-	}
-	required := map[string]struct{}{}
-	if items, ok := schema["required"].([]interface{}); ok {
-		for _, item := range items {
-			if name, ok := item.(string); ok && strings.TrimSpace(name) != "" {
-				required[strings.TrimSpace(name)] = struct{}{}
-			}
-		}
-	}
-	names := make([]string, 0, len(properties))
-	for name := range properties {
-		if strings.TrimSpace(name) != "" {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	parts := make([]string, 0, len(names))
-	for _, name := range names {
-		prop, _ := properties[name].(map[string]interface{})
-		fieldType := schemaFieldType(prop)
-		label := name
-		if fieldType != "" {
-			label = fmt.Sprintf("%s:%s", name, fieldType)
-		}
-		if _, ok := required[name]; ok {
-			label += " 必填"
-		}
-		parts = append(parts, label)
-	}
-	if len(parts) > 6 {
-		parts = append(parts[:6], fmt.Sprintf("等 %d 个字段", len(parts)))
-	}
-	return "参数 " + strings.Join(parts, "，")
-}
-
-func schemaFieldType(prop map[string]interface{}) string {
-	if len(prop) == 0 {
-		return ""
-	}
-	if value, ok := prop["type"].(string); ok && strings.TrimSpace(value) != "" {
-		return strings.TrimSpace(value)
-	}
-	if items, ok := prop["type"].([]interface{}); ok && len(items) > 0 {
-		types := make([]string, 0, len(items))
-		for _, item := range items {
-			if value, ok := item.(string); ok && strings.TrimSpace(value) != "" {
-				types = append(types, strings.TrimSpace(value))
-			}
-		}
-		if len(types) > 0 {
-			return strings.Join(types, "|")
-		}
-	}
-	if _, ok := prop["enum"].([]interface{}); ok {
-		return "enum"
-	}
-	return ""
-}
-
 func (s *Service) resolveSelectedToolRuntime(ctx context.Context, toolIDs []uint) (selectedToolRuntime, error) {
 	if len(toolIDs) == 0 || !s.cfg.Snapshot().MCPEnable {
 		return selectedToolRuntime{}, nil
@@ -155,7 +95,7 @@ func (s *Service) resolveSelectedToolRuntime(ctx context.Context, toolIDs []uint
 	result := selectedToolRuntime{
 		definitions: make([]llm.ToolDefinition, 0, len(tools)),
 		nameMap:     map[string]string{},
-		mcpConfigs:  map[string]mcp.CallConfig{},
+		mcpBindings: map[string]mcpToolCallBinding{},
 		schemas:     map[string]json.RawMessage{},
 	}
 	usedNames := map[string]int{}
@@ -208,18 +148,24 @@ func (s *Service) resolveSelectedToolRuntime(ctx context.Context, toolIDs []uint
 		})
 		result.nameMap[modelName] = tool.Name
 		result.schemas[modelName] = schema
-		result.mcpConfigs[modelName] = mcp.CallConfig{
-			BaseURL:   server.BaseURL,
-			AuthToken: token,
-			TimeoutMS: cfg.MCPToolTimeoutSeconds * 1000,
-			Headers:   headers,
+		result.mcpBindings[modelName] = mcpToolCallBinding{
+			Config: mcp.CallConfig{
+				BaseURL:   server.BaseURL,
+				AuthToken: token,
+				TimeoutMS: cfg.MCPToolTimeoutSeconds * 1000,
+				Headers:   headers,
+			},
+			ServerID:     server.ID,
+			ServerName:   server.Name,
+			ToolName:     tool.Name,
+			PriceNanousd: tool.PriceNanousd,
 		}
 		if isAttachmentProcessor {
 			if bindErr := result.bindAttachmentProcessor(selectedAttachmentProcessor{
 				toolID:         tool.ID,
 				modelName:      modelName,
 				toolName:       tool.Name,
-				displayName:    firstNonEmptyString(tool.DisplayName, tool.Name),
+				displayName:    textutil.FirstNonEmpty(tool.DisplayName, tool.Name),
 				argument:       strings.TrimSpace(tool.AttachmentArgument),
 				encoding:       strings.TrimSpace(tool.AttachmentEncoding),
 				promptArgument: strings.TrimSpace(tool.AttachmentPromptArgument),
@@ -252,7 +198,7 @@ func (r selectedToolRuntime) withoutAttachmentProcessor() selectedToolRuntime {
 	}
 	r.definitions = definitions
 	delete(r.nameMap, processor.modelName)
-	delete(r.mcpConfigs, processor.modelName)
+	delete(r.mcpBindings, processor.modelName)
 	delete(r.schemas, processor.modelName)
 	r.attachmentProcessor = nil
 	return r
@@ -261,7 +207,7 @@ func (r selectedToolRuntime) withoutAttachmentProcessor() selectedToolRuntime {
 func (r selectedToolRuntime) withoutDefinitions() selectedToolRuntime {
 	r.definitions = nil
 	r.nameMap = nil
-	r.mcpConfigs = nil
+	r.mcpBindings = nil
 	r.schemas = nil
 	r.attachmentProcessor = nil
 	return r

@@ -2,10 +2,14 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -32,22 +36,29 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/settings"
 	appskill "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/skill"
 	appsystemevent "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/systemevent"
+	appuicomponent "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/uicomponent"
+	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/user"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/usersettings"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/cache"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	moderationclient "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/contentmoderation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/embedding"
+	extractengines "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/extract/engines"
+	extractprobe "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/extract/probe"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/geoip"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/identityprovider"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/mcp"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/mediaartifact"
 	openrouterpricing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/modelpricing/openrouter"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/objectstore"
 	platformlogger "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/observability/logger"
 	platformtracing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/observability/tracing"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/openwebui"
 	epaypayment "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/payment/epay"
 	stripepayment "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/payment/stripe"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence"
 	filecache "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/filecache"
 	announcementrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/announcement"
 	auditrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/audit"
@@ -63,9 +74,12 @@ import (
 	settingsrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/settings"
 	skillrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/skill"
 	systemeventrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/systemevent"
+	uicomponentrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/uicomponent"
 	userrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/user"
 	usersettingsrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/usersettings"
 	platformruntime "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/runtime"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/background"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/lifecycle"
 	platformhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http"
 	adminhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/admin"
 	announcementhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/announcement"
@@ -80,10 +94,10 @@ import (
 	promptpresethttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/promptpreset"
 	settingshttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/settings"
 	skillhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/skill"
+	uicomponenthttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/uicomponent"
 	userhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/user"
 	usersettingshttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/usersettings"
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -94,7 +108,7 @@ type App struct {
 	engine                 *gin.Engine
 	logger                 *zap.Logger
 	db                     *gorm.DB
-	redis                  *redis.Client
+	cache                  cache.Backend
 	geoResolver            *geoip.Client
 	identityProviderClient *identityprovider.Client
 	llmClient              *llm.Client
@@ -102,7 +116,17 @@ type App struct {
 	embeddingClient        *embedding.Client
 	mediaArtifactClient    *mediaartifact.Client
 	moderationClient       *moderationclient.Client
+	conversationService    *conversation.Service
+	contentModeration      *appcontentmoderation.Service
+	authService            *auth.Service
+	runtimeCfg             *config.Runtime
+	tracingShutdown        platformtracing.ShutdownFunc
 	backgroundCancel       context.CancelFunc
+	// shutdown 是进程关停排空信号：翻转就绪探针并断开订阅型长连接。
+	shutdown *lifecycle.Shutdown
+	// stopCh 由 RequestShutdown 关闭，与 SIGTERM 等价。
+	stopCh   chan struct{}
+	stopOnce sync.Once
 }
 
 type subscriptionGroupAdapter struct {
@@ -121,11 +145,11 @@ func (a *subscriptionGroupAdapter) GetUserSubscriptionGroupID(ctx context.Contex
 }
 
 type avatarContentOpener struct {
-	conversationService *conversation.Service
+	uploads *appupload.Service
 }
 
 func (o avatarContentOpener) OpenAvatarFileContent(ctx context.Context, userID uint, fileID string) (*user.AvatarFileContent, error) {
-	content, err := o.conversationService.OpenFileContent(ctx, userID, fileID)
+	content, err := o.uploads.OpenFileContent(ctx, userID, fileID)
 	if err != nil {
 		return nil, err
 	}
@@ -138,15 +162,31 @@ func (o avatarContentOpener) OpenAvatarFileContent(ctx context.Context, userID u
 	}, nil
 }
 
-// NewApp 创建应用。
+// Options 控制应用的运行形态。零值等价于普通服务器部署。
+type Options struct {
+	// LocalDataDir 非空时以本地 sidecar 模式运行，所有数据落在该目录（见 config.ApplyLocalMode）。
+	LocalDataDir string
+}
+
+// NewApp 创建普通服务器部署形态的应用。
 func NewApp() (*App, error) {
+	return NewAppWithOptions(Options{})
+}
+
+// NewAppWithOptions 按 Options 创建应用。
+func NewAppWithOptions(opts Options) (*App, error) {
 	cfg := config.Load()
+	if opts.LocalDataDir != "" {
+		if err := cfg.ApplyLocalMode(opts.LocalDataDir); err != nil {
+			return nil, err
+		}
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	runtimeCfg := config.NewRuntime(cfg)
 
-	if err := platformtracing.Init(context.Background(), platformtracing.Config{
+	tracingShutdown, err := platformtracing.Init(context.Background(), platformtracing.Config{
 		ServiceName:  cfg.AppName,
 		Enabled:      cfg.OTelEnabled,
 		Endpoint:     cfg.OTelExporterOTLPEndpoint,
@@ -154,21 +194,36 @@ func NewApp() (*App, error) {
 		Insecure:     cfg.OTelExporterOTLPInsecure,
 		Protocol:     cfg.OTelExporterOTLPProtocol,
 		SamplingRate: cfg.OTelSamplingRate,
-	}); err != nil {
+	})
+	if err != nil {
 		return nil, fmt.Errorf("init tracing: %w", err)
 	}
+	keepTracing := false
+	defer func() {
+		if keepTracing {
+			return
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = tracingShutdown(shutdownCtx)
+	}()
 
-	log, err := platformlogger.New(cfg.Env)
+	// 本地模式下 stdout 是与父进程的握手通道，日志改走 stderr。
+	newLogger := platformlogger.New
+	if cfg.LocalMode {
+		newLogger = platformlogger.NewStderr
+	}
+	log, err := newLogger(cfg.Env)
 	if err != nil {
 		return nil, err
 	}
 
-	db, err := openDatabase(cfg)
+	db, err := persistence.Open(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	redisClient, memoryCache, err := openCache(cfg)
+	cacheBackend, err := cache.Open(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -184,13 +239,13 @@ func NewApp() (*App, error) {
 	settingsRepo := settingsrepo.NewRepo(db)
 	settingsService := settings.NewService(settingsRepo, cfg.DataEncryptionKey)
 	settingsService.SetAuditWriter(auditService)
-	runtimeService := appruntime.NewService(runtimeCfg)
+	runtimeService := appruntime.NewService(runtimeCfg, extractprobe.Prober{})
 	runtimeService.SetDockerRunner(platformruntime.NewDockerRunner())
-	settingsCache := buildSettingsCache(cfg, redisClient, memoryCache)
+	settingsCache := cacheBackend.Settings()
 	runtimeSettings := settings.NewRuntimeSettings(settingsRepo, settingsCache, cfg.DataEncryptionKey)
 	settingsHandler := settingshttp.NewHandler(settingsService, runtimeSettings, runtimeService, runtimeCfg)
 	settingsModule := settingshttp.NewModule(settingsHandler)
-	if err = settingsService.Seed(context.Background(), cfg); err != nil {
+	if err = settingsService.Seed(context.Background()); err != nil {
 		return nil, fmt.Errorf("seed settings: %w", err)
 	}
 	if err = runtimeSettings.ApplyTo(context.Background(), runtimeCfg); err != nil {
@@ -221,24 +276,67 @@ func NewApp() (*App, error) {
 	paymentCheckoutService := billing.NewPaymentCheckoutService(stripepayment.New(cfg.StrictOutboundPolicy()), epaypayment.New())
 	billingHandler := billinghttp.NewHandler(billingService, settingsService, runtimeCfg, officialPricingService, paymentCheckoutService, log)
 	billingModule := billinghttp.NewModule(billingHandler)
+<<<<<<< HEAD
 	objectStoreProvider := appstorage.NewRuntimeProvider(runtimeCfg, nil)
 	userService.SetObjectStoreProvider(objectStoreProvider)
+=======
+	// 对象存储工厂由组合根显式注入，避免服务实例依赖进程级可变状态。
+	objectStoreProvider := appstorage.NewRuntimeProvider(runtimeCfg, objectstore.New)
+	// 抽取引擎工厂由组合根显式注入；具体客户端构造为 nil 时必须返回 nil 接口，避免 typed-nil 绕过判空。
+	extractionFactories := extraction.EngineFactories{
+		NewTika: func(cfg config.Config) extraction.DocumentExtractor {
+			if client := extractengines.NewTika(cfg); client != nil {
+				return client
+			}
+			return nil
+		},
+		NewDocling: func(cfg config.Config) extraction.DocumentExtractor {
+			if client := extractengines.NewDocling(cfg); client != nil {
+				return client
+			}
+			return nil
+		},
+		NewMinerU: func(cfg config.Config) extraction.DocumentExtractor {
+			if client := extractengines.NewMinerU(cfg); client != nil {
+				return client
+			}
+			return nil
+		},
+		NewOCR: func(provider string, cfg config.Config) extraction.OCRExtractor {
+			if client := extractengines.NewOCR(provider, cfg); client != nil {
+				return client
+			}
+			return nil
+		},
+		Builtin: extractengines.Builtin{},
+	}
+>>>>>>> upstream/dev
 	geoResolver := geoip.New(runtimeCfg.Snapshot())
+	// GeoIP 关闭时 geoip.New 返回 nil 指针，必须转成 nil 接口再注入，避免 typed-nil 绕过判空。
+	var authGeoResolver auth.GeoResolver
+	if geoResolver != nil {
+		authGeoResolver = geoResolver
+	}
 	identityProviderClient := identityprovider.New(cfg.StrictOutboundPolicy())
 	authService := auth.NewServiceWithRuntime(
 		runtimeCfg,
 		userRepo,
-		geoResolver,
+		authGeoResolver,
 		identityProviderClient,
 	)
 	authService.SetLogger(log)
-	authService.SetProviderAuthBridge(buildProviderAuthBridge(cfg, redisClient, memoryCache))
+	authService.SetProviderAuthBridge(cacheBackend.ProviderAuthBridge())
 	authService.SetObjectStoreProvider(objectStoreProvider)
 	authService.SetAuditWriter(auditService)
 	settingsService.SetAuthSafetyService(authService)
 	authService.SetSubscriptionResolver(billingService)
-	bootstrapSuperAdmin, err := authService.EnsureBootstrapSuperAdmin(context.Background())
-	if err != nil {
+	var bootstrapSuperAdmin *auth.BootstrapSuperAdmin
+	if cfg.LocalMode {
+		// 本地模式：唯一用户无密码、无初始化引导，通过启动握手的一次性 grant 登录。
+		if _, err = authService.EnsureLocalOwner(context.Background()); err != nil {
+			return nil, err
+		}
+	} else if bootstrapSuperAdmin, err = authService.EnsureBootstrapSuperAdmin(context.Background()); err != nil {
 		return nil, err
 	}
 	authHandler := authhttp.NewHandler(authService)
@@ -249,7 +347,7 @@ func NewApp() (*App, error) {
 	memoryHandler := memoryhttp.NewHandler(memoryService)
 	memoryModule := memoryhttp.NewModule(memoryHandler)
 	channelRepo := channelrepo.NewRepo(db)
-	channelCache := buildChannelCache(cfg, redisClient, memoryCache)
+	channelCache := cacheBackend.Channel()
 	trustedOutboundPolicy := cfg.TrustedOutboundPolicy()
 	strictOutboundPolicy := cfg.StrictOutboundPolicy()
 	llmClient := llm.NewClient(trustedOutboundPolicy)
@@ -273,35 +371,51 @@ func NewApp() (*App, error) {
 	channelModule := channelhttp.NewModule(channelHandler)
 	conversationRepo := conversationrepo.NewRepo(db)
 	settingsService.SetVectorStoreAvailabilityService(conversationRepo)
-	conversationCache := buildConversationCache(cfg, redisClient, memoryCache)
+	conversationCache := cacheBackend.Conversation()
 	mcpRepo := mcprepo.NewRepo(db)
 	embedClient := embedding.New(trustedOutboundPolicy)
 	compactService := compact.NewServiceWithRuntime(runtimeCfg, conversationRepo, log)
-	extractionService := extraction.NewServiceWithRuntime(runtimeCfg)
+	extractionService := extraction.NewServiceWithRuntime(runtimeCfg, extractionFactories)
 	extractionService.SetObjectStoreProvider(objectStoreProvider)
 	embeddingService := appembedding.NewServiceWithRuntime(runtimeCfg, conversationRepo, extractionService, embedClient, log)
 	memoryService.SetEmbeddingProvider(embeddingService)
 	settingsHandler.SetEmbeddingService(embeddingService)
-	processingService := appprocessing.NewServiceWithRuntime(runtimeCfg, conversationRepo, conversationCache, extractionService, embeddingService, log, appprocessing.DefaultExtractorVersion)
-	ragService := apprag.NewServiceWithRuntime(runtimeCfg, conversationRepo, conversationCache, embedClient)
-	conversationService := conversation.NewServiceWithRuntime(
+	processingService := appprocessing.NewServiceWithRuntime(appprocessing.Dependencies{
+		Config:           runtimeCfg,
+		Repository:       conversationRepo,
+		Cache:            conversationCache,
+		ExtractService:   extractionService,
+		EmbeddingService: embeddingService,
+		Logger:           log,
+		ExtractorVersion: appprocessing.DefaultExtractorVersion,
+	})
+	uploadService := appupload.NewServiceWithRuntime(
 		runtimeCfg,
 		conversationRepo,
-		conversationCache,
-		channelService,
-		memoryService,
-		llmClient,
-		mediaArtifactClient,
-		mcpClient,
-		embedClient,
-		nil,
-		compactService,
-		embeddingService,
-		processingService,
-		extractionService,
-		ragService,
 		log,
+		appupload.Hooks{InitializeUploadedFile: processingService.InitializeUploadedFile},
+		conversation.UploadErrorSet(),
+		appprocessing.DefaultExtractorVersion,
 	)
+	uploadService.SetObjectStoreProvider(objectStoreProvider)
+	ragService := apprag.NewServiceWithRuntime(runtimeCfg, conversationRepo, conversationCache, embedClient)
+	conversationService := conversation.NewServiceWithRuntime(conversation.Dependencies{
+		Config:            runtimeCfg,
+		Repository:        conversationRepo,
+		Cache:             conversationCache,
+		RouteResolver:     channelService,
+		MemoryRecorder:    memoryService,
+		LLMClient:         llmClient,
+		MediaDownloader:   mediaArtifactClient,
+		MCPClient:         mcpClient,
+		CompactService:    compactService,
+		EmbeddingService:  embeddingService,
+		ProcessingService: processingService,
+		UploadService:     uploadService,
+		ExtractService:    extractionService,
+		RAGService:        ragService,
+		Logger:            log,
+	})
 	conversationService.SetBillingService(billingService)
 	conversationService.SetAuditWriter(auditService)
 	conversationService.SetObjectStoreProvider(objectStoreProvider)
@@ -314,16 +428,19 @@ func NewApp() (*App, error) {
 	conversationService.SetModerationService(contentModerationService)
 	contentModerationHandler := contentmoderationhttp.NewHandler(contentModerationService)
 	contentModerationModule := contentmoderationhttp.NewModule(contentModerationHandler)
-	userService.SetAvatarContentOpener(avatarContentOpener{conversationService: conversationService})
-	userService.SetAvatarFileValidator(conversationService)
-	authService.SetAvatarFileValidator(conversationService)
+	userService.SetAvatarContentOpener(avatarContentOpener{uploads: uploadService})
+	userService.SetAvatarFileValidator(uploadService)
+	userService.SetActivityStatsRepository(billingRepo)
+	authService.SetAvatarFileValidator(uploadService)
 	memoryService.SetCacheInvalidator(conversationService.InvalidateMemoryCache)
-	conversationHandler := conversationhttp.NewHandler(conversationService, runtimeCfg)
+	shutdownSignal := lifecycle.NewShutdown()
+	conversationHandler := conversationhttp.NewHandler(conversationService, uploadService, processingService, runtimeCfg, shutdownSignal)
 	conversationModule := conversationhttp.NewModule(conversationHandler)
 	userHandler := userhttp.NewHandler(userService)
 	userModule := userhttp.NewModule(userHandler)
 	mcpService := appmcp.NewServiceWithRuntime(runtimeCfg, mcpRepo, mcpClient)
 	mcpService.SetSystemEventWriter(systemEventService)
+	mcpService.SetBillingModeProvider(billingService)
 	mcpHandler := mcphttp.NewHandler(mcpService)
 	mcpModule := mcphttp.NewModule(mcpHandler)
 	adminService := admin.NewService(userService, auditService)
@@ -364,19 +481,25 @@ func NewApp() (*App, error) {
 	conversationService.SetSkillResolver(skillService)
 	skillHandler := skillhttp.NewHandler(skillService)
 	skillModule := skillhttp.NewModule(skillHandler)
+	uiComponentService := appuicomponent.NewService(uicomponentrepo.NewRepo(db))
+	uiComponentService.SetFeatureEnabled(func() bool { return runtimeCfg.Snapshot().UIComponentsEnabled })
+	uiComponentService.SetAuditWriter(auditService)
+	conversationService.SetUIComponentResolver(uiComponentService)
+	uiComponentModule := uicomponenthttp.NewModule(uicomponenthttp.NewHandler(uiComponentService))
 	knowledgeBaseRepo := knowledgebaserepo.NewRepo(db)
 	knowledgeBaseService := appknowledgebase.NewService(knowledgeBaseRepo)
 	knowledgeBaseService.SetAuditWriter(auditService)
-	knowledgeBaseService.SetFileCleaner(conversationService)
-	knowledgeBaseService.SetFileContentOpener(conversationService)
-	knowledgeBaseService.SetFileUploader(conversationService)
+	knowledgeBaseService.SetFileCleaner(uploadService)
+	knowledgeBaseService.SetFileContentOpener(uploadService)
+	knowledgeBaseService.SetFileUploader(uploadService)
+	knowledgeBaseService.SetFileEmbeddingSubmitter(processingService)
 	knowledgeBaseService.SetLogger(log)
 	conversationService.SetKnowledgeBaseResolver(knowledgeBaseService)
 	knowledgeBaseHandler := knowledgebasehttp.NewHandler(knowledgeBaseService, runtimeCfg)
 	knowledgeBaseModule := knowledgebasehttp.NewModule(knowledgeBaseHandler)
 
-	hc := newHealthChecker(db, cfg.CacheDriver, redisClient)
-	rateLimiter := buildRateLimiter(cfg, redisClient, memoryCache)
+	hc := newHealthChecker(db, cacheBackend)
+	rateLimiter := cacheBackend.RateLimiter()
 	engine, err := platformhttp.NewEngine(runtimeCfg, log, platformhttp.Modules{
 		Auth:              authModule,
 		AuthService:       authService,
@@ -390,10 +513,12 @@ func NewApp() (*App, error) {
 		Announcement:      announcementModule,
 		PromptPreset:      promptPresetModule,
 		Skill:             skillModule,
+		UIComponent:       uiComponentModule,
 		KnowledgeBase:     knowledgeBaseModule,
 		Settings:          settingsModule,
 		UserSettings:      userSettingsModule,
 		User:              userModule,
+		Shutdown:          shutdownSignal,
 		StartupLog: func(log *zap.Logger) {
 			if log == nil || bootstrapSuperAdmin == nil {
 				return
@@ -417,12 +542,13 @@ func NewApp() (*App, error) {
 	contentModerationService.StartBackgroundWorkers(backgroundCtx)
 	channelService.StartModelIconAssetCleanup(backgroundCtx)
 
-	return &App{
+	app := &App{
+		stopCh:                 make(chan struct{}),
 		cfg:                    runtimeCfg.Snapshot(),
 		engine:                 engine,
 		logger:                 log,
 		db:                     db,
-		redis:                  redisClient,
+		cache:                  cacheBackend,
 		geoResolver:            geoResolver,
 		identityProviderClient: identityProviderClient,
 		llmClient:              llmClient,
@@ -430,15 +556,66 @@ func NewApp() (*App, error) {
 		embeddingClient:        embedClient,
 		mediaArtifactClient:    mediaArtifactClient,
 		moderationClient:       moderationClient,
+		conversationService:    conversationService,
+		contentModeration:      contentModerationService,
+		authService:            authService,
+		runtimeCfg:             runtimeCfg,
+		tracingShutdown:        tracingShutdown,
 		backgroundCancel:       backgroundCancel,
-	}, nil
+		shutdown:               shutdownSignal,
+	}
+	keepTracing = true
+	return app, nil
 }
 
 // Run 启动 HTTP 服务并支持优雅停机。
+// IssueLocalGrant 生成本地模式的一次性登录 grant（仅本地模式）。
+func (a *App) IssueLocalGrant() (string, error) {
+	if !a.cfg.LocalMode {
+		return "", errors.New("local grant is only available in local mode")
+	}
+	return a.authService.IssueLocalGrant()
+}
+
+// Listen 绑定监听地址并返回实际地址。本地模式绑定 127.0.0.1:0，端口由系统分配；
+// 调用方在 Serve 之前即可据此完成与父进程的握手。
+func (a *App) Listen() (net.Listener, error) {
+	addr := strings.TrimSpace(a.cfg.HTTPListenAddr)
+	if addr == "" {
+		addr = fmt.Sprintf(":%s", a.cfg.HTTPPort)
+	}
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	if a.cfg.LocalMode {
+		origin := "http://" + listener.Addr().String()
+		a.cfg.SetLocalOrigin(origin)
+		snapshot := a.runtimeCfg.Snapshot()
+		snapshot.SetLocalOrigin(origin)
+		a.runtimeCfg.Store(snapshot)
+	}
+	return listener, nil
+}
+
+// Run 监听并服务，直到收到终止信号。
 func (a *App) Run() error {
-	addr := fmt.Sprintf(":%s", a.cfg.HTTPPort)
+	listener, err := a.Listen()
+	if err != nil {
+		return err
+	}
+	return a.Serve(listener)
+}
+
+// Serve 在已绑定的监听器上服务，直到收到终止信号；随后分阶段排空。
+// RequestShutdown triggers the same graceful drain as SIGTERM. Safe to call
+// more than once; used by local mode when the desktop shell goes away.
+func (a *App) RequestShutdown() {
+	a.stopOnce.Do(func() { close(a.stopCh) })
+}
+
+func (a *App) Serve(listener net.Listener) error {
 	srv := &http.Server{
-		Addr:              addr,
 		Handler:           a.engine,
 		ReadHeaderTimeout: httpTimeoutSeconds(a.cfg.HTTPReadHeaderTimeoutSeconds, 10),
 		ReadTimeout:       httpTimeoutSeconds(a.cfg.HTTPReadTimeoutSeconds, 120),
@@ -448,8 +625,8 @@ func (a *App) Run() error {
 
 	errCh := make(chan error, 1)
 	go func() {
-		a.logger.Info("server_starting", zap.String("port", a.cfg.HTTPPort))
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		a.logger.Info("server_starting", zap.String("addr", listener.Addr().String()))
+		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 		close(errCh)
@@ -463,16 +640,33 @@ func (a *App) Run() error {
 		return err
 	case sig := <-quit:
 		a.logger.Info("server_shutting_down", zap.String("signal", sig.String()))
+	case <-a.stopCh:
+		a.logger.Info("server_shutting_down", zap.String("signal", "parent_exit"))
 	}
 
-	if a.backgroundCancel != nil {
-		a.backgroundCancel()
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// 阶段一：进入排空。就绪探针翻转为 503 引导负载均衡摘流，
+	// 订阅型 SSE（run 对账流、run 观看流）立即断开，客户端按既有逻辑重连。
+	a.shutdown.BeginDrain()
+
+	// 阶段二：排空 in-flight 请求。消息生成等有价值的流式请求在窗口内自然完成。
+	drainTimeout := httpTimeoutSeconds(a.cfg.HTTPShutdownTimeoutSeconds, 10)
+	ctx, cancel := context.WithTimeout(context.Background(), drainTimeout)
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
-		a.logger.Error("server_shutdown_error", zap.Error(err))
-		return err
+		// 阶段三：排空超时，强断剩余连接。被打断的生成已有落盘与前端恢复兜底，
+		// 属预期内降级而非故障，进程仍以成功状态退出。
+		a.logger.Warn("server_drain_timeout_force_close",
+			zap.Duration("drain_timeout", drainTimeout),
+			zap.Error(err),
+		)
+		if closeErr := srv.Close(); closeErr != nil {
+			a.logger.Warn("server_force_close_error", zap.Error(closeErr))
+		}
+	}
+
+	// HTTP 排空完成后再停后台 worker；资源释放由 cli.Run 的 defer Close() 收尾。
+	if a.backgroundCancel != nil {
+		a.backgroundCancel()
 	}
 	a.logger.Info("server_stopped")
 	return nil
@@ -497,8 +691,20 @@ func (a *App) Close() {
 	if a.backgroundCancel != nil {
 		a.backgroundCancel()
 	}
-	if a.redis != nil {
-		_ = a.redis.Close()
+	// Workers must be drained before their dependencies (cache, database) close.
+	if a.contentModeration != nil {
+		a.contentModeration.Stop()
+	}
+	drainCtx, cancelDrain := context.WithTimeout(context.Background(), 5*time.Second)
+	if err := background.Wait(drainCtx); err != nil {
+		a.logger.Warn("background_tasks_drain_timeout", zap.Error(err))
+	}
+	cancelDrain()
+	if a.conversationService != nil {
+		a.conversationService.Close()
+	}
+	if a.cache != nil {
+		_ = a.cache.Close()
 	}
 	if a.geoResolver != nil {
 		a.geoResolver.Close()
@@ -528,6 +734,8 @@ func (a *App) Close() {
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	platformtracing.Shutdown(shutdownCtx)
+	if a.tracingShutdown != nil {
+		_ = a.tracingShutdown(shutdownCtx)
+	}
 	a.logger.Sync() //nolint:errcheck
 }

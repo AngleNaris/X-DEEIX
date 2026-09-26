@@ -13,29 +13,14 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-	"unicode"
+
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
 
 	platformtracing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/observability/tracing"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/outboundhttp"
+	portllm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
 	"github.com/google/uuid"
-)
-
-const (
-	// EndpointResponses 表示 OpenAI Responses API 端点。
-	EndpointResponses = "responses"
-	// EndpointChatCompletions 表示 OpenAI Chat Completions API 端点。
-	EndpointChatCompletions = "chat_completions"
-	// EndpointImageGenerations 表示 OpenAI Images API 生成端点。
-	EndpointImageGenerations = "image_generations"
-	// EndpointImageEdits 表示 OpenAI Images API 编辑端点。
-	EndpointImageEdits = "image_edits"
-	// EndpointVideoGenerations 表示异步视频生成端点。
-	EndpointVideoGenerations = "video_generations"
-	// EndpointVideoExtensions 表示 xAI 异步视频扩展端点。
-	EndpointVideoExtensions = "video_extensions"
-	// EndpointInteractions 表示 Gemini Interactions API 端点。
-	EndpointInteractions = "interactions"
 )
 
 // 超时默认值。
@@ -44,6 +29,8 @@ const (
 	defaultReadTimeoutMS       = 120000 // 非流式/首字节超时 120s（含 LLM 推理）
 	defaultStreamIdleTimeoutMS = 60000  // 流式 chunk 间隔超时 60s
 	maxUpstreamBodyBytes       = 64 * 1024 * 1024
+	// maxStreamToolCallIndex 防止异常稀疏的上游索引触发无界切片扩容。
+	maxStreamToolCallIndex = 1024
 )
 
 const upstreamRequestIDHeaderTemplate = "${DEEIX_UPSTREAM_REQUEST_ID}"
@@ -52,25 +39,6 @@ const upstreamRequestIDHeaderTemplate = "${DEEIX_UPSTREAM_REQUEST_ID}"
 type Client struct {
 	httpClients *outboundhttp.Pool
 	adapters    map[string]transportAdapter
-}
-
-// RouteConfig 定义渠道路由调用参数。
-type RouteConfig struct {
-	Protocol            string
-	BaseURL             string
-	APIKey              string
-	HeadersJSON         string
-	ConnectTimeoutMS    int // TCP 建连超时（默认 10s）
-	ReadTimeoutMS       int // 非流式整体超时 / 流式首字节超时（默认 120s）
-	StreamIdleTimeoutMS int // 流式两个 chunk 之间最大间隔（默认 60s）
-	Endpoint            string
-	UpstreamModel       string
-	AttributionReferer  string
-	AttributionTitle    string
-}
-
-func resolveConnectTimeout(ms int) time.Duration {
-	return time.Duration(normalizeConnectTimeoutMS(ms)) * time.Millisecond
 }
 
 func normalizeConnectTimeoutMS(ms int) int {
@@ -94,81 +62,7 @@ func resolveStreamIdleTimeout(ms int) time.Duration {
 	return time.Duration(ms) * time.Millisecond
 }
 
-// ContentPart 类型常量。
-const (
-	ContentPartText  = "text"  // 纯文本
-	ContentPartImage = "image" // 图片（原始字节，序列化时 base64 编码）
-	ContentPartVideo = "video" // 视频（原始字节，仅供支持视频输入的 adapter 使用）
-	ContentPartFile  = "file"  // 文件提取文本（前端解析后注入）
-)
-
-// ContentPart 表示多模态消息中的一个内容片段。
-type ContentPart struct {
-	Kind         string        // text | image | video | file
-	Text         string        // Kind=text 或 Kind=file 时的文本内容
-	MimeType     string        // Kind=image 时的 MIME 类型（如 "image/jpeg"）
-	Data         []byte        // Kind=image 时的原始字节（发送时 base64 编码）
-	FileName     string        // Kind=file 时的文件显示名
-	CacheControl *CacheControl // 支持块级缓存的 adapter 可读取该提示
-}
-
-// CacheControl 表示可被支持方言渲染为 prompt cache breakpoint 的提示。
-type CacheControl struct {
-	Type string
-	TTL  string
-}
-
-// Message 定义发送给上游的消息结构。
-// Parts 非空时覆盖 Content 用于多模态内容。
-type Message struct {
-	Role             string
-	Content          string        // 纯文本消息内容（Parts 为空时使用）
-	Parts            []ContentPart // 多模态内容片段（设置后优先于 Content）
-	ReasoningContent string        // OpenAI-compatible thinking mode 的 reasoning_content 回灌字段
-	ToolCalls        []ToolCall    // assistant 请求执行的工具调用
-	ToolResults      []ToolResult  // 工具执行结果，用于回灌下一轮模型调用
-	CacheControl     *CacheControl // 支持块级缓存的 adapter 可读取该提示
-}
-
-// GenerateInput 定义上游推理请求入参。
-type GenerateInput struct {
-	RequestID              string
-	ConversationID         uint
-	ConversationPublicID   string
-	ConversationSessionKey string
-	// PromptCacheKey 是 OpenAI prompt_cache_key 的服务端受控值，用户 Options 不得覆盖。
-	PromptCacheKey string
-	Messages       []Message
-	// Instructions 承载可映射到上游原生指令字段的系统/开发者指令。
-	// 不支持原生指令字段的 adapter 应继续通过 messages 承载系统提示。
-	Instructions string
-	Tools        []ToolDefinition
-	// DisableTools 表示本轮调用必须只生成文本，adapter 不再声明 MCP 或厂商原生工具。
-	DisableTools bool
-	// Options 承载本次调用的自由 JSON 参数。系统字段（model/messages/input/stream）
-	// 由 adapter 固定构造；Options 只表达采样、推理、工具、缓存和厂商原生扩展。
-	Options map[string]interface{}
-	// PreviousResponseID 供 OpenAI Responses API 实现有状态会话。
-	// 非空时：仅在 input 中发送本轮新消息，服务端从存储状态续接历史。
-	// 空串时：退回全量发送模式，适用于所有 adapter。
-	PreviousResponseID string
-	// ResponsesBackground 表示官方 OpenAI Responses 请求使用 background mode。
-	// 这是服务端能力开关，不从用户 Options 透传，避免改变未显式启用模型的数据保留语义。
-	ResponsesBackground bool
-	// ImageEditMask 仅供图片编辑 adapter 使用，表示透明区域掩码。
-	ImageEditMask *ContentPart
-	// VideoExtensionSource 仅供视频扩展 adapter 使用，表示待扩展的源视频。
-	VideoExtensionSource *ContentPart
-}
-
-// ToolDefinition 是模型可调用工具的统一声明。
-type ToolDefinition struct {
-	Name        string
-	Description string
-	InputSchema json.RawMessage
-}
-
-func modelParamString(params map[string]interface{}, key string) string {
+func modelParamString(params map[string]any, key string) string {
 	if params == nil {
 		return ""
 	}
@@ -182,7 +76,7 @@ func modelParamString(params map[string]interface{}, key string) string {
 	return ""
 }
 
-func modelParamInt(params map[string]interface{}, key string) int {
+func modelParamInt(params map[string]any, key string) int {
 	value, ok := modelParamIntValue(params, key)
 	if !ok {
 		return 0
@@ -190,7 +84,7 @@ func modelParamInt(params map[string]interface{}, key string) int {
 	return value
 }
 
-func modelParamIntValue(params map[string]interface{}, key string) (int, bool) {
+func modelParamIntValue(params map[string]any, key string) (int, bool) {
 	if params == nil {
 		return 0, false
 	}
@@ -210,7 +104,7 @@ func modelParamIntValue(params map[string]interface{}, key string) (int, bool) {
 	}
 }
 
-func modelParamFloat(params map[string]interface{}, key string) (float64, bool) {
+func modelParamFloat(params map[string]any, key string) (float64, bool) {
 	if params == nil {
 		return 0, false
 	}
@@ -230,12 +124,12 @@ func modelParamFloat(params map[string]interface{}, key string) (float64, bool) 
 	}
 }
 
-func modelParamBool(params map[string]interface{}, key string) bool {
+func modelParamBool(params map[string]any, key string) bool {
 	value, ok := modelParamBoolValue(params, key)
 	return ok && value
 }
 
-func modelParamBoolValue(params map[string]interface{}, key string) (bool, bool) {
+func modelParamBoolValue(params map[string]any, key string) (bool, bool) {
 	if params == nil {
 		return false, false
 	}
@@ -247,7 +141,7 @@ func modelParamBoolValue(params map[string]interface{}, key string) (bool, bool)
 	return typed, ok
 }
 
-func modelParamStringList(params map[string]interface{}, key string) []string {
+func modelParamStringList(params map[string]any, key string) []string {
 	if params == nil {
 		return nil
 	}
@@ -270,7 +164,7 @@ func modelParamStringList(params map[string]interface{}, key string) []string {
 			}
 		}
 		return items
-	case []interface{}:
+	case []any:
 		items := make([]string, 0, len(typed))
 		for _, item := range typed {
 			if text, ok := item.(string); ok {
@@ -285,7 +179,7 @@ func modelParamStringList(params map[string]interface{}, key string) []string {
 	}
 }
 
-func modelParamMap(params map[string]interface{}, key string) map[string]interface{} {
+func modelParamMap(params map[string]any, key string) map[string]any {
 	if params == nil {
 		return nil
 	}
@@ -296,7 +190,7 @@ func modelParamMap(params map[string]interface{}, key string) map[string]interfa
 	return asMap(value)
 }
 
-func applyProviderOptions(payload map[string]interface{}, options map[string]interface{}, protectedKeys ...string) {
+func applyProviderOptions(payload map[string]any, options map[string]any, protectedKeys ...string) {
 	if len(options) == 0 {
 		return
 	}
@@ -308,8 +202,8 @@ func applyProviderOptions(payload map[string]interface{}, options map[string]int
 		if _, ok := protected[key]; ok {
 			continue
 		}
-		if current, ok := payload[key].(map[string]interface{}); ok {
-			if incoming, ok := value.(map[string]interface{}); ok {
+		if current, ok := payload[key].(map[string]any); ok {
+			if incoming, ok := value.(map[string]any); ok {
 				for nestedKey, nestedValue := range incoming {
 					current[nestedKey] = nestedValue
 				}
@@ -323,7 +217,7 @@ func applyProviderOptions(payload map[string]interface{}, options map[string]int
 	}
 }
 
-func providerToolsFromOptions(options map[string]interface{}) ([]map[string]interface{}, error) {
+func providerToolsFromOptions(options map[string]any) ([]map[string]any, error) {
 	if len(options) == 0 {
 		return nil, nil
 	}
@@ -332,12 +226,12 @@ func providerToolsFromOptions(options map[string]interface{}) ([]map[string]inte
 		return nil, nil
 	}
 	switch typed := raw.(type) {
-	case []map[string]interface{}:
-		return append([]map[string]interface{}(nil), typed...), nil
-	case []interface{}:
-		items := make([]map[string]interface{}, 0, len(typed))
+	case []map[string]any:
+		return append([]map[string]any(nil), typed...), nil
+	case []any:
+		items := make([]map[string]any, 0, len(typed))
 		for index, item := range typed {
-			payload, ok := item.(map[string]interface{})
+			payload, ok := item.(map[string]any)
 			if !ok {
 				return nil, fmt.Errorf("model option tools[%d] must be an object", index)
 			}
@@ -349,7 +243,7 @@ func providerToolsFromOptions(options map[string]interface{}) ([]map[string]inte
 	}
 }
 
-func toolDeclarationsForInput(input GenerateInput) ([]map[string]interface{}, []ToolDefinition, bool, error) {
+func toolDeclarationsForInput(input portllm.GenerateInput) ([]map[string]any, []portllm.ToolDefinition, bool, error) {
 	if input.DisableTools {
 		return nil, nil, false, nil
 	}
@@ -360,7 +254,7 @@ func toolDeclarationsForInput(input GenerateInput) ([]map[string]interface{}, []
 	return providerTools, input.Tools, true, nil
 }
 
-func providerStreamOptionsFromOptions(options map[string]interface{}) (map[string]interface{}, error) {
+func providerStreamOptionsFromOptions(options map[string]any) (map[string]any, error) {
 	if len(options) == 0 {
 		return nil, nil
 	}
@@ -368,14 +262,14 @@ func providerStreamOptionsFromOptions(options map[string]interface{}) (map[strin
 	if !ok || raw == nil {
 		return nil, nil
 	}
-	payload, ok := raw.(map[string]interface{})
+	payload, ok := raw.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("model option stream_options must be an object")
 	}
 	return payload, nil
 }
 
-func appendToolDeclarations(payload map[string]interface{}, tools ...[]map[string]interface{}) {
+func appendToolDeclarations(payload map[string]any, tools ...[]map[string]any) {
 	total := 0
 	for _, group := range tools {
 		total += len(group)
@@ -383,8 +277,8 @@ func appendToolDeclarations(payload map[string]interface{}, tools ...[]map[strin
 	if total == 0 {
 		return
 	}
-	merged := make([]map[string]interface{}, 0, total)
-	if existing, ok := payload["tools"].([]map[string]interface{}); ok {
+	merged := make([]map[string]any, 0, total)
+	if existing, ok := payload["tools"].([]map[string]any); ok {
 		merged = append(merged, existing...)
 	}
 	for _, group := range tools {
@@ -395,7 +289,7 @@ func appendToolDeclarations(payload map[string]interface{}, tools ...[]map[strin
 	}
 }
 
-func appendResponseInclude(payload map[string]interface{}, values ...string) {
+func appendResponseInclude(payload map[string]any, values ...string) {
 	if payload == nil {
 		return
 	}
@@ -403,7 +297,7 @@ func appendResponseInclude(payload map[string]interface{}, values ...string) {
 	switch existing := payload["include"].(type) {
 	case []string:
 		current = append(current, existing...)
-	case []interface{}:
+	case []any:
 		for _, item := range existing {
 			if text, ok := item.(string); ok {
 				current = append(current, text)
@@ -413,20 +307,20 @@ func appendResponseInclude(payload map[string]interface{}, values ...string) {
 	payload["include"] = appendUniqueStrings(current, values...)
 }
 
-func responseIncludeValues(options map[string]interface{}, defaults ...string) []string {
+func responseIncludeValues(options map[string]any, defaults ...string) []string {
 	values := make([]string, 0, len(defaults))
 	values = append(values, defaults...)
 	values = append(values, modelParamStringList(options, "include")...)
 	return appendUniqueStrings(nil, values...)
 }
 
-func mergeObjectParam(payload map[string]interface{}, key string, values map[string]interface{}) {
+func mergeObjectParam(payload map[string]any, key string, values map[string]any) {
 	if payload == nil || len(values) == 0 {
 		return
 	}
-	current, _ := payload[key].(map[string]interface{})
+	current, _ := payload[key].(map[string]any)
 	if current == nil {
-		current = map[string]interface{}{}
+		current = map[string]any{}
 		payload[key] = current
 	}
 	for field, value := range values {
@@ -436,7 +330,7 @@ func mergeObjectParam(payload map[string]interface{}, key string, values map[str
 	}
 }
 
-func normalizedJSONResponseFormat(options map[string]interface{}) (interface{}, bool) {
+func normalizedJSONResponseFormat(options map[string]any) (any, bool) {
 	if len(options) == 0 {
 		return nil, false
 	}
@@ -464,8 +358,8 @@ func normalizedJSONResponseFormat(options map[string]interface{}) (interface{}, 
 	return format, true
 }
 
-func shouldSkipNormalizedProviderOption(key string, value interface{}) bool {
-	if _, ok := value.(map[string]interface{}); ok {
+func shouldSkipNormalizedProviderOption(key string, value any) bool {
+	if _, ok := value.(map[string]any); ok {
 		return false
 	}
 	switch key {
@@ -501,41 +395,29 @@ func shouldSkipNormalizedProviderOption(key string, value interface{}) bool {
 	}
 }
 
-// Usage 记录上游返回 token 使用量。
-type Usage struct {
-	InputTokens        int64
-	OutputTokens       int64
-	CacheReadTokens    int64
-	CacheWriteTokens   int64
-	CacheWrite5mTokens int64
-	CacheWrite1hTokens int64
-	ReasoningTokens    int64
-	Speed              string
-	ServiceTier        string
-	RawUsageJSON       string
-}
-
-func nonCachedInputTokens(totalInputTokens int64, cacheReadTokens int64) int64 {
+// nonCachedInputTokens 从提示词侧总量中扣除已按缓存价计费的 token（缓存读取与缓存写入），
+// 得到按普通输入价计费的非缓存输入。上游各字段是未对齐的前缀计数，差值可能为负，钳制为 0。
+func nonCachedInputTokens(totalInputTokens int64, cachedTokens int64) int64 {
 	if totalInputTokens <= 0 {
 		return 0
 	}
-	if cacheReadTokens <= 0 {
+	if cachedTokens <= 0 {
 		return totalInputTokens
 	}
-	remaining := totalInputTokens - cacheReadTokens
+	remaining := totalInputTokens - cachedTokens
 	if remaining < 0 {
 		return 0
 	}
 	return remaining
 }
 
-func rawUsageJSONFromPath(payload map[string]interface{}, keys ...string) string {
+func rawUsageJSONFromPath(payload map[string]any, keys ...string) string {
 	if len(payload) == 0 || len(keys) == 0 {
 		return ""
 	}
-	var current interface{} = payload
+	var current any = payload
 	for _, key := range keys {
-		currentMap, ok := current.(map[string]interface{})
+		currentMap, ok := current.(map[string]any)
 		if !ok {
 			return ""
 		}
@@ -545,11 +427,11 @@ func rawUsageJSONFromPath(payload map[string]interface{}, keys ...string) string
 		}
 	}
 	switch value := current.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		if len(value) == 0 {
 			return ""
 		}
-	case []interface{}:
+	case []any:
 		if len(value) == 0 {
 			return ""
 		}
@@ -563,6 +445,7 @@ func rawUsageJSONFromPath(payload map[string]interface{}, keys ...string) string
 	return string(raw)
 }
 
+<<<<<<< HEAD
 func MergeRawUsageJSON(left string, right string) string {
 	left = strings.TrimSpace(left)
 	right = strings.TrimSpace(right)
@@ -681,8 +564,10 @@ type GeneratedVideo struct {
 	DurationSeconds int64
 }
 
+=======
+>>>>>>> upstream/dev
 // generatedMediaDurationSeconds 将上游媒体时长统一向上取整为可计费秒数。
-func generatedMediaDurationSeconds(values ...interface{}) int64 {
+func generatedMediaDurationSeconds(values ...any) int64 {
 	for _, value := range values {
 		var seconds float64
 		switch typed := value.(type) {
@@ -719,77 +604,6 @@ func generatedMediaDurationSeconds(values ...interface{}) int64 {
 	return 0
 }
 
-// ReasoningDelta 定义流式 reasoning 增量。
-type ReasoningDelta struct {
-	EventType        string
-	ItemID           string
-	Status           string
-	Kind             string
-	Text             string
-	Signature        string
-	EncryptedContent string
-}
-
-// GenerateStreamEvent 定义上游流式增量片段。
-type GenerateStreamEvent struct {
-	Delta                 string
-	Reasoning             *ReasoningDelta
-	Usage                 Usage
-	ServerToolCall        *ToolCall
-	ResponseID            string
-	GeneratedImage        *GeneratedImage
-	GeneratedImageIndex   int64
-	GeneratedImagePartial bool
-}
-
-// ModelItem 定义上游模型目录项。
-type ModelItem struct {
-	ID      string
-	OwnedBy string
-}
-
-// UpstreamError 是上游 HTTP 调用错误。
-type UpstreamError struct {
-	StatusCode int
-	Message    string
-	Body       string
-	Debug      *UpstreamDebugSnapshot
-}
-
-// AcceptedRequestError 表示上游已接受请求，或请求已写出但结果未知。
-// 生成请求不具备跨 Provider 幂等性，此类错误不得自动切换路由重试。
-type AcceptedRequestError struct {
-	cause error
-}
-
-func (e *AcceptedRequestError) Error() string {
-	if e == nil || e.cause == nil {
-		return "upstream request failed after acceptance"
-	}
-	return e.cause.Error()
-}
-
-func (e *AcceptedRequestError) Unwrap() error {
-	if e == nil {
-		return nil
-	}
-	return e.cause
-}
-
-// MarkRequestAccepted 标记错误发生时请求已被上游接受，或可能已被接受。
-func MarkRequestAccepted(err error) error {
-	if err == nil || RequestWasAccepted(err) {
-		return err
-	}
-	return &AcceptedRequestError{cause: err}
-}
-
-// RequestWasAccepted 判断错误是否发生在请求已被或可能被上游接受之后。
-func RequestWasAccepted(err error) bool {
-	var acceptedErr *AcceptedRequestError
-	return errors.As(err, &acceptedErr)
-}
-
 // doGenerationRequest 记录 POST 请求是否已经写入连接。请求写出后若在响应头
 // 返回前断线，无法判断上游是否已开始生成，因此按已接受处理，避免跨路由重复生成。
 func doGenerationRequest(do func(*http.Request) (*http.Response, error), req *http.Request) (*http.Response, error) {
@@ -805,47 +619,12 @@ func doGenerationRequest(do func(*http.Request) (*http.Response, error), req *ht
 	tracedRequest := req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
 	resp, err := do(tracedRequest)
 	if err != nil && wroteRequest.Load() {
-		return resp, MarkRequestAccepted(err)
+		return resp, portllm.MarkRequestAccepted(err)
 	}
 	return resp, err
 }
 
 var errStreamDone = errors.New("llm stream done")
-
-// UpstreamDebugSnapshot 记录上游请求与响应的调试快照。
-// 对外返回前必须先经过 application 层脱敏，避免泄漏源站、密钥或上游响应头。
-type UpstreamDebugSnapshot struct {
-	Request  UpstreamDebugRequest  `json:"request"`
-	Response UpstreamDebugResponse `json:"response"`
-}
-
-// UpstreamDebugRequest 表示上游请求侧的调试信息。
-type UpstreamDebugRequest struct {
-	Method        string            `json:"method"`
-	Path          string            `json:"path"`
-	Headers       map[string]string `json:"headers,omitempty"`
-	Body          string            `json:"body"`
-	BodyBytes     int               `json:"bodyBytes,omitempty"`
-	BodyTruncated bool              `json:"bodyTruncated,omitempty"`
-	RedactedParts int               `json:"redactedParts,omitempty"`
-}
-
-// UpstreamDebugResponse 表示上游响应侧的调试信息。
-type UpstreamDebugResponse struct {
-	StatusCode    int               `json:"statusCode"`
-	Headers       map[string]string `json:"headers,omitempty"`
-	Body          string            `json:"body"`
-	BodyBytes     int               `json:"bodyBytes,omitempty"`
-	BodyTruncated bool              `json:"bodyTruncated,omitempty"`
-	RedactedParts int               `json:"redactedParts,omitempty"`
-}
-
-func (e *UpstreamError) Error() string {
-	if strings.TrimSpace(e.Message) == "" {
-		return fmt.Sprintf("upstream request failed: status=%d", e.StatusCode)
-	}
-	return fmt.Sprintf("upstream request failed: status=%d message=%s", e.StatusCode, e.Message)
-}
 
 // NewClient 创建带出站安全策略的上游调用客户端。
 func NewClient(outboundPolicy security.OutboundPolicy) *Client {
@@ -854,33 +633,34 @@ func NewClient(outboundPolicy security.OutboundPolicy) *Client {
 		return newRouteHTTPClient(policy, outboundPolicy, trustedOrigin, variant)
 	})
 	client.adapters = map[string]transportAdapter{
-		AdapterOpenAIResponses:        &openAIResponsesAdapter{client: client},
-		AdapterOpenRouterChat:         &openRouterChatCompletionsAdapter{client: client},
-		AdapterOpenRouterResponses:    &openRouterResponsesAdapter{client: client},
-		AdapterOpenAIChatCompletions:  &openAIChatCompletionsAdapter{client: client},
-		AdapterOpenAIImageGenerations: &openAIImageGenerationsAdapter{client: client},
-		AdapterOpenAIImageEdits:       &openAIImageEditsAdapter{client: client},
-		AdapterXAIResponses:           &xAIResponsesAdapter{client: client},
-		AdapterXAIImage:               &xAIImageAdapter{client: client},
-		AdapterXAIImageEdits:          &xAIImageEditsAdapter{client: client},
-		AdapterXAIVideo:               &xAIVideoAdapter{client: client},
-		AdapterXAIVideoExtensions:     &xAIVideoExtensionsAdapter{client: client},
-		AdapterAnthropicMessages:      &anthropicMessagesAdapter{client: client},
-		AdapterGoogleGenerateContent:  &geminiGenerateContentAdapter{client: client},
-		AdapterGoogleImageGeneration:  &geminiImageGenerationAdapter{client: client},
-		AdapterGeminiInteractions:     &geminiInteractionsAdapter{client: client},
+		portllm.AdapterOpenAIResponses:        &openAIResponsesAdapter{client: client},
+		portllm.AdapterOpenRouterChat:         &openRouterChatCompletionsAdapter{client: client},
+		portllm.AdapterOpenRouterResponses:    &openRouterResponsesAdapter{client: client},
+		portllm.AdapterOpenRouterImages:       &openRouterImagesAdapter{client: client},
+		portllm.AdapterOpenAIChatCompletions:  &openAIChatCompletionsAdapter{client: client},
+		portllm.AdapterOpenAIImageGenerations: &openAIImageGenerationsAdapter{client: client},
+		portllm.AdapterOpenAIImageEdits:       &openAIImageEditsAdapter{client: client},
+		portllm.AdapterXAIResponses:           &xAIResponsesAdapter{client: client},
+		portllm.AdapterXAIImage:               &xAIImageAdapter{client: client},
+		portllm.AdapterXAIImageEdits:          &xAIImageEditsAdapter{client: client},
+		portllm.AdapterXAIVideo:               &xAIVideoAdapter{client: client},
+		portllm.AdapterXAIVideoExtensions:     &xAIVideoExtensionsAdapter{client: client},
+		portllm.AdapterAnthropicMessages:      &anthropicMessagesAdapter{client: client},
+		portllm.AdapterGoogleGenerateContent:  &geminiGenerateContentAdapter{client: client},
+		portllm.AdapterGoogleImageGeneration:  &geminiImageGenerationAdapter{client: client},
+		portllm.AdapterGeminiInteractions:     &geminiInteractionsAdapter{client: client},
 	}
 	return client
 }
 
-func (c *Client) adapterFor(route RouteConfig) (transportAdapter, error) {
-	adapterName := NormalizeAdapter(route.Protocol)
-	if !IsImplementedAdapter(adapterName) {
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedAdapter, adapterName)
+func (c *Client) adapterFor(route portllm.RouteConfig) (transportAdapter, error) {
+	adapterName := portllm.NormalizeAdapter(route.Protocol)
+	if !portllm.IsImplementedAdapter(adapterName) {
+		return nil, fmt.Errorf("%w: %s", portllm.ErrUnsupportedAdapter, adapterName)
 	}
 	adapter, ok := c.adapters[adapterName]
 	if !ok {
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedAdapter, adapterName)
+		return nil, fmt.Errorf("%w: %s", portllm.ErrUnsupportedAdapter, adapterName)
 	}
 	return adapter, nil
 }
@@ -906,7 +686,7 @@ func newRouteHTTPClient(policy security.OutboundPolicy, redirectPolicy security.
 	return outboundhttp.ManagedClient{Client: client, CloseIdleConnections: transport.CloseIdleConnections}, nil
 }
 
-func (c *Client) doRouteRequest(route RouteConfig, request *http.Request) (*http.Response, error) {
+func (c *Client) doRouteRequest(route portllm.RouteConfig, request *http.Request) (*http.Response, error) {
 	if request == nil || request.URL == nil {
 		return nil, fmt.Errorf("model provider request is nil")
 	}
@@ -914,7 +694,7 @@ func (c *Client) doRouteRequest(route RouteConfig, request *http.Request) (*http
 	return c.httpClients.Do(request, route.BaseURL, strconv.Itoa(connectTimeoutMS))
 }
 
-func (c *Client) doRouteGenerationRequest(route RouteConfig, request *http.Request) (*http.Response, error) {
+func (c *Client) doRouteGenerationRequest(route portllm.RouteConfig, request *http.Request) (*http.Response, error) {
 	if request == nil || request.URL == nil {
 		return nil, fmt.Errorf("model provider request is nil")
 	}
@@ -932,7 +712,7 @@ func (c *Client) CloseIdleConnections() {
 }
 
 // Generate 调用上游适配器并解析响应（非流式）。
-func (c *Client) Generate(ctx context.Context, route RouteConfig, input GenerateInput) (*GenerateOutput, error) {
+func (c *Client) Generate(ctx context.Context, route portllm.RouteConfig, input portllm.GenerateInput) (*portllm.GenerateOutput, error) {
 	adapter, err := c.adapterFor(route)
 	if err != nil {
 		return nil, err
@@ -943,10 +723,10 @@ func (c *Client) Generate(ctx context.Context, route RouteConfig, input Generate
 // GenerateStream 调用上游适配器并实时回传增量文本。
 func (c *Client) GenerateStream(
 	ctx context.Context,
-	route RouteConfig,
-	input GenerateInput,
-	onEvent func(GenerateStreamEvent) error,
-) (*GenerateOutput, error) {
+	route portllm.RouteConfig,
+	input portllm.GenerateInput,
+	onEvent func(portllm.GenerateStreamEvent) error,
+) (*portllm.GenerateOutput, error) {
 	adapter, err := c.adapterFor(route)
 	if err != nil {
 		return nil, err
@@ -955,7 +735,7 @@ func (c *Client) GenerateStream(
 }
 
 // ListModels 调用上游 models 目录接口。
-func (c *Client) ListModels(ctx context.Context, route RouteConfig) ([]ModelItem, error) {
+func (c *Client) ListModels(ctx context.Context, route portllm.RouteConfig) ([]portllm.ModelItem, error) {
 	adapter, err := c.adapterFor(route)
 	if err != nil {
 		return nil, err
@@ -969,20 +749,20 @@ func (c *Client) ListModels(ctx context.Context, route RouteConfig) ([]ModelItem
 	}
 
 	fallbackRoute := route
-	fallbackRoute.Protocol = AdapterOpenAIChatCompletions
+	fallbackRoute.Protocol = portllm.AdapterOpenAIChatCompletions
 	fallbackItems, fallbackErr := c.listModelsOpenAICompatible(ctx, fallbackRoute)
 	if fallbackErr != nil {
-		return nil, fmt.Errorf("%w; openai-compatible models fallback failed: %v", err, fallbackErr)
+		return nil, fmt.Errorf("%w; openai-compatible models fallback failed: %w", err, fallbackErr)
 	}
 	return fallbackItems, nil
 }
 
-func shouldFallbackToOpenAICompatibleModels(route RouteConfig) bool {
+func shouldFallbackToOpenAICompatibleModels(route portllm.RouteConfig) bool {
 	if isOpenRouterBaseURL(route.BaseURL) {
 		return false
 	}
-	switch NormalizeAdapter(route.Protocol) {
-	case AdapterAnthropicMessages, AdapterGoogleGenerateContent, AdapterGoogleImageGeneration:
+	switch portllm.NormalizeAdapter(route.Protocol) {
+	case portllm.AdapterAnthropicMessages, portllm.AdapterGoogleGenerateContent, portllm.AdapterGoogleImageGeneration:
 		return true
 	default:
 		return false
@@ -994,8 +774,6 @@ type idleTimeoutReader struct {
 	reader  io.Reader
 	timeout time.Duration
 	timer   *time.Timer
-	done    chan struct{}
-	err     error
 }
 
 func newIdleTimeoutReader(reader io.Reader, timeout time.Duration) *idleTimeoutReader {
@@ -1003,7 +781,6 @@ func newIdleTimeoutReader(reader io.Reader, timeout time.Duration) *idleTimeoutR
 		reader:  reader,
 		timeout: timeout,
 		timer:   time.NewTimer(timeout),
-		done:    make(chan struct{}),
 	}
 }
 
@@ -1028,59 +805,26 @@ func (r *idleTimeoutReader) Read(p []byte) (int, error) {
 	}
 }
 
-func decodeToolSchema(raw json.RawMessage) map[string]interface{} {
+func decodeToolSchema(raw json.RawMessage) map[string]any {
 	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "" {
-		return map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
+		return map[string]any{"type": "object", "properties": map[string]any{}}
 	}
-	payload := make(map[string]interface{})
+	payload := make(map[string]any)
 	if err := json.Unmarshal(raw, &payload); err != nil || len(payload) == 0 {
-		return map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
+		return map[string]any{"type": "object", "properties": map[string]any{}}
 	}
 	if strings.TrimSpace(getString(payload["type"])) == "" {
 		payload["type"] = "object"
 	}
 	if _, ok := payload["properties"]; !ok {
-		payload["properties"] = map[string]interface{}{}
+		payload["properties"] = map[string]any{}
 	}
 	return payload
 }
 
-func NormalizeToolName(name string) string {
-	value := strings.TrimSpace(name)
-	if value == "" {
-		return ""
-	}
-	var builder strings.Builder
-	lastUnderscore := false
-	for _, r := range value {
-		valid := r == '_' || r == '-' || unicode.IsLetter(r) || unicode.IsDigit(r)
-		if valid {
-			builder.WriteRune(r)
-			lastUnderscore = false
-			continue
-		}
-		if !lastUnderscore {
-			builder.WriteByte('_')
-			lastUnderscore = true
-		}
-	}
-	normalized := strings.Trim(builder.String(), "_-")
-	if normalized == "" {
-		return ""
-	}
-	first := []rune(normalized)[0]
-	if !unicode.IsLetter(first) && first != '_' {
-		normalized = "tool_" + normalized
-	}
-	if len(normalized) > 64 {
-		normalized = normalized[:64]
-	}
-	return normalized
-}
-
-func buildToolResultContent(item ToolResult) string {
+func buildToolResultContent(item portllm.ToolResult) string {
 	if strings.TrimSpace(item.Error) != "" {
-		payload := map[string]interface{}{
+		payload := map[string]any{
 			"ok":     false,
 			"status": strings.TrimSpace(item.Status),
 			"error":  strings.TrimSpace(item.Error),
@@ -1098,14 +842,14 @@ func buildToolResultContent(item ToolResult) string {
 	return output
 }
 
-func normalizeMessages(messages []Message) []Message {
-	normalized := make([]Message, 0, len(messages))
+func normalizeMessages(messages []portllm.Message) []portllm.Message {
+	normalized := make([]portllm.Message, 0, len(messages))
 	for _, item := range messages {
 		// 跳过空消息（Parts 非空或 Content 非空才保留）
 		if len(item.Parts) == 0 && strings.TrimSpace(item.Content) == "" && len(item.ToolCalls) == 0 && len(item.ToolResults) == 0 {
 			continue
 		}
-		normalized = append(normalized, Message{
+		normalized = append(normalized, portllm.Message{
 			Role:             normalizeRole(item.Role),
 			Content:          item.Content,
 			Parts:            item.Parts,
@@ -1116,7 +860,7 @@ func normalizeMessages(messages []Message) []Message {
 		})
 	}
 	if len(normalized) == 0 {
-		normalized = append(normalized, Message{Role: "user", Content: ""})
+		normalized = append(normalized, portllm.Message{Role: "user", Content: ""})
 	}
 	return normalized
 }
@@ -1125,7 +869,7 @@ func setAdditionalHeaders(req *http.Request, headersJSON string) {
 	setAdditionalHeadersForInput(req, headersJSON, nil)
 }
 
-func setAdditionalHeadersForInput(req *http.Request, headersJSON string, input *GenerateInput) {
+func setAdditionalHeadersForInput(req *http.Request, headersJSON string, input *portllm.GenerateInput) {
 	if req == nil {
 		return
 	}
@@ -1133,7 +877,7 @@ func setAdditionalHeadersForInput(req *http.Request, headersJSON string, input *
 	if value == "" {
 		return
 	}
-	parsed := make(map[string]interface{})
+	parsed := make(map[string]any)
 	if err := json.Unmarshal([]byte(value), &parsed); err != nil {
 		return
 	}
@@ -1158,7 +902,7 @@ func setAdditionalHeadersForInput(req *http.Request, headersJSON string, input *
 	}
 }
 
-func expandAdditionalHeaderValue(value string, input *GenerateInput, upstreamRequestID string) (string, bool) {
+func expandAdditionalHeaderValue(value string, input *portllm.GenerateInput, upstreamRequestID string) (string, bool) {
 	replacements := []struct {
 		template string
 		value    string
@@ -1227,9 +971,9 @@ func streamErrorBody(recorder *upstreamBodyRecorder, err error) []byte {
 	return upstreamErrorBody(err)
 }
 
-func parseUpstreamError(statusCode int, body []byte, debug *UpstreamDebugSnapshot) error {
+func parseUpstreamError(statusCode int, body []byte, debug *portllm.UpstreamDebugSnapshot) error {
 	message := fmt.Sprintf("upstream_status_%d", statusCode)
-	parsed := make(map[string]interface{})
+	parsed := make(map[string]any)
 	if err := json.Unmarshal(body, &parsed); err == nil {
 		if m := getStringFromPath(parsed, "error", "message"); m != "" {
 			message = m
@@ -1237,7 +981,7 @@ func parseUpstreamError(statusCode int, body []byte, debug *UpstreamDebugSnapsho
 			message = m
 		}
 	}
-	return &UpstreamError{
+	return &portllm.UpstreamError{
 		StatusCode: statusCode,
 		Message:    message,
 		Body:       string(body),
@@ -1245,7 +989,7 @@ func parseUpstreamError(statusCode int, body []byte, debug *UpstreamDebugSnapsho
 	}
 }
 
-func upstreamDebugSnapshot(req *http.Request, requestBody []byte, resp *http.Response, responseBody []byte) *UpstreamDebugSnapshot {
+func upstreamDebugSnapshot(req *http.Request, requestBody []byte, resp *http.Response, responseBody []byte) *portllm.UpstreamDebugSnapshot {
 	if req == nil {
 		return nil
 	}
@@ -1256,10 +1000,10 @@ func upstreamDebugSnapshot(req *http.Request, requestBody []byte, resp *http.Res
 			path += "?" + req.URL.RawQuery
 		}
 	}
-	requestDebugBody := sanitizeUpstreamDebugBody(requestBody)
-	responseDebugBody := sanitizeUpstreamDebugBody(responseBody)
-	return &UpstreamDebugSnapshot{
-		Request: UpstreamDebugRequest{
+	requestDebugBody := portllm.SanitizeUpstreamDebugPayload(requestBody)
+	responseDebugBody := portllm.SanitizeUpstreamDebugPayload(responseBody)
+	return &portllm.UpstreamDebugSnapshot{
+		Request: portllm.UpstreamDebugRequest{
 			Method:        req.Method,
 			Path:          path,
 			Headers:       redactHeaders(req.Header),
@@ -1268,7 +1012,7 @@ func upstreamDebugSnapshot(req *http.Request, requestBody []byte, resp *http.Res
 			BodyTruncated: requestDebugBody.Truncated,
 			RedactedParts: requestDebugBody.RedactedParts,
 		},
-		Response: UpstreamDebugResponse{
+		Response: portllm.UpstreamDebugResponse{
 			StatusCode:    responseStatusCode(resp),
 			Headers:       responseHeaders(resp),
 			Body:          responseDebugBody.Body,
@@ -1322,11 +1066,11 @@ func isSecretHeader(key string) bool {
 		strings.Contains(normalized, "key")
 }
 
-func attachUpstreamDebug(err error, debug *UpstreamDebugSnapshot) error {
+func attachUpstreamDebug(err error, debug *portllm.UpstreamDebugSnapshot) error {
 	if err == nil || debug == nil {
 		return err
 	}
-	var upstreamErr *UpstreamError
+	var upstreamErr *portllm.UpstreamError
 	if errors.As(err, &upstreamErr) {
 		if upstreamErr.Debug == nil {
 			upstreamErr.Debug = debug
@@ -1344,15 +1088,16 @@ func attachUpstreamDebug(err error, debug *UpstreamDebugSnapshot) error {
 	if message == "" {
 		message = fmt.Sprintf("upstream_status_%d", statusCode)
 	}
-	return &UpstreamError{
+	return &portllm.UpstreamError{
 		StatusCode: statusCode,
 		Message:    message,
 		Body:       debug.Response.Body,
 		Debug:      debug,
+		Cause:      err,
 	}
 }
 
-func responseStatusCodeFromDebug(debug *UpstreamDebugSnapshot) int {
+func responseStatusCodeFromDebug(debug *portllm.UpstreamDebugSnapshot) int {
 	if debug != nil && debug.Response.StatusCode >= 100 && debug.Response.StatusCode <= 599 {
 		return debug.Response.StatusCode
 	}
@@ -1360,14 +1105,14 @@ func responseStatusCodeFromDebug(debug *UpstreamDebugSnapshot) int {
 }
 
 func upstreamErrorBody(err error) []byte {
-	var upstreamErr *UpstreamError
+	var upstreamErr *portllm.UpstreamError
 	if errors.As(err, &upstreamErr) && strings.TrimSpace(upstreamErr.Body) != "" {
 		return []byte(upstreamErr.Body)
 	}
 	return nil
 }
 
-func parseStreamUpstreamError(parsed map[string]interface{}, rawBody string) error {
+func parseStreamUpstreamError(parsed map[string]any, rawBody string) error {
 	errorPayload := asMap(parsed["error"])
 	if len(errorPayload) == 0 {
 		errorPayload = asMap(asMap(parsed["response"])["error"])
@@ -1376,21 +1121,21 @@ func parseStreamUpstreamError(parsed map[string]interface{}, rawBody string) err
 		return nil
 	}
 	statusCode := streamErrorStatusCode(parsed, errorPayload)
-	message := firstNonEmptyString(
+	message := textutil.FirstNonEmpty(
 		getString(errorPayload["message"]),
 		getString(errorPayload["msg"]),
 		getString(parsed["message"]),
 		http.StatusText(statusCode),
 	)
-	return &UpstreamError{
+	return &portllm.UpstreamError{
 		StatusCode: statusCode,
 		Message:    message,
 		Body:       rawBody,
 	}
 }
 
-func streamErrorStatusCode(parsed map[string]interface{}, errorPayload map[string]interface{}) int {
-	for _, raw := range []interface{}{
+func streamErrorStatusCode(parsed map[string]any, errorPayload map[string]any) int {
+	for _, raw := range []any{
 		errorPayload["status"],
 		errorPayload["status_code"],
 		errorPayload["code"],
@@ -1405,7 +1150,7 @@ func streamErrorStatusCode(parsed map[string]interface{}, errorPayload map[strin
 	return http.StatusBadGateway
 }
 
-func toHTTPStatusCode(raw interface{}) int {
+func toHTTPStatusCode(raw any) int {
 	statusCode := toInt64(raw)
 	if statusCode >= 100 && statusCode <= 599 {
 		return int(statusCode)
@@ -1421,16 +1166,7 @@ func toHTTPStatusCode(raw interface{}) int {
 	return parsed
 }
 
-func firstNonEmptyString(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
-func appendUniqueToolCall(items *[]ToolCall, item ToolCall) {
+func appendUniqueToolCall(items *[]portllm.ToolCall, item portllm.ToolCall) {
 	if items == nil {
 		return
 	}
@@ -1443,7 +1179,7 @@ func appendUniqueToolCall(items *[]ToolCall, item ToolCall) {
 	*items = append(*items, item)
 }
 
-func shouldMergeToolCall(existing ToolCall, incoming ToolCall) bool {
+func shouldMergeToolCall(existing portllm.ToolCall, incoming portllm.ToolCall) bool {
 	existingID := strings.TrimSpace(existing.ToolCallID)
 	incomingID := strings.TrimSpace(incoming.ToolCallID)
 	if existingID != "" && incomingID != "" {
@@ -1458,7 +1194,7 @@ func shouldMergeToolCall(existing ToolCall, incoming ToolCall) bool {
 	return false
 }
 
-func sameToolCallKind(left ToolCall, right ToolCall) bool {
+func sameToolCallKind(left portllm.ToolCall, right portllm.ToolCall) bool {
 	leftName := strings.TrimSpace(left.ToolName)
 	rightName := strings.TrimSpace(right.ToolName)
 	if leftName != "" && rightName != "" && leftName == rightName {
@@ -1469,7 +1205,7 @@ func sameToolCallKind(left ToolCall, right ToolCall) bool {
 	return leftType != "" && rightType != "" && leftType == rightType
 }
 
-func mergeToolCall(existing ToolCall, incoming ToolCall) ToolCall {
+func mergeToolCall(existing portllm.ToolCall, incoming portllm.ToolCall) portllm.ToolCall {
 	merged := existing
 	if value := strings.TrimSpace(incoming.ToolCallID); value != "" {
 		merged.ToolCallID = value
@@ -1524,9 +1260,9 @@ func toolCallStatusRank(status string) int {
 	}
 }
 
-func updateToolCallInput(items *[]ToolCall, itemID string, input string, done bool) (ToolCall, bool) {
+func updateToolCallInput(items *[]portllm.ToolCall, itemID string, input string, done bool) (portllm.ToolCall, bool) {
 	if items == nil || strings.TrimSpace(itemID) == "" {
-		return ToolCall{}, false
+		return portllm.ToolCall{}, false
 	}
 	for index, item := range *items {
 		if strings.TrimSpace(item.ToolCallID) != itemID {
@@ -1548,7 +1284,7 @@ func updateToolCallInput(items *[]ToolCall, itemID string, input string, done bo
 		(*items)[index] = item
 		return item, true
 	}
-	return ToolCall{}, false
+	return portllm.ToolCall{}, false
 }
 
 func appendUniqueStrings(items []string, values ...string) []string {
@@ -1590,11 +1326,11 @@ func cloneInt64Map(value map[string]int64) map[string]int64 {
 	return cloned
 }
 
-func extractReasoningDeltaText(raw interface{}) string {
+func extractReasoningDeltaText(raw any) string {
 	switch value := raw.(type) {
 	case string:
 		return value
-	case []interface{}:
+	case []any:
 		parts := make([]string, 0, len(value))
 		for _, item := range value {
 			if text := extractReasoningDeltaText(item); text != "" {
@@ -1602,7 +1338,7 @@ func extractReasoningDeltaText(raw interface{}) string {
 			}
 		}
 		return strings.Join(parts, "")
-	case map[string]interface{}:
+	case map[string]any:
 		for _, key := range []string{"text", "delta", "thinking", "summary", "content"} {
 			if text := extractReasoningDeltaText(value[key]); text != "" {
 				return text
@@ -1612,11 +1348,11 @@ func extractReasoningDeltaText(raw interface{}) string {
 	return ""
 }
 
-func extractContentText(raw interface{}) string {
+func extractContentText(raw any) string {
 	switch value := raw.(type) {
 	case string:
 		return value
-	case []interface{}:
+	case []any:
 		chunks := make([]string, 0, len(value))
 		for _, item := range value {
 			if text := extractContentText(item); text != "" {
@@ -1624,7 +1360,7 @@ func extractContentText(raw interface{}) string {
 			}
 		}
 		return strings.Join(chunks, "")
-	case map[string]interface{}:
+	case map[string]any:
 		if text := getString(value["text"]); text != "" {
 			return text
 		}
@@ -1641,11 +1377,11 @@ func extractContentText(raw interface{}) string {
 	return ""
 }
 
-func getStringFromPath(payload map[string]interface{}, keys ...string) string {
+func getStringFromPath(payload map[string]any, keys ...string) string {
 	if len(keys) == 0 {
 		return ""
 	}
-	current := interface{}(payload)
+	current := any(payload)
 	for _, key := range keys {
 		node := asMap(current)
 		if len(node) == 0 {
@@ -1656,11 +1392,11 @@ func getStringFromPath(payload map[string]interface{}, keys ...string) string {
 	return strings.TrimSpace(getString(current))
 }
 
-func getInt64FromPath(payload map[string]interface{}, keys ...string) int64 {
+func getInt64FromPath(payload map[string]any, keys ...string) int64 {
 	if len(keys) == 0 {
 		return 0
 	}
-	current := interface{}(payload)
+	current := any(payload)
 	for _, key := range keys {
 		node := asMap(current)
 		if len(node) == 0 {
@@ -1671,32 +1407,34 @@ func getInt64FromPath(payload map[string]interface{}, keys ...string) int64 {
 	return toInt64(current)
 }
 
-func firstMapItem(items []interface{}) map[string]interface{} {
+func firstMapItem(items []any) map[string]any {
 	for _, item := range items {
 		payload := asMap(item)
 		if len(payload) > 0 {
 			return payload
 		}
 	}
-	return map[string]interface{}{}
+	return map[string]any{}
 }
 
 func normalizeEndpoint(raw string) string {
 	switch strings.TrimSpace(raw) {
-	case EndpointChatCompletions:
-		return EndpointChatCompletions
-	case EndpointImageGenerations:
-		return EndpointImageGenerations
-	case EndpointImageEdits:
-		return EndpointImageEdits
-	case EndpointVideoGenerations:
-		return EndpointVideoGenerations
-	case EndpointVideoExtensions:
-		return EndpointVideoExtensions
-	case EndpointInteractions:
-		return EndpointInteractions
+	case portllm.EndpointChatCompletions:
+		return portllm.EndpointChatCompletions
+	case portllm.EndpointImageGenerations:
+		return portllm.EndpointImageGenerations
+	case portllm.EndpointImageEdits:
+		return portllm.EndpointImageEdits
+	case portllm.EndpointImages:
+		return portllm.EndpointImages
+	case portllm.EndpointVideoGenerations:
+		return portllm.EndpointVideoGenerations
+	case portllm.EndpointVideoExtensions:
+		return portllm.EndpointVideoExtensions
+	case portllm.EndpointInteractions:
+		return portllm.EndpointInteractions
 	default:
-		return EndpointResponses
+		return portllm.EndpointResponses
 	}
 }
 
@@ -1709,25 +1447,25 @@ func normalizeRole(raw string) string {
 	}
 }
 
-func asMap(raw interface{}) map[string]interface{} {
-	if payload, ok := raw.(map[string]interface{}); ok {
+func asMap(raw any) map[string]any {
+	if payload, ok := raw.(map[string]any); ok {
 		return payload
 	}
-	return map[string]interface{}{}
+	return map[string]any{}
 }
 
-func cloneMap(raw map[string]interface{}) map[string]interface{} {
+func cloneMap(raw map[string]any) map[string]any {
 	if len(raw) == 0 {
-		return map[string]interface{}{}
+		return map[string]any{}
 	}
-	payload := make(map[string]interface{}, len(raw))
+	payload := make(map[string]any, len(raw))
 	for key, value := range raw {
 		payload[key] = value
 	}
 	return payload
 }
 
-func mergeMapValueIfEmpty(payload map[string]interface{}, key string, value interface{}) {
+func mergeMapValueIfEmpty(payload map[string]any, key string, value any) {
 	if payload == nil || value == nil {
 		return
 	}
@@ -1740,14 +1478,14 @@ func mergeMapValueIfEmpty(payload map[string]interface{}, key string, value inte
 	payload[key] = value
 }
 
-func asSlice(raw interface{}) []interface{} {
-	if payload, ok := raw.([]interface{}); ok {
+func asSlice(raw any) []any {
+	if payload, ok := raw.([]any); ok {
 		return payload
 	}
-	return []interface{}{}
+	return []any{}
 }
 
-func getString(raw interface{}) string {
+func getString(raw any) string {
 	switch value := raw.(type) {
 	case string:
 		return value
@@ -1771,7 +1509,7 @@ func getString(raw interface{}) string {
 	}
 }
 
-func toInt64(raw interface{}) int64 {
+func toInt64(raw any) int64 {
 	switch value := raw.(type) {
 	case int:
 		return int64(value)
@@ -1811,7 +1549,18 @@ func toInt64(raw interface{}) int64 {
 	}
 }
 
-func normalizeJSONString(raw interface{}) string {
+func streamToolCallIndex(raw any, fallback int) int {
+	if fallback < 0 || fallback > maxStreamToolCallIndex {
+		fallback = 0
+	}
+	index, err := strconv.Atoi(strings.TrimSpace(getString(raw)))
+	if err != nil || index < 0 || index > maxStreamToolCallIndex {
+		return fallback
+	}
+	return index
+}
+
+func normalizeJSONString(raw any) string {
 	if raw == nil {
 		return ""
 	}
@@ -1832,7 +1581,7 @@ func normalizeJSONString(raw interface{}) string {
 	return string(encoded)
 }
 
-func stringify(raw interface{}) string {
+func stringify(raw any) string {
 	if raw == nil {
 		return ""
 	}

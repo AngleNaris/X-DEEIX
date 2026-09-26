@@ -1,6 +1,7 @@
 package memory
 
 import (
+	"errors"
 	"net/http"
 
 	appmemory "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/memory"
@@ -36,7 +37,7 @@ func (h *Handler) ListUserMemories(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	items, err := h.service.ListUserMemories(c.Request.Context(), userID)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "list user memories failed")
+		response.InternalError(c)
 		return
 	}
 	memories := make([]UserMemoryResponse, 0, len(items))
@@ -76,7 +77,11 @@ func (h *Handler) UpsertUserMemory(c *gin.Context) {
 		req.Scope,
 		"user",
 	); err != nil {
-		response.Error(c, http.StatusInternalServerError, "upsert user memory failed")
+		if errors.Is(err, appmemory.ErrUserMemoryLimitExceeded) {
+			response.ErrorFrom(c, http.StatusBadRequest, errUserMemoryLimitExceeded)
+			return
+		}
+		response.InternalError(c)
 		return
 	}
 
@@ -110,12 +115,12 @@ func (h *Handler) DeleteUserMemory(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	memoryKey := c.Param("memory_key")
 	if memoryKey == "" {
-		response.Error(c, http.StatusBadRequest, "memory_key is required")
+		response.ErrorFrom(c, http.StatusBadRequest, errMemoryKeyRequired)
 		return
 	}
 
 	if err := h.service.DeleteUserMemory(c.Request.Context(), userID, memoryKey); err != nil {
-		response.Error(c, http.StatusInternalServerError, "delete user memory failed")
+		response.InternalError(c)
 		return
 	}
 

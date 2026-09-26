@@ -5,7 +5,6 @@ import (
 	"errors"
 	"strings"
 
-	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"go.uber.org/zap"
@@ -36,6 +35,7 @@ func (s *Service) cloneOrTriggerEmbedding(ctx context.Context, source *model.Fil
 			)
 		}
 	}
+<<<<<<< HEAD
 	s.embeddingSvc.MaybeTrigger(*target)
 }
 
@@ -94,6 +94,9 @@ func (s *Service) OpenFileContent(ctx context.Context, userID uint, fileID strin
 // ValidateImageFile 确认文件属于当前用户且可作为图片使用。
 func (s *Service) ValidateImageFile(ctx context.Context, userID uint, fileID string) error {
 	return s.uploadSvc.ValidateImageFile(ctx, userID, fileID)
+=======
+	s.embeddingSvc.MaybeTrigger(ctx, *target)
+>>>>>>> upstream/dev
 }
 
 // GetFileExtract 读取当前用户文件的提取文本产物。
@@ -104,7 +107,7 @@ func (s *Service) GetFileExtract(ctx context.Context, userID uint, fileID string
 	}
 	fileObj, err := s.repo.GetActiveFileObjectByID(ctx, userID, normalizedFileID)
 	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
+		if errors.Is(err, repository.ErrNotFound) || errors.Is(err, repository.ErrFileNotFound) {
 			return nil, ErrFileNotFound
 		}
 		return nil, err

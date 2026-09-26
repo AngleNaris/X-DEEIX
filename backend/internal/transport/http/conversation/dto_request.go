@@ -12,6 +12,7 @@ type CreateConversationProjectRequest struct {
 	Name                    string   `json:"name" binding:"required,max=80"`
 	Description             string   `json:"description,omitempty" binding:"max=255"`
 	SystemPrompt            string   `json:"systemPrompt,omitempty" binding:"max=12000"`
+	DefaultModel            string   `json:"defaultModel,omitempty" binding:"max=128"`
 	MCPDefaultMode          string   `json:"mcpDefaultMode,omitempty" binding:"omitempty,oneof=inherit custom"`
 	DefaultMCPToolIDs       []uint   `json:"defaultMCPToolIDs,omitempty" binding:"max=128"`
 	DefaultSkillIDs         []uint   `json:"defaultSkillIDs,omitempty" binding:"max=128"`
@@ -25,6 +26,7 @@ type UpdateConversationProjectRequest struct {
 	Name                    *string   `json:"name,omitempty" binding:"omitempty,max=80"`
 	Description             *string   `json:"description,omitempty" binding:"omitempty,max=255"`
 	SystemPrompt            *string   `json:"systemPrompt,omitempty" binding:"omitempty,max=12000"`
+	DefaultModel            *string   `json:"defaultModel,omitempty" binding:"omitempty,max=128"`
 	MCPDefaultMode          *string   `json:"mcpDefaultMode,omitempty" binding:"omitempty,oneof=inherit custom"`
 	DefaultMCPToolIDs       *[]uint   `json:"defaultMCPToolIDs,omitempty" binding:"omitempty,max=128"`
 	DefaultSkillIDs         *[]uint   `json:"defaultSkillIDs,omitempty" binding:"omitempty,max=128"`
@@ -88,62 +90,107 @@ type RenameFileRequest struct {
 // UpdateFileRequest 文件更新请求，file_name 和 rag_opt_out 至少填一个。
 type UpdateFileRequest struct {
 	FileName  *string `json:"fileName,omitempty"`
+<<<<<<< HEAD
 	RagOptOut *bool   `json:"ragOptOut,omitempty"`
 	Favorite  *bool   `json:"favorite,omitempty"`
+=======
+	RAGOptOut *bool   `json:"ragOptOut,omitempty"`
+}
+
+// GetFileProcessingStatusesRequest 批量文件处理状态查询请求。
+type GetFileProcessingStatusesRequest struct {
+	FileIDs []string `json:"fileIDs" binding:"required,min=1,max=100,dive,required,max=64"`
+}
+
+// SubmitFileEmbeddingsRequest 批量提交文件向量化请求。
+type SubmitFileEmbeddingsRequest struct {
+	FileIDs []string `json:"fileIDs" binding:"required,min=1,max=100,dive,required,max=64"`
+}
+
+// GetConversationRunStatusesRequest 批量运行状态查询请求。
+type GetConversationRunStatusesRequest struct {
+	RunIDs []string `json:"runIDs" binding:"required,min=1,max=100,dive,required,max=64"`
+>>>>>>> upstream/dev
 }
 
 // SendMessageRequest 发送消息请求。
 type SendMessageRequest struct {
-	ContentType             string                 `json:"contentType" binding:"required,oneof=text markdown image file mixed"`
-	Content                 string                 `json:"content" binding:"required"`
-	Model                   string                 `json:"model,omitempty" binding:"omitempty,max=128"`
-	Options                 map[string]interface{} `json:"options,omitempty"`
-	ClientRunID             string                 `json:"clientRunID,omitempty" binding:"omitempty,max=64"`
-	FileIDs                 []string               `json:"fileIDs,omitempty" binding:"max=20"`
-	SelectedToolIDs         []uint                 `json:"selectedToolIDs,omitempty" binding:"max=128"`
-	SkillIDs                []uint                 `json:"skillIDs,omitempty" binding:"max=128"`
-	KnowledgeBaseIDs        []string               `json:"knowledgeBaseIDs,omitempty" binding:"max=8,dive,required,max=32"`
-	HTMLVisualPromptEnabled bool                   `json:"htmlVisualPrompt,omitempty"`
-	ParentMessagePublicID   string                 `json:"parentMessagePublicID,omitempty" binding:"omitempty,max=32"`
-	SourceMessagePublicID   string                 `json:"sourceMessagePublicID,omitempty" binding:"omitempty,max=32"`
-	BranchReason            string                 `json:"branchReason,omitempty" binding:"omitempty,oneof=default retry edit"`
+	ContentType             string         `json:"contentType" binding:"required,oneof=text markdown image file mixed"`
+	Content                 string         `json:"content" binding:"required"`
+	Model                   string         `json:"model,omitempty" binding:"omitempty,max=128"`
+	Options                 map[string]any `json:"options,omitempty"`
+	ClientRunID             string         `json:"clientRunID,omitempty" binding:"omitempty,max=64"`
+	FileIDs                 []string       `json:"fileIDs,omitempty" binding:"max=20"`
+	SelectedToolIDs         []uint         `json:"selectedToolIDs,omitempty" binding:"max=128"`
+	SkillIDs                []uint         `json:"skillIDs,omitempty" binding:"max=128"`
+	KnowledgeBaseIDs        []string       `json:"knowledgeBaseIDs,omitempty" binding:"max=8,dive,required,max=32"`
+	HTMLVisualPromptEnabled bool           `json:"htmlVisualPrompt,omitempty"`
+	ParentMessagePublicID   string         `json:"parentMessagePublicID,omitempty" binding:"omitempty,max=32"`
+	SourceMessagePublicID   string         `json:"sourceMessagePublicID,omitempty" binding:"omitempty,max=32"`
+	BranchReason            string         `json:"branchReason,omitempty" binding:"omitempty,oneof=default retry edit"`
+
+	// UIComponentIDs 是本次会话勾选的交互式组件；后端据此注入组件目录提示词，不可见的 ID 被忽略。
+	UIComponentIDs []uint `json:"uiComponentIDs,omitempty" binding:"max=32"`
+}
+
+// TemporaryChatMessageRequest 是仅在当前页面内维护的临时对话请求。
+// 历史正文和请求级附件由浏览器逐轮提交，服务端不创建会话、消息或文件记录。
+type TemporaryChatMessageRequest struct {
+	SessionID        string                        `json:"sessionID" binding:"required,max=64"`
+	ClientRunID      string                        `json:"clientRunID" binding:"required,max=64"`
+	Model            string                        `json:"model" binding:"required,max=128"`
+	Options          map[string]any                `json:"options,omitempty"`
+	SelectedToolIDs  []uint                        `json:"selectedToolIDs,omitempty" binding:"max=128"`
+	SkillIDs         []uint                        `json:"skillIDs,omitempty" binding:"max=128"`
+	KnowledgeBaseIDs []string                      `json:"knowledgeBaseIDs,omitempty" binding:"omitempty,max=8,dive,max=32"`
+	HTMLVisualPrompt bool                          `json:"htmlVisualPrompt,omitempty"`
+	Messages         []TemporaryChatHistoryMessage `json:"messages" binding:"required,min=1,max=100,dive"`
+
+	// UIComponentIDs 是本次会话勾选的交互式组件。
+	UIComponentIDs []uint `json:"uiComponentIDs,omitempty" binding:"max=32"`
+}
+
+// TemporaryChatHistoryMessage 是临时对话可提交的消息。
+type TemporaryChatHistoryMessage struct {
+	Role    string `json:"role" binding:"required,oneof=user assistant"`
+	Content string `json:"content" binding:"max=200000"`
 }
 
 // MediaImageRequest 图片生成/编辑请求。
 type MediaImageRequest struct {
-	Prompt                string                 `json:"prompt" binding:"required"`
-	Model                 string                 `json:"model,omitempty" binding:"omitempty,max=128"`
-	Options               map[string]interface{} `json:"options,omitempty"`
-	ClientRunID           string                 `json:"clientRunID,omitempty" binding:"omitempty,max=64"`
-	FileIDs               []string               `json:"fileIDs,omitempty" binding:"max=20"`
-	MaskFileID            string                 `json:"maskFileID,omitempty" binding:"omitempty,max=128"`
-	ParentMessagePublicID string                 `json:"parentMessagePublicID,omitempty" binding:"omitempty,max=32"`
-	SourceMessagePublicID string                 `json:"sourceMessagePublicID,omitempty" binding:"omitempty,max=32"`
-	BranchReason          string                 `json:"branchReason,omitempty" binding:"omitempty,oneof=default retry edit"`
+	Prompt                string         `json:"prompt" binding:"required"`
+	Model                 string         `json:"model,omitempty" binding:"omitempty,max=128"`
+	Options               map[string]any `json:"options,omitempty"`
+	ClientRunID           string         `json:"clientRunID,omitempty" binding:"omitempty,max=64"`
+	FileIDs               []string       `json:"fileIDs,omitempty" binding:"max=20"`
+	MaskFileID            string         `json:"maskFileID,omitempty" binding:"omitempty,max=128"`
+	ParentMessagePublicID string         `json:"parentMessagePublicID,omitempty" binding:"omitempty,max=32"`
+	SourceMessagePublicID string         `json:"sourceMessagePublicID,omitempty" binding:"omitempty,max=32"`
+	BranchReason          string         `json:"branchReason,omitempty" binding:"omitempty,oneof=default retry edit"`
 }
 
 // MediaVideoRequest 视频生成请求。
 type MediaVideoRequest struct {
-	Prompt                string                 `json:"prompt" binding:"required"`
-	Model                 string                 `json:"model,omitempty" binding:"omitempty,max=128"`
-	Options               map[string]interface{} `json:"options,omitempty"`
-	ClientRunID           string                 `json:"clientRunID,omitempty" binding:"omitempty,max=64"`
-	FileIDs               []string               `json:"fileIDs,omitempty" binding:"max=1"`
-	ParentMessagePublicID string                 `json:"parentMessagePublicID,omitempty" binding:"omitempty,max=32"`
-	SourceMessagePublicID string                 `json:"sourceMessagePublicID,omitempty" binding:"omitempty,max=32"`
-	BranchReason          string                 `json:"branchReason,omitempty" binding:"omitempty,oneof=default retry edit"`
+	Prompt                string         `json:"prompt" binding:"required"`
+	Model                 string         `json:"model,omitempty" binding:"omitempty,max=128"`
+	Options               map[string]any `json:"options,omitempty"`
+	ClientRunID           string         `json:"clientRunID,omitempty" binding:"omitempty,max=64"`
+	FileIDs               []string       `json:"fileIDs,omitempty" binding:"max=1"`
+	ParentMessagePublicID string         `json:"parentMessagePublicID,omitempty" binding:"omitempty,max=32"`
+	SourceMessagePublicID string         `json:"sourceMessagePublicID,omitempty" binding:"omitempty,max=32"`
+	BranchReason          string         `json:"branchReason,omitempty" binding:"omitempty,oneof=default retry edit"`
 }
 
 // MediaVideoExtensionRequest 视频扩展请求。
 type MediaVideoExtensionRequest struct {
-	Prompt                string                 `json:"prompt" binding:"required"`
-	Model                 string                 `json:"model,omitempty" binding:"omitempty,max=128"`
-	Options               map[string]interface{} `json:"options,omitempty"`
-	ClientRunID           string                 `json:"clientRunID,omitempty" binding:"omitempty,max=64"`
-	SourceVideoFileID     string                 `json:"sourceVideoFileID" binding:"required,max=128"`
-	ParentMessagePublicID string                 `json:"parentMessagePublicID,omitempty" binding:"omitempty,max=32"`
-	SourceMessagePublicID string                 `json:"sourceMessagePublicID,omitempty" binding:"omitempty,max=32"`
-	BranchReason          string                 `json:"branchReason,omitempty" binding:"omitempty,oneof=default retry edit"`
+	Prompt                string         `json:"prompt" binding:"required"`
+	Model                 string         `json:"model,omitempty" binding:"omitempty,max=128"`
+	Options               map[string]any `json:"options,omitempty"`
+	ClientRunID           string         `json:"clientRunID,omitempty" binding:"omitempty,max=64"`
+	SourceVideoFileID     string         `json:"sourceVideoFileID" binding:"required,max=128"`
+	ParentMessagePublicID string         `json:"parentMessagePublicID,omitempty" binding:"omitempty,max=32"`
+	SourceMessagePublicID string         `json:"sourceMessagePublicID,omitempty" binding:"omitempty,max=32"`
+	BranchReason          string         `json:"branchReason,omitempty" binding:"omitempty,oneof=default retry edit"`
 }
 
 // SetMessageFeedbackRequest 设置消息反馈请求。

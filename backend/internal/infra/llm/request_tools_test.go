@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	portllm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
-func mustBuildRequestBody(t *testing.T, protocol string, model string, endpoint string, input GenerateInput, stream bool) map[string]interface{} {
+func mustBuildRequestBody(t *testing.T, protocol string, model string, endpoint string, input portllm.GenerateInput, stream bool) map[string]any {
 	t.Helper()
 	payload, err := buildOpenAIRequestBody(protocol, model, endpoint, input, stream)
 	if err != nil {
@@ -18,7 +20,7 @@ func mustBuildRequestBody(t *testing.T, protocol string, model string, endpoint 
 	return payload
 }
 
-func mustBuildAnthropicRequestBody(t *testing.T, model string, input GenerateInput, stream bool) map[string]interface{} {
+func mustBuildAnthropicRequestBody(t *testing.T, model string, input portllm.GenerateInput, stream bool) map[string]any {
 	t.Helper()
 	payload, err := buildAnthropicRequestBody(model, input, stream)
 	if err != nil {
@@ -27,7 +29,7 @@ func mustBuildAnthropicRequestBody(t *testing.T, model string, input GenerateInp
 	return payload
 }
 
-func mustBuildGeminiRequestBody(t *testing.T, input GenerateInput) map[string]interface{} {
+func mustBuildGeminiRequestBody(t *testing.T, input portllm.GenerateInput) map[string]any {
 	t.Helper()
 	payload, err := buildGeminiRequestBody(input)
 	if err != nil {
@@ -37,18 +39,18 @@ func mustBuildGeminiRequestBody(t *testing.T, input GenerateInput) map[string]in
 }
 
 func TestBuildChatCompletionsToolMessages(t *testing.T) {
-	payload := mustBuildRequestBody(t, AdapterOpenAIChatCompletions, "gpt-5", EndpointChatCompletions, GenerateInput{
-		Messages: []Message{
+	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIChatCompletions, "gpt-5", portllm.EndpointChatCompletions, portllm.GenerateInput{
+		Messages: []portllm.Message{
 			{
 				Role:             "assistant",
 				ReasoningContent: "need memory",
-				ToolCalls:        []ToolCall{{ToolCallID: "call_1", ToolType: "function", ToolName: "memory.list", ArgumentsJSON: `{"scope":"user"}`}},
+				ToolCalls:        []portllm.ToolCall{{ToolCallID: "call_1", ToolType: "function", ToolName: "memory.list", ArgumentsJSON: `{"scope":"user"}`}},
 			},
-			{Role: "tool", ToolResults: []ToolResult{{ToolCallID: "call_1", ToolName: "memory.list", OutputJSON: `{"items":[]}`, Status: "success"}}},
+			{Role: "tool", ToolResults: []portllm.ToolResult{{ToolCallID: "call_1", ToolName: "memory.list", OutputJSON: `{"items":[]}`, Status: "success"}}},
 		},
 	}, false)
 
-	messages := payload["messages"].([]map[string]interface{})
+	messages := payload["messages"].([]map[string]any)
 	if len(messages) != 2 {
 		t.Fatalf("expected 2 messages, got %#v", messages)
 	}
@@ -58,7 +60,7 @@ func TestBuildChatCompletionsToolMessages(t *testing.T) {
 	if messages[0]["reasoning_content"] != "need memory" {
 		t.Fatalf("expected reasoning_content passback, got %#v", messages[0])
 	}
-	toolCalls := messages[0]["tool_calls"].([]map[string]interface{})
+	toolCalls := messages[0]["tool_calls"].([]map[string]any)
 	if toolCalls[0]["id"] != "call_1" {
 		t.Fatalf("expected tool call id, got %#v", toolCalls[0])
 	}
@@ -68,18 +70,18 @@ func TestBuildChatCompletionsToolMessages(t *testing.T) {
 }
 
 func TestBuildOpenRouterChatCompletionsToolMessagesUsesReasoningField(t *testing.T) {
-	payload := mustBuildRequestBody(t, AdapterOpenRouterChat, "openai/gpt-oss-120b:free", EndpointChatCompletions, GenerateInput{
-		Messages: []Message{
+	payload := mustBuildRequestBody(t, portllm.AdapterOpenRouterChat, "openai/gpt-oss-120b:free", portllm.EndpointChatCompletions, portllm.GenerateInput{
+		Messages: []portllm.Message{
 			{
 				Role:             "assistant",
 				ReasoningContent: "need live news",
-				ToolCalls:        []ToolCall{{ToolCallID: "call_1", ToolType: "function", ToolName: "search_web", ArgumentsJSON: `{"query":"today news China"}`}},
+				ToolCalls:        []portllm.ToolCall{{ToolCallID: "call_1", ToolType: "function", ToolName: "search_web", ArgumentsJSON: `{"query":"today news China"}`}},
 			},
-			{Role: "tool", ToolResults: []ToolResult{{ToolCallID: "call_1", ToolName: "search_web", OutputJSON: `{"items":[]}`, Status: "success"}}},
+			{Role: "tool", ToolResults: []portllm.ToolResult{{ToolCallID: "call_1", ToolName: "search_web", OutputJSON: `{"items":[]}`, Status: "success"}}},
 		},
 	}, false)
 
-	messages := payload["messages"].([]map[string]interface{})
+	messages := payload["messages"].([]map[string]any)
 	assistant := messages[0]
 	if assistant["reasoning"] != "need live news" {
 		t.Fatalf("expected OpenRouter reasoning passback, got %#v", assistant)
@@ -93,20 +95,20 @@ func TestBuildOpenRouterChatCompletionsToolMessagesUsesReasoningField(t *testing
 }
 
 func TestParseChatCompletionsOutputSeparatesReasoningContentParts(t *testing.T) {
-	result := &GenerateOutput{}
-	parseChatCompletionsOutput(AdapterOpenAIChatCompletions, map[string]interface{}{
-		"choices": []interface{}{
-			map[string]interface{}{
-				"message": map[string]interface{}{
-					"content": []interface{}{
-						map[string]interface{}{"type": "reasoning", "text": "hidden reasoning"},
-						map[string]interface{}{"type": "text", "text": "visible answer"},
+	result := &portllm.GenerateOutput{}
+	parseChatCompletionsOutput(portllm.AdapterOpenAIChatCompletions, map[string]any{
+		"choices": []any{
+			map[string]any{
+				"message": map[string]any{
+					"content": []any{
+						map[string]any{"type": "reasoning", "text": "hidden reasoning"},
+						map[string]any{"type": "text", "text": "visible answer"},
 					},
-					"tool_calls": []interface{}{
-						map[string]interface{}{
+					"tool_calls": []any{
+						map[string]any{
 							"id":   "call_1",
 							"type": "function",
-							"function": map[string]interface{}{
+							"function": map[string]any{
 								"name":      "memory.list",
 								"arguments": "{}",
 							},
@@ -129,21 +131,22 @@ func TestParseChatCompletionsOutputSeparatesReasoningContentParts(t *testing.T) 
 }
 
 func TestApplyChatStreamEventSeparatesReasoningContentParts(t *testing.T) {
-	result := &GenerateOutput{}
+	result := &portllm.GenerateOutput{}
+	var buffer string
 	var visible string
 	var reasoning string
-	err := applyChatStreamEvent(AdapterOpenAIChatCompletions, map[string]interface{}{
-		"choices": []interface{}{
-			map[string]interface{}{
-				"delta": map[string]interface{}{
-					"content": []interface{}{
-						map[string]interface{}{"type": "reasoning", "text": "hidden"},
-						map[string]interface{}{"type": "text", "text": "visible"},
+	err := applyChatStreamEvent(portllm.AdapterOpenAIChatCompletions, map[string]any{
+		"choices": []any{
+			map[string]any{
+				"delta": map[string]any{
+					"content": []any{
+						map[string]any{"type": "reasoning", "text": "hidden"},
+						map[string]any{"type": "text", "text": "visible"},
 					},
 				},
 			},
 		},
-	}, result, func(event GenerateStreamEvent) error {
+	}, result, &buffer, func(event portllm.GenerateStreamEvent) error {
 		visible += event.Delta
 		if event.Reasoning != nil {
 			reasoning += event.Reasoning.Text
@@ -165,45 +168,45 @@ func TestApplyChatStreamEventSeparatesReasoningContentParts(t *testing.T) {
 }
 
 func TestBuildChatCompletionsCustomToolMessages(t *testing.T) {
-	payload := mustBuildRequestBody(t, AdapterOpenAIChatCompletions, "gpt-5", EndpointChatCompletions, GenerateInput{
-		Messages: []Message{
-			{Role: "assistant", ToolCalls: []ToolCall{{ToolCallID: "call_custom", ToolType: "custom", ToolName: "code_exec", ArgumentsJSON: `print("hi")`}}},
+	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIChatCompletions, "gpt-5", portllm.EndpointChatCompletions, portllm.GenerateInput{
+		Messages: []portllm.Message{
+			{Role: "assistant", ToolCalls: []portllm.ToolCall{{ToolCallID: "call_custom", ToolType: "custom", ToolName: "code_exec", ArgumentsJSON: `print("hi")`}}},
 		},
 	}, false)
 
-	messages := payload["messages"].([]map[string]interface{})
-	toolCalls := messages[0]["tool_calls"].([]map[string]interface{})
+	messages := payload["messages"].([]map[string]any)
+	toolCalls := messages[0]["tool_calls"].([]map[string]any)
 	if toolCalls[0]["type"] != "custom" {
 		t.Fatalf("expected custom tool call, got %#v", toolCalls[0])
 	}
-	custom := toolCalls[0]["custom"].(map[string]interface{})
+	custom := toolCalls[0]["custom"].(map[string]any)
 	if custom["name"] != "code_exec" || custom["input"] != `print("hi")` {
 		t.Fatalf("expected custom tool payload, got %#v", custom)
 	}
 }
 
 func TestBuildResponsesToolInputItems(t *testing.T) {
-	payload := mustBuildRequestBody(t, AdapterOpenAIResponses, "gpt-5", EndpointResponses, GenerateInput{
-		Messages: []Message{
-			{Role: "tool", ToolResults: []ToolResult{{ToolCallID: "call_1", ToolName: "memory.list", OutputJSON: `{"items":[]}`, Status: "success"}}},
+	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIResponses, "gpt-5", portllm.EndpointResponses, portllm.GenerateInput{
+		Messages: []portllm.Message{
+			{Role: "tool", ToolResults: []portllm.ToolResult{{ToolCallID: "call_1", ToolName: "memory.list", OutputJSON: `{"items":[]}`, Status: "success"}}},
 		},
 	}, false)
 
-	items := payload["input"].([]map[string]interface{})
+	items := payload["input"].([]map[string]any)
 	if len(items) != 1 || items[0]["type"] != "function_call_output" || items[0]["call_id"] != "call_1" {
 		t.Fatalf("expected function_call_output item, got %#v", items)
 	}
 }
 
 func TestBuildOpenRouterResponsesToolHistoryAddsItemIDs(t *testing.T) {
-	payload := mustBuildRequestBody(t, AdapterOpenRouterResponses, "openai/o4-mini", EndpointResponses, GenerateInput{
-		Messages: []Message{
-			{Role: "assistant", ToolCalls: []ToolCall{{ToolCallID: "call_123", ToolName: "get_weather", ArgumentsJSON: `{"location":"Boston, MA"}`}}},
-			{Role: "tool", ToolResults: []ToolResult{{ToolCallID: "call_123", ToolName: "get_weather", OutputJSON: `{"temperature":"72F"}`, Status: "success"}}},
+	payload := mustBuildRequestBody(t, portllm.AdapterOpenRouterResponses, "openai/o4-mini", portllm.EndpointResponses, portllm.GenerateInput{
+		Messages: []portllm.Message{
+			{Role: "assistant", ToolCalls: []portllm.ToolCall{{ToolCallID: "call_123", ToolName: "get_weather", ArgumentsJSON: `{"location":"Boston, MA"}`}}},
+			{Role: "tool", ToolResults: []portllm.ToolResult{{ToolCallID: "call_123", ToolName: "get_weather", OutputJSON: `{"temperature":"72F"}`, Status: "success"}}},
 		},
 	}, false)
 
-	items := payload["input"].([]map[string]interface{})
+	items := payload["input"].([]map[string]any)
 	if len(items) != 2 {
 		t.Fatalf("expected two tool history items, got %#v", items)
 	}
@@ -217,21 +220,21 @@ func TestBuildOpenRouterResponsesToolHistoryAddsItemIDs(t *testing.T) {
 
 func TestBuildOpenAIToolsKeepsInputSchema(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"},"count":{"type":"number"}},"required":["query"]}`)
-	payload := mustBuildRequestBody(t, AdapterOpenAIChatCompletions, "gpt-5", EndpointChatCompletions, GenerateInput{
-		Messages: []Message{{Role: "user", Content: "search"}},
-		Tools: []ToolDefinition{{
+	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIChatCompletions, "gpt-5", portllm.EndpointChatCompletions, portllm.GenerateInput{
+		Messages: []portllm.Message{{Role: "user", Content: "search"}},
+		Tools: []portllm.ToolDefinition{{
 			Name:        "bing_search",
 			Description: "Search the web",
 			InputSchema: schema,
 		}},
 	}, false)
 
-	tools := payload["tools"].([]map[string]interface{})
-	fn := tools[0]["function"].(map[string]interface{})
-	parameters := fn["parameters"].(map[string]interface{})
-	properties := parameters["properties"].(map[string]interface{})
-	query := properties["query"].(map[string]interface{})
-	count := properties["count"].(map[string]interface{})
+	tools := payload["tools"].([]map[string]any)
+	fn := tools[0]["function"].(map[string]any)
+	parameters := fn["parameters"].(map[string]any)
+	properties := parameters["properties"].(map[string]any)
+	query := properties["query"].(map[string]any)
+	count := properties["count"].(map[string]any)
 	if fn["name"] != "bing_search" || query["type"] != "string" || count["type"] != "number" {
 		t.Fatalf("expected OpenAI tool schema to be preserved, got %#v", tools[0])
 	}
@@ -239,51 +242,51 @@ func TestBuildOpenAIToolsKeepsInputSchema(t *testing.T) {
 
 func TestBuildOpenAIToolsMergesProviderAndMCPTools(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`)
-	payload := mustBuildRequestBody(t, AdapterOpenAIChatCompletions, "gpt-5", EndpointChatCompletions, GenerateInput{
-		Messages: []Message{{Role: "user", Content: "search"}},
-		Options: map[string]interface{}{
-			"tools": []interface{}{
-				map[string]interface{}{
+	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIChatCompletions, "gpt-5", portllm.EndpointChatCompletions, portllm.GenerateInput{
+		Messages: []portllm.Message{{Role: "user", Content: "search"}},
+		Options: map[string]any{
+			"tools": []any{
+				map[string]any{
 					"type": "web_search_preview",
 				},
 			},
 		},
-		Tools: []ToolDefinition{{
+		Tools: []portllm.ToolDefinition{{
 			Name:        "bing_search",
 			Description: "Search the web",
 			InputSchema: schema,
 		}},
 	}, false)
 
-	tools := payload["tools"].([]map[string]interface{})
+	tools := payload["tools"].([]map[string]any)
 	if len(tools) != 2 {
 		t.Fatalf("expected provider tool and MCP tool, got %#v", tools)
 	}
 	if tools[0]["type"] != "web_search_preview" {
 		t.Fatalf("expected provider tool first, got %#v", tools[0])
 	}
-	fn := tools[1]["function"].(map[string]interface{})
+	fn := tools[1]["function"].(map[string]any)
 	if fn["name"] != "bing_search" {
 		t.Fatalf("expected MCP tool second, got %#v", tools[1])
 	}
 }
 
 func TestBuildOpenAIResponsesNativeToolOptions(t *testing.T) {
-	payload := mustBuildRequestBody(t, AdapterOpenAIResponses, "gpt-5.5", EndpointResponses, GenerateInput{
-		Messages: []Message{{Role: "user", Content: "search and run code"}},
-		Options: map[string]interface{}{
-			"tools": []interface{}{
-				map[string]interface{}{"type": "web_search"},
-				map[string]interface{}{
+	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIResponses, "gpt-5.5", portllm.EndpointResponses, portllm.GenerateInput{
+		Messages: []portllm.Message{{Role: "user", Content: "search and run code"}},
+		Options: map[string]any{
+			"tools": []any{
+				map[string]any{"type": "web_search"},
+				map[string]any{
 					"type": "shell",
-					"environment": map[string]interface{}{
+					"environment": map[string]any{
 						"type": "container_auto",
 					},
 				},
-				map[string]interface{}{"type": "image_generation"},
-				map[string]interface{}{
+				map[string]any{"type": "image_generation"},
+				map[string]any{
 					"type": "code_interpreter",
-					"container": map[string]interface{}{
+					"container": map[string]any{
 						"type": "auto",
 					},
 				},
@@ -291,18 +294,18 @@ func TestBuildOpenAIResponsesNativeToolOptions(t *testing.T) {
 		},
 	}, true)
 
-	tools, ok := payload["tools"].([]map[string]interface{})
+	tools, ok := payload["tools"].([]map[string]any)
 	if !ok || len(tools) != 4 {
 		t.Fatalf("expected four native OpenAI tools, got %#v", payload["tools"])
 	}
 	if tools[0]["type"] != "web_search" || tools[1]["type"] != "shell" || tools[2]["type"] != "image_generation" || tools[3]["type"] != "code_interpreter" {
 		t.Fatalf("expected OpenAI native tool order to be preserved, got %#v", tools)
 	}
-	environment, ok := tools[1]["environment"].(map[string]interface{})
+	environment, ok := tools[1]["environment"].(map[string]any)
 	if !ok || environment["type"] != "container_auto" {
 		t.Fatalf("expected shell container_auto environment, got %#v", tools[1])
 	}
-	container, ok := tools[3]["container"].(map[string]interface{})
+	container, ok := tools[3]["container"].(map[string]any)
 	if !ok || container["type"] != "auto" {
 		t.Fatalf("expected code_interpreter auto container, got %#v", tools[3])
 	}
@@ -310,12 +313,12 @@ func TestBuildOpenAIResponsesNativeToolOptions(t *testing.T) {
 
 func TestBuildRequestBodyDisableToolsRemovesProviderAndMCPTools(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`)
-	payload := mustBuildRequestBody(t, AdapterOpenAIChatCompletions, "gpt-5", EndpointChatCompletions, GenerateInput{
-		Messages: []Message{{Role: "user", Content: "summarize"}},
-		Options: map[string]interface{}{
-			"tools": []interface{}{map[string]interface{}{"type": "web_search_preview"}},
+	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIChatCompletions, "gpt-5", portllm.EndpointChatCompletions, portllm.GenerateInput{
+		Messages: []portllm.Message{{Role: "user", Content: "summarize"}},
+		Options: map[string]any{
+			"tools": []any{map[string]any{"type": "web_search_preview"}},
 		},
-		Tools: []ToolDefinition{{
+		Tools: []portllm.ToolDefinition{{
 			Name:        "bing_search",
 			Description: "Search the web",
 			InputSchema: schema,
@@ -330,13 +333,13 @@ func TestBuildRequestBodyDisableToolsRemovesProviderAndMCPTools(t *testing.T) {
 
 func TestBuildResponsesDisableToolsRemovesWebSearchAndMCPTools(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`)
-	payload := mustBuildRequestBody(t, AdapterOpenAIResponses, "gpt-5", EndpointResponses, GenerateInput{
-		Messages: []Message{{Role: "user", Content: "summarize"}},
-		Options: map[string]interface{}{
+	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIResponses, "gpt-5", portllm.EndpointResponses, portllm.GenerateInput{
+		Messages: []portllm.Message{{Role: "user", Content: "summarize"}},
+		Options: map[string]any{
 			"web_search": true,
-			"tools":      []interface{}{map[string]interface{}{"type": "web_search_preview"}},
+			"tools":      []any{map[string]any{"type": "web_search_preview"}},
 		},
-		Tools: []ToolDefinition{{
+		Tools: []portllm.ToolDefinition{{
 			Name:        "bing_search",
 			Description: "Search the web",
 			InputSchema: schema,
@@ -351,25 +354,25 @@ func TestBuildResponsesDisableToolsRemovesWebSearchAndMCPTools(t *testing.T) {
 
 func TestBuildAnthropicToolsMergesProviderAndMCPTools(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`)
-	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4", GenerateInput{
-		Messages: []Message{{Role: "user", Content: "search"}},
-		Options: map[string]interface{}{
+	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4", portllm.GenerateInput{
+		Messages: []portllm.Message{{Role: "user", Content: "search"}},
+		Options: map[string]any{
 			"web_search": true,
-			"tools": []interface{}{
-				map[string]interface{}{
+			"tools": []any{
+				map[string]any{
 					"type": "custom_tool",
 					"name": "provider_lookup",
 				},
 			},
 		},
-		Tools: []ToolDefinition{{
+		Tools: []portllm.ToolDefinition{{
 			Name:        "bing_search",
 			Description: "Search the web",
 			InputSchema: schema,
 		}},
 	}, false)
 
-	tools := payload["tools"].([]map[string]interface{})
+	tools := payload["tools"].([]map[string]any)
 	if len(tools) != 3 {
 		t.Fatalf("expected provider, web search, and MCP tools, got %#v", tools)
 	}
@@ -391,21 +394,21 @@ func TestBuildAnthropicToolsMergesProviderAndMCPTools(t *testing.T) {
 }
 
 func TestBuildAnthropicNativeToolsAddsRequiredNames(t *testing.T) {
-	payload := mustBuildAnthropicRequestBody(t, "claude-haiku-4-5", GenerateInput{
-		Messages: []Message{{Role: "user", Content: "今日天气？"}},
-		Options: map[string]interface{}{
-			"tools": []interface{}{
-				map[string]interface{}{"type": "web_search_20260209"},
-				map[string]interface{}{"type": "web_fetch_20260209"},
-				map[string]interface{}{"type": "code_execution_20260120"},
-				map[string]interface{}{"type": "advisor_20260301"},
-				map[string]interface{}{"type": "tool_search_tool_regex_20251119"},
-				map[string]interface{}{"type": "tool_search_tool_bm25_20251119"},
+	payload := mustBuildAnthropicRequestBody(t, "claude-haiku-4-5", portllm.GenerateInput{
+		Messages: []portllm.Message{{Role: "user", Content: "今日天气？"}},
+		Options: map[string]any{
+			"tools": []any{
+				map[string]any{"type": "web_search_20260209"},
+				map[string]any{"type": "web_fetch_20260209"},
+				map[string]any{"type": "code_execution_20260120"},
+				map[string]any{"type": "advisor_20260301"},
+				map[string]any{"type": "tool_search_tool_regex_20251119"},
+				map[string]any{"type": "tool_search_tool_bm25_20251119"},
 			},
 		},
 	}, true)
 
-	tools, ok := payload["tools"].([]map[string]interface{})
+	tools, ok := payload["tools"].([]map[string]any)
 	if !ok || len(tools) != 6 {
 		t.Fatalf("expected normalized Anthropic native tools, got %#v", payload["tools"])
 	}
@@ -428,16 +431,16 @@ func TestBuildAnthropicNativeToolsAddsRequiredNames(t *testing.T) {
 
 func TestBuildAnthropicRequestBodyDisableToolsRemovesProviderAndMCPTools(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`)
-	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4", GenerateInput{
-		Messages: []Message{{Role: "user", Content: "summarize"}},
-		Options: map[string]interface{}{
+	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4", portllm.GenerateInput{
+		Messages: []portllm.Message{{Role: "user", Content: "summarize"}},
+		Options: map[string]any{
 			"web_search": true,
-			"tools": []interface{}{map[string]interface{}{
+			"tools": []any{map[string]any{
 				"type": "custom_tool",
 				"name": "provider_lookup",
 			}},
 		},
-		Tools: []ToolDefinition{{
+		Tools: []portllm.ToolDefinition{{
 			Name:        "bing_search",
 			Description: "Search the web",
 			InputSchema: schema,
@@ -457,8 +460,8 @@ func TestApplyAnthropicBetaHeadersForNativeTools(t *testing.T) {
 	}
 	req.Header.Set("anthropic-beta", "existing-beta")
 
-	applyAnthropicBetaHeaders(req, map[string]interface{}{
-		"tools": []map[string]interface{}{
+	applyAnthropicBetaHeaders(req, map[string]any{
+		"tools": []map[string]any{
 			{"type": "web_search_20260209"},
 			{"type": "web_fetch_20260209"},
 			{"type": "code_execution_20260120"},
@@ -484,24 +487,24 @@ func TestApplyAnthropicBetaHeadersForNativeTools(t *testing.T) {
 
 func TestBuildGeminiToolsMergesProviderAndMCPTools(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`)
-	payload := mustBuildGeminiRequestBody(t, GenerateInput{
-		Messages: []Message{{Role: "user", Content: "search"}},
-		Options: map[string]interface{}{
+	payload := mustBuildGeminiRequestBody(t, portllm.GenerateInput{
+		Messages: []portllm.Message{{Role: "user", Content: "search"}},
+		Options: map[string]any{
 			"web_search": true,
-			"tools": []interface{}{
-				map[string]interface{}{
-					"url_context": map[string]interface{}{},
+			"tools": []any{
+				map[string]any{
+					"url_context": map[string]any{},
 				},
 			},
 		},
-		Tools: []ToolDefinition{{
+		Tools: []portllm.ToolDefinition{{
 			Name:        "bing_search",
 			Description: "Search the web",
 			InputSchema: schema,
 		}},
 	})
 
-	tools := payload["tools"].([]map[string]interface{})
+	tools := payload["tools"].([]map[string]any)
 	if len(tools) != 3 {
 		t.Fatalf("expected provider, web search, and MCP tools, got %#v", tools)
 	}
@@ -511,11 +514,11 @@ func TestBuildGeminiToolsMergesProviderAndMCPTools(t *testing.T) {
 	if _, ok := tools[1]["google_search"]; !ok {
 		t.Fatalf("expected Gemini web search second, got %#v", tools[1])
 	}
-	declarations := tools[2]["functionDeclarations"].([]map[string]interface{})
+	declarations := tools[2]["functionDeclarations"].([]map[string]any)
 	if declarations[0]["name"] != "bing_search" {
 		t.Fatalf("expected MCP tool third, got %#v", tools[2])
 	}
-	toolConfig := payload["toolConfig"].(map[string]interface{})
+	toolConfig := payload["toolConfig"].(map[string]any)
 	if toolConfig["includeServerSideToolInvocations"] != true {
 		t.Fatalf("expected Gemini server-side tool invocations to be included when mixed with function declarations, got %#v", toolConfig)
 	}
@@ -523,26 +526,26 @@ func TestBuildGeminiToolsMergesProviderAndMCPTools(t *testing.T) {
 
 func TestBuildGeminiToolsPreservesExplicitToolConfigWhenMixedTools(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`)
-	payload := mustBuildGeminiRequestBody(t, GenerateInput{
-		Messages: []Message{{Role: "user", Content: "search"}},
-		Options: map[string]interface{}{
+	payload := mustBuildGeminiRequestBody(t, portllm.GenerateInput{
+		Messages: []portllm.Message{{Role: "user", Content: "search"}},
+		Options: map[string]any{
 			"web_search": true,
-			"toolConfig": map[string]interface{}{
-				"functionCallingConfig": map[string]interface{}{"mode": "ANY"},
+			"toolConfig": map[string]any{
+				"functionCallingConfig": map[string]any{"mode": "ANY"},
 			},
 		},
-		Tools: []ToolDefinition{{
+		Tools: []portllm.ToolDefinition{{
 			Name:        "search_web",
 			Description: "Search the web",
 			InputSchema: schema,
 		}},
 	})
 
-	toolConfig := payload["toolConfig"].(map[string]interface{})
+	toolConfig := payload["toolConfig"].(map[string]any)
 	if toolConfig["includeServerSideToolInvocations"] != true {
 		t.Fatalf("expected mixed tools to enable server-side invocations, got %#v", toolConfig)
 	}
-	if _, ok := toolConfig["functionCallingConfig"].(map[string]interface{}); !ok {
+	if _, ok := toolConfig["functionCallingConfig"].(map[string]any); !ok {
 		t.Fatalf("expected explicit functionCallingConfig to be preserved, got %#v", toolConfig)
 	}
 }
@@ -579,22 +582,22 @@ func TestBuildGeminiToolsPreservesJSONSchemaForFunctionDeclarations(t *testing.T
 		},
 		"required": ["actions"]
 	}`)
-	payload := mustBuildGeminiRequestBody(t, GenerateInput{
-		Messages: []Message{{Role: "user", Content: "search"}},
-		Tools: []ToolDefinition{{
+	payload := mustBuildGeminiRequestBody(t, portllm.GenerateInput{
+		Messages: []portllm.Message{{Role: "user", Content: "search"}},
+		Tools: []portllm.ToolDefinition{{
 			Name:        "search_web",
 			Description: "Search the web",
 			InputSchema: schema,
 		}},
 	})
 
-	tools := payload["tools"].([]map[string]interface{})
-	declarations := tools[0]["functionDeclarations"].([]map[string]interface{})
+	tools := payload["tools"].([]map[string]any)
+	declarations := tools[0]["functionDeclarations"].([]map[string]any)
 	declaration := declarations[0]
 	if _, ok := declaration["parameters"]; ok {
 		t.Fatalf("expected Generate Content to use parametersJsonSchema, got %#v", declaration)
 	}
-	parameters, ok := declaration["parametersJsonSchema"].(map[string]interface{})
+	parameters, ok := declaration["parametersJsonSchema"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected native JSON Schema parameters, got %#v", declaration)
 	}
@@ -605,7 +608,7 @@ func TestBuildGeminiToolsPreservesJSONSchemaForFunctionDeclarations(t *testing.T
 	if asMap(definitions["request"])["type"] != "object" || asMap(definitions["parser"])["type"] != "object" {
 		t.Fatalf("expected JSON Schema definitions to be preserved, got %#v", definitions)
 	}
-	properties := parameters["properties"].(map[string]interface{})
+	properties := parameters["properties"].(map[string]any)
 	actions := asMap(properties["actions"])
 	if asMap(actions["items"])["$ref"] != "#/properties/headers" {
 		t.Fatalf("expected array item reference to be preserved, got %#v", actions)
@@ -621,15 +624,15 @@ func TestBuildGeminiToolsPreservesJSONSchemaForFunctionDeclarations(t *testing.T
 
 func TestBuildGeminiRequestBodyDisableToolsRemovesProviderAndMCPTools(t *testing.T) {
 	schema := json.RawMessage(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`)
-	payload := mustBuildGeminiRequestBody(t, GenerateInput{
-		Messages: []Message{{Role: "user", Content: "summarize"}},
-		Options: map[string]interface{}{
+	payload := mustBuildGeminiRequestBody(t, portllm.GenerateInput{
+		Messages: []portllm.Message{{Role: "user", Content: "summarize"}},
+		Options: map[string]any{
 			"web_search": true,
-			"tools": []interface{}{
-				map[string]interface{}{"url_context": map[string]interface{}{}},
+			"tools": []any{
+				map[string]any{"url_context": map[string]any{}},
 			},
 		},
-		Tools: []ToolDefinition{{
+		Tools: []portllm.ToolDefinition{{
 			Name:        "bing_search",
 			Description: "Search the web",
 			InputSchema: schema,
@@ -643,10 +646,10 @@ func TestBuildGeminiRequestBodyDisableToolsRemovesProviderAndMCPTools(t *testing
 }
 
 func TestBuildRequestBodyRejectsInvalidProviderToolsOption(t *testing.T) {
-	_, err := buildOpenAIRequestBody(AdapterOpenAIChatCompletions, "gpt-5", EndpointChatCompletions, GenerateInput{
-		Messages: []Message{{Role: "user", Content: "search"}},
-		Options: map[string]interface{}{
-			"tools": map[string]interface{}{"type": "web_search_preview"},
+	_, err := buildOpenAIRequestBody(portllm.AdapterOpenAIChatCompletions, "gpt-5", portllm.EndpointChatCompletions, portllm.GenerateInput{
+		Messages: []portllm.Message{{Role: "user", Content: "search"}},
+		Options: map[string]any{
+			"tools": map[string]any{"type": "web_search_preview"},
 		},
 	}, false)
 	if err == nil || err.Error() != "model option tools must be an array" {
@@ -655,17 +658,17 @@ func TestBuildRequestBodyRejectsInvalidProviderToolsOption(t *testing.T) {
 }
 
 func TestChatStreamToolCallArgumentsAreConcatenatedWithoutDefaultPrefix(t *testing.T) {
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0)}
-	chunks := []map[string]interface{}{
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0)}
+	chunks := []map[string]any{
 		{
 			"id": "chatcmpl_1",
-			"choices": []interface{}{map[string]interface{}{
-				"delta": map[string]interface{}{
-					"tool_calls": []interface{}{map[string]interface{}{
+			"choices": []any{map[string]any{
+				"delta": map[string]any{
+					"tool_calls": []any{map[string]any{
 						"index": float64(0),
 						"id":    "call_1",
 						"type":  "function",
-						"function": map[string]interface{}{
+						"function": map[string]any{
 							"name": "bing_search",
 						},
 					}},
@@ -673,11 +676,11 @@ func TestChatStreamToolCallArgumentsAreConcatenatedWithoutDefaultPrefix(t *testi
 			}},
 		},
 		{
-			"choices": []interface{}{map[string]interface{}{
-				"delta": map[string]interface{}{
-					"tool_calls": []interface{}{map[string]interface{}{
+			"choices": []any{map[string]any{
+				"delta": map[string]any{
+					"tool_calls": []any{map[string]any{
 						"index": float64(0),
-						"function": map[string]interface{}{
+						"function": map[string]any{
 							"arguments": "{\"query\":\"IDC",
 						},
 					}},
@@ -685,11 +688,11 @@ func TestChatStreamToolCallArgumentsAreConcatenatedWithoutDefaultPrefix(t *testi
 			}},
 		},
 		{
-			"choices": []interface{}{map[string]interface{}{
-				"delta": map[string]interface{}{
-					"tool_calls": []interface{}{map[string]interface{}{
+			"choices": []any{map[string]any{
+				"delta": map[string]any{
+					"tool_calls": []any{map[string]any{
 						"index": float64(0),
-						"function": map[string]interface{}{
+						"function": map[string]any{
 							"arguments": " Flare\"}",
 						},
 					}},
@@ -699,7 +702,11 @@ func TestChatStreamToolCallArgumentsAreConcatenatedWithoutDefaultPrefix(t *testi
 	}
 
 	for _, chunk := range chunks {
+<<<<<<< HEAD
 		if err := applyChatStreamEvent(AdapterOpenAIChatCompletions, chunk, result, nil, textEncodedToolCallsInactive); err != nil {
+=======
+		if err := applyChatStreamEvent(portllm.AdapterOpenAIChatCompletions, chunk, result, nil, nil, false); err != nil {
+>>>>>>> upstream/dev
 			t.Fatalf("apply stream event: %v", err)
 		}
 	}
@@ -712,17 +719,17 @@ func TestChatStreamToolCallArgumentsAreConcatenatedWithoutDefaultPrefix(t *testi
 }
 
 func TestChatStreamCustomToolCallInputIsConcatenated(t *testing.T) {
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0)}
-	chunks := []map[string]interface{}{
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0)}
+	chunks := []map[string]any{
 		{
 			"id": "chatcmpl_1",
-			"choices": []interface{}{map[string]interface{}{
-				"delta": map[string]interface{}{
-					"tool_calls": []interface{}{map[string]interface{}{
+			"choices": []any{map[string]any{
+				"delta": map[string]any{
+					"tool_calls": []any{map[string]any{
 						"index": float64(0),
 						"id":    "call_custom",
 						"type":  "custom",
-						"custom": map[string]interface{}{
+						"custom": map[string]any{
 							"name": "code_exec",
 						},
 					}},
@@ -730,11 +737,11 @@ func TestChatStreamCustomToolCallInputIsConcatenated(t *testing.T) {
 			}},
 		},
 		{
-			"choices": []interface{}{map[string]interface{}{
-				"delta": map[string]interface{}{
-					"tool_calls": []interface{}{map[string]interface{}{
+			"choices": []any{map[string]any{
+				"delta": map[string]any{
+					"tool_calls": []any{map[string]any{
 						"index": float64(0),
-						"custom": map[string]interface{}{
+						"custom": map[string]any{
 							"input": "print(",
 						},
 					}},
@@ -742,11 +749,11 @@ func TestChatStreamCustomToolCallInputIsConcatenated(t *testing.T) {
 			}},
 		},
 		{
-			"choices": []interface{}{map[string]interface{}{
-				"delta": map[string]interface{}{
-					"tool_calls": []interface{}{map[string]interface{}{
+			"choices": []any{map[string]any{
+				"delta": map[string]any{
+					"tool_calls": []any{map[string]any{
 						"index": float64(0),
-						"custom": map[string]interface{}{
+						"custom": map[string]any{
 							"input": `"hi")`,
 						},
 					}},
@@ -756,7 +763,11 @@ func TestChatStreamCustomToolCallInputIsConcatenated(t *testing.T) {
 	}
 
 	for _, chunk := range chunks {
+<<<<<<< HEAD
 		if err := applyChatStreamEvent(AdapterOpenAIChatCompletions, chunk, result, nil, textEncodedToolCallsInactive); err != nil {
+=======
+		if err := applyChatStreamEvent(portllm.AdapterOpenAIChatCompletions, chunk, result, nil, nil, false); err != nil {
+>>>>>>> upstream/dev
 			t.Fatalf("apply stream event: %v", err)
 		}
 	}
@@ -783,7 +794,7 @@ func TestParseChatCompletionsCustomToolCall(t *testing.T) {
 		}]
 	}`)
 
-	result := buildGenerateOutputFromParsed(EndpointChatCompletions, payload)
+	result := buildGenerateOutputFromParsedForAdapter(portllm.EndpointChatCompletions, portllm.AdapterOpenAIResponses, payload, false)
 	if len(result.ToolCalls) != 1 || result.ToolCalls[0].ToolType != "custom" || result.ToolCalls[0].ToolName != "code_exec" || result.ToolCalls[0].ArgumentsJSON != `print("hi")` {
 		t.Fatalf("unexpected custom tool call: %#v", result.ToolCalls)
 	}
@@ -800,7 +811,11 @@ func TestParseChatCompletionsDSMLToolCalls(t *testing.T) {
 		}]
 	}`)
 
+<<<<<<< HEAD
 	result := buildGenerateOutputFromParsedForAdapter(EndpointChatCompletions, AdapterOpenAIChatCompletions, payload, textEncodedToolCallsActive)
+=======
+	result := buildGenerateOutputFromParsedForAdapter(portllm.EndpointChatCompletions, portllm.AdapterOpenAIChatCompletions, payload, true)
+>>>>>>> upstream/dev
 	if result.Text != "" {
 		t.Fatalf("expected DSML envelope to be removed from visible text, got %q", result.Text)
 	}
@@ -827,7 +842,11 @@ func TestParseChatCompletionsDSMLToolCallsDecodesJSONParameters(t *testing.T) {
 		}]
 	}`)
 
+<<<<<<< HEAD
 	result := buildGenerateOutputFromParsedForAdapter(EndpointChatCompletions, AdapterOpenAIChatCompletions, payload, textEncodedToolCallsActive)
+=======
+	result := buildGenerateOutputFromParsedForAdapter(portllm.EndpointChatCompletions, portllm.AdapterOpenAIChatCompletions, payload, true)
+>>>>>>> upstream/dev
 	if len(result.ToolCalls) != 1 {
 		t.Fatalf("expected one parsed DSML tool call, got %#v", result.ToolCalls)
 	}
@@ -847,7 +866,7 @@ func TestParseChatCompletionsDSMLToolCallsDisabledByDefault(t *testing.T) {
 		}]
 	}`)
 
-	result := buildGenerateOutputFromParsed(EndpointChatCompletions, payload)
+	result := buildGenerateOutputFromParsedForAdapter(portllm.EndpointChatCompletions, portllm.AdapterOpenAIResponses, payload, false)
 	if !strings.Contains(result.Text, "DSML") {
 		t.Fatalf("expected default chat completions path to keep DSML as text, got %q", result.Text)
 	}
@@ -857,20 +876,20 @@ func TestParseChatCompletionsDSMLToolCallsDisabledByDefault(t *testing.T) {
 }
 
 func TestTextEncodedToolCallsOnlyEnabledForDeepSeekChatCompletions(t *testing.T) {
-	if !deepSeekTextEncodedToolCallsEnabled(RouteConfig{
-		Protocol:      AdapterOpenAIChatCompletions,
+	if !deepSeekTextEncodedToolCallsEnabled(portllm.RouteConfig{
+		Protocol:      portllm.AdapterOpenAIChatCompletions,
 		UpstreamModel: "deepseek-v4-flash",
 	}) {
 		t.Fatalf("expected DeepSeek chat completions route to enable text-encoded tool calls")
 	}
-	if deepSeekTextEncodedToolCallsEnabled(RouteConfig{
-		Protocol:      AdapterOpenAIChatCompletions,
+	if deepSeekTextEncodedToolCallsEnabled(portllm.RouteConfig{
+		Protocol:      portllm.AdapterOpenAIChatCompletions,
 		UpstreamModel: "gpt-5.4",
 	}) {
 		t.Fatalf("expected non-DeepSeek chat completions route to keep text-encoded tool calls disabled")
 	}
-	if deepSeekTextEncodedToolCallsEnabled(RouteConfig{
-		Protocol:      AdapterOpenAIResponses,
+	if deepSeekTextEncodedToolCallsEnabled(portllm.RouteConfig{
+		Protocol:      portllm.AdapterOpenAIResponses,
 		UpstreamModel: "deepseek-v4-flash",
 	}) {
 		t.Fatalf("expected non-chat-completions route to keep text-encoded tool calls disabled")
@@ -884,10 +903,10 @@ func TestConsumeChatStreamDSMLToolCallsAreNotEmittedAsText(t *testing.T) {
 		`data: [DONE]`,
 		``,
 	}, "\n\n")
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0)}
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0)}
 	var deltas []string
 
-	err := consumeOpenAIGenerateStream(EndpointChatCompletions, AdapterOpenAIChatCompletions, strings.NewReader(rawStream), result, func(event GenerateStreamEvent) error {
+	err := consumeOpenAIGenerateStream(portllm.EndpointChatCompletions, portllm.AdapterOpenAIChatCompletions, strings.NewReader(rawStream), result, func(event portllm.GenerateStreamEvent) error {
 		if event.Delta != "" {
 			deltas = append(deltas, event.Delta)
 		}
@@ -910,9 +929,13 @@ func TestConsumeChatStreamIncompleteDSMLToolCallsReturnsError(t *testing.T) {
 		`data: [DONE]`,
 		``,
 	}, "\n\n")
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0)}
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0)}
 
+<<<<<<< HEAD
 	err := consumeOpenAIGenerateStream(EndpointChatCompletions, AdapterOpenAIChatCompletions, strings.NewReader(rawStream), result, nil, textEncodedToolCallsActive)
+=======
+	err := consumeOpenAIGenerateStream(portllm.EndpointChatCompletions, portllm.AdapterOpenAIChatCompletions, strings.NewReader(rawStream), result, nil, true)
+>>>>>>> upstream/dev
 	if !errors.Is(err, errDeepSeekDSMLToolCallsIncomplete) {
 		t.Fatalf("expected incomplete DSML error, got %v", err)
 	}
@@ -932,7 +955,11 @@ func TestParseOpenAIGenerateOutputIncompleteDSMLToolCallsReturnsError(t *testing
 		}]
 	}`)
 
+<<<<<<< HEAD
 	_, err := parseOpenAIGenerateOutput(EndpointChatCompletions, AdapterOpenAIChatCompletions, body, textEncodedToolCallsActive)
+=======
+	_, err := parseOpenAIGenerateOutput(portllm.EndpointChatCompletions, portllm.AdapterOpenAIChatCompletions, body, true)
+>>>>>>> upstream/dev
 	if !errors.Is(err, errDeepSeekDSMLToolCallsIncomplete) {
 		t.Fatalf("expected incomplete DSML error, got %v", err)
 	}
@@ -945,10 +972,10 @@ func TestConsumeChatStreamAngleBracketTextStillEmits(t *testing.T) {
 		`data: [DONE]`,
 		``,
 	}, "\n\n")
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0)}
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0)}
 	var deltas []string
 
-	err := consumeOpenAIGenerateStream(EndpointChatCompletions, AdapterOpenAIChatCompletions, strings.NewReader(rawStream), result, func(event GenerateStreamEvent) error {
+	err := consumeOpenAIGenerateStream(portllm.EndpointChatCompletions, portllm.AdapterOpenAIChatCompletions, strings.NewReader(rawStream), result, func(event portllm.GenerateStreamEvent) error {
 		if event.Delta != "" {
 			deltas = append(deltas, event.Delta)
 		}
@@ -1080,11 +1107,16 @@ func TestResponsesStreamDisableToolsDropsNativeToolEvents(t *testing.T) {
 }
 
 func TestConsumeChatStreamErrorPayloadReturnsUpstreamError(t *testing.T) {
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0)}
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0)}
 	stream := bytes.NewBufferString("data: {\"error\":{\"message\":\"Param Incorrect\",\"code\":400}}\n\n")
 
+<<<<<<< HEAD
 	err := consumeOpenAIGenerateStream(EndpointChatCompletions, AdapterOpenAIChatCompletions, stream, result, nil, textEncodedToolCallsInactive)
 	var upstreamErr *UpstreamError
+=======
+	err := consumeOpenAIGenerateStream(portllm.EndpointChatCompletions, portllm.AdapterOpenAIChatCompletions, stream, result, nil, false)
+	var upstreamErr *portllm.UpstreamError
+>>>>>>> upstream/dev
 	if !errors.As(err, &upstreamErr) {
 		t.Fatalf("expected upstream error, got %T %v", err, err)
 	}
@@ -1097,33 +1129,33 @@ func TestConsumeChatStreamErrorPayloadReturnsUpstreamError(t *testing.T) {
 }
 
 func TestProviderSpecificErrorsPreserveDebugSnapshots(t *testing.T) {
-	debug := &UpstreamDebugSnapshot{
-		Request: UpstreamDebugRequest{
+	debug := &portllm.UpstreamDebugSnapshot{
+		Request: portllm.UpstreamDebugRequest{
 			Method:  "POST",
 			Path:    "/v1/messages",
 			Headers: map[string]string{"x-api-key": "[redacted]"},
 			Body:    `{"model":"claude-sonnet-4"}`,
 		},
-		Response: UpstreamDebugResponse{
+		Response: portllm.UpstreamDebugResponse{
 			StatusCode: 400,
 			Body:       `{"error":{"message":"invalid request"}}`,
 		},
 	}
 
 	anthropicErr := parseAnthropicError(400, []byte(`{"error":{"message":"invalid request"}}`), debug)
-	var upstreamErr *UpstreamError
+	var upstreamErr *portllm.UpstreamError
 	if !errors.As(anthropicErr, &upstreamErr) || upstreamErr.Debug == nil || upstreamErr.Debug.Request.Path != "/v1/messages" {
 		t.Fatalf("expected anthropic debug snapshot, got %#v", anthropicErr)
 	}
 
-	geminiDebug := &UpstreamDebugSnapshot{
-		Request: UpstreamDebugRequest{
+	geminiDebug := &portllm.UpstreamDebugSnapshot{
+		Request: portllm.UpstreamDebugRequest{
 			Method:  "POST",
 			Path:    "/v1beta/models/gemini-2.0-flash:generateContent",
 			Headers: map[string]string{"x-goog-api-key": "[redacted]"},
 			Body:    `{"contents":[]}`,
 		},
-		Response: UpstreamDebugResponse{
+		Response: portllm.UpstreamDebugResponse{
 			StatusCode: 400,
 			Body:       `{"error":{"message":"bad request"}}`,
 		},
@@ -1136,22 +1168,23 @@ func TestProviderSpecificErrorsPreserveDebugSnapshots(t *testing.T) {
 }
 
 func TestAttachUpstreamDebugWrapsStreamErrors(t *testing.T) {
-	debug := &UpstreamDebugSnapshot{
-		Request: UpstreamDebugRequest{
+	debug := &portllm.UpstreamDebugSnapshot{
+		Request: portllm.UpstreamDebugRequest{
 			Method:  "POST",
 			Path:    "/v1/responses",
 			Headers: map[string]string{"Authorization": "[redacted]"},
 			Body:    `{"model":"grok-4.3","input":[{"role":"user","content":[{"type":"input_text","text":"武汉天气"}]}],"tools":[{"type":"x_search"}],"stream":true}`,
 		},
-		Response: UpstreamDebugResponse{
+		Response: portllm.UpstreamDebugResponse{
 			StatusCode: 400,
 			Headers:    map[string]string{"Content-Type": "text/event-stream"},
 			Body:       `{"type":"response.error","error":{"message":"Argument not supported: metadata","code":"bad_response_status_code"}}`,
 		},
 	}
 
-	err := attachUpstreamDebug(errors.New("Argument not supported: metadata"), debug)
-	var upstreamErr *UpstreamError
+	cause := errors.New("Argument not supported: metadata")
+	err := attachUpstreamDebug(cause, debug)
+	var upstreamErr *portllm.UpstreamError
 	if !errors.As(err, &upstreamErr) {
 		t.Fatalf("expected upstream error, got %T %v", err, err)
 	}
@@ -1164,14 +1197,28 @@ func TestAttachUpstreamDebugWrapsStreamErrors(t *testing.T) {
 	if upstreamErr.StatusCode != 400 || upstreamErr.Body == "" {
 		t.Fatalf("expected response status/body to be preserved, got %#v", upstreamErr)
 	}
+	if !errors.Is(err, cause) {
+		t.Fatal("expected wrapped stream error identity to be preserved")
+	}
+
+	existingCause := errors.New("existing cause")
+	existing := portllm.MarkRequestAccepted(&portllm.UpstreamError{Cause: existingCause})
+	existing = attachUpstreamDebug(existing, debug)
+	if !errors.Is(existing, existingCause) {
+		t.Fatal("expected existing upstream error cause to be preserved")
+	}
 }
 
 func TestStreamDebugSnapshotPreservesRawSSEBody(t *testing.T) {
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0)}
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0)}
 	rawStream := "event: response.error\ndata: {\"type\":\"response.error\",\"error\":{\"message\":\"Argument not supported: metadata\"}}\n\n"
 	recorder := newUpstreamBodyRecorder(bytes.NewBufferString(rawStream))
 
+<<<<<<< HEAD
 	err := consumeOpenAIGenerateStream(EndpointResponses, AdapterXAIResponses, recorder, result, nil, textEncodedToolCallsInactive)
+=======
+	err := consumeOpenAIGenerateStream(portllm.EndpointResponses, portllm.AdapterXAIResponses, recorder, result, nil, false)
+>>>>>>> upstream/dev
 	req, reqErr := http.NewRequest(http.MethodPost, "https://api.x.ai/v1/responses", strings.NewReader(`{"model":"grok-4.3"}`))
 	if reqErr != nil {
 		t.Fatal(reqErr)
@@ -1188,7 +1235,7 @@ func TestStreamDebugSnapshotPreservesRawSSEBody(t *testing.T) {
 }
 
 func TestResponsesStreamReasoningSummaryDeltaIsEmittedAndStored(t *testing.T) {
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0)}
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0)}
 	rawStream := strings.Join([]string{
 		`event: response.reasoning_summary_text.delta`,
 		`data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_1","delta":"先梳理问题"}`,
@@ -1199,7 +1246,7 @@ func TestResponsesStreamReasoningSummaryDeltaIsEmittedAndStored(t *testing.T) {
 	}, "\n")
 
 	reasoningText := ""
-	err := consumeOpenAIGenerateStream(EndpointResponses, AdapterOpenAIResponses, strings.NewReader(rawStream), result, func(event GenerateStreamEvent) error {
+	err := consumeOpenAIGenerateStream(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, strings.NewReader(rawStream), result, func(event portllm.GenerateStreamEvent) error {
 		if event.Reasoning != nil {
 			reasoningText += event.Reasoning.Text
 		}
@@ -1217,7 +1264,7 @@ func TestResponsesStreamReasoningSummaryDeltaIsEmittedAndStored(t *testing.T) {
 }
 
 func TestResponsesCompletedReasoningSummaryIsEmittedWhenNoDeltaArrived(t *testing.T) {
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0)}
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0)}
 	rawStream := strings.Join([]string{
 		`event: response.completed`,
 		`data: {"type":"response.completed","response":{"id":"resp_1","output":[{"id":"rs_1","type":"reasoning","status":"completed","summary":[{"type":"summary_text","text":"这是完整思考摘要。"}]},{"type":"message","content":[{"type":"output_text","text":"最终答案"}]}],"usage":{"input_tokens":1,"output_tokens":2}}}`,
@@ -1225,7 +1272,7 @@ func TestResponsesCompletedReasoningSummaryIsEmittedWhenNoDeltaArrived(t *testin
 	}, "\n")
 
 	reasoningText := ""
-	err := consumeOpenAIGenerateStream(EndpointResponses, AdapterOpenAIResponses, strings.NewReader(rawStream), result, func(event GenerateStreamEvent) error {
+	err := consumeOpenAIGenerateStream(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, strings.NewReader(rawStream), result, func(event portllm.GenerateStreamEvent) error {
 		if event.Reasoning != nil {
 			reasoningText += event.Reasoning.Text
 		}
@@ -1246,7 +1293,7 @@ func TestResponsesCompletedReasoningSummaryIsEmittedWhenNoDeltaArrived(t *testin
 }
 
 func TestResponsesStreamDoneEventsAreMergedWithoutDuplicateText(t *testing.T) {
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0)}
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0)}
 	rawStream := strings.Join([]string{
 		`event: response.output_text.delta`,
 		`data: {"type":"response.output_text.delta","delta":"Hello"}`,
@@ -1259,7 +1306,11 @@ func TestResponsesStreamDoneEventsAreMergedWithoutDuplicateText(t *testing.T) {
 		``,
 	}, "\n")
 
+<<<<<<< HEAD
 	if err := consumeOpenAIGenerateStream(EndpointResponses, AdapterOpenAIResponses, strings.NewReader(rawStream), result, nil, textEncodedToolCallsInactive); err != nil {
+=======
+	if err := consumeOpenAIGenerateStream(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, strings.NewReader(rawStream), result, nil, false); err != nil {
+>>>>>>> upstream/dev
 		t.Fatalf("consume stream: %v", err)
 	}
 	if result.Text != "Hello" {
@@ -1287,7 +1338,7 @@ func TestParseResponsesSeparatesFunctionCallsFromServerSideToolCalls(t *testing.
 		}
 	}`)
 
-	result := buildGenerateOutputFromParsed(EndpointResponses, payload)
+	result := buildGenerateOutputFromParsedForAdapter(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, payload, false)
 	if len(result.ToolCalls) != 1 || result.ToolCalls[0].ToolName != "memory.save" {
 		t.Fatalf("expected only function_call to require local execution, got %#v", result.ToolCalls)
 	}
@@ -1314,7 +1365,7 @@ func TestParseResponsesCapturesServerSideToolCallOutputItems(t *testing.T) {
 		]
 	}`)
 
-	result := buildGenerateOutputFromParsed(EndpointResponses, payload)
+	result := buildGenerateOutputFromParsedForAdapter(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, payload, false)
 	if len(result.ServerToolCalls) != 1 {
 		t.Fatalf("expected merged server-side tool call, got %#v", result.ServerToolCalls)
 	}
@@ -1338,7 +1389,7 @@ func TestParseResponsesCapturesSearchActionSourcesAsToolOutput(t *testing.T) {
 		]
 	}`)
 
-	result := buildGenerateOutputFromParsed(EndpointResponses, payload)
+	result := buildGenerateOutputFromParsedForAdapter(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, payload, false)
 	if len(result.ServerToolCalls) != 1 {
 		t.Fatalf("expected server-side web search call, got %#v", result.ServerToolCalls)
 	}
@@ -1367,7 +1418,7 @@ func TestParseResponsesCapturesTopLevelServerSideToolCalls(t *testing.T) {
 		]
 	}`)
 
-	result := buildGenerateOutputFromParsed(EndpointResponses, payload)
+	result := buildGenerateOutputFromParsedForAdapter(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, payload, false)
 	if len(result.ServerToolCalls) != 3 {
 		t.Fatalf("expected top-level server-side tool calls, got %#v", result.ServerToolCalls)
 	}
@@ -1397,7 +1448,7 @@ func TestParseResponsesCapturesOpenAINativeShellAndImageTools(t *testing.T) {
 		}
 	}`)
 
-	result := buildGenerateOutputFromParsed(EndpointResponses, payload)
+	result := buildGenerateOutputFromParsedForAdapter(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, payload, false)
 	if len(result.ServerToolCalls) != 2 {
 		t.Fatalf("expected shell and image generation traces, got %#v", result.ServerToolCalls)
 	}
@@ -1430,7 +1481,7 @@ func TestParseResponsesCapturesGeneratedImageWithoutBase64Trace(t *testing.T) {
 		]
 	}`)
 
-	result := buildGenerateOutputFromParsed(EndpointResponses, payload)
+	result := buildGenerateOutputFromParsedForAdapter(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, payload, false)
 	if len(result.GeneratedImages) != 1 {
 		t.Fatalf("expected one generated image, got %#v", result.GeneratedImages)
 	}
@@ -1452,7 +1503,7 @@ func TestParseResponsesCapturesGeneratedImageWithoutBase64Trace(t *testing.T) {
 
 func TestResponsesStreamAcceptsLargePartialImageAndKeepsOnlyFinalImage(t *testing.T) {
 	partial := strings.Repeat("A", 2*1024*1024)
-	partialPayload, err := json.Marshal(map[string]interface{}{
+	partialPayload, err := json.Marshal(map[string]any{
 		"type":                "response.image_generation_call.partial_image",
 		"item_id":             "img_1",
 		"output_format":       "png",
@@ -1463,12 +1514,12 @@ func TestResponsesStreamAcceptsLargePartialImageAndKeepsOnlyFinalImage(t *testin
 	if err != nil {
 		t.Fatalf("marshal partial image event: %v", err)
 	}
-	completedPayload, err := json.Marshal(map[string]interface{}{
+	completedPayload, err := json.Marshal(map[string]any{
 		"type": "response.completed",
-		"response": map[string]interface{}{
+		"response": map[string]any{
 			"id": "resp_1",
-			"output": []interface{}{
-				map[string]interface{}{
+			"output": []any{
+				map[string]any{
 					"type":          "image_generation_call",
 					"id":            "img_1",
 					"status":        "completed",
@@ -1490,9 +1541,9 @@ func TestResponsesStreamAcceptsLargePartialImageAndKeepsOnlyFinalImage(t *testin
 		"",
 	}, "\n")
 
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0), ServerToolCalls: make([]ToolCall, 0)}
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0), ServerToolCalls: make([]portllm.ToolCall, 0)}
 	partialEvents := 0
-	err = consumeOpenAIGenerateStream(EndpointResponses, AdapterOpenAIResponses, strings.NewReader(rawStream), result, func(event GenerateStreamEvent) error {
+	err = consumeOpenAIGenerateStream(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, strings.NewReader(rawStream), result, func(event portllm.GenerateStreamEvent) error {
 		if event.GeneratedImage == nil {
 			return nil
 		}
@@ -1531,7 +1582,7 @@ func TestParseResponsesTreatsXSearchCustomCallsAsServerSide(t *testing.T) {
 		}
 	}`)
 
-	result := buildGenerateOutputFromParsed(EndpointResponses, payload)
+	result := buildGenerateOutputFromParsedForAdapter(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, payload, false)
 	if len(result.ToolCalls) != 0 {
 		t.Fatalf("expected x_search native custom calls not to require local execution, got %#v", result.ToolCalls)
 	}
@@ -1559,7 +1610,7 @@ func TestParseResponsesCapturesMixedWebAndXSearchToolShapes(t *testing.T) {
 		}
 	}`)
 
-	result := buildGenerateOutputFromParsed(EndpointResponses, payload)
+	result := buildGenerateOutputFromParsedForAdapter(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, payload, false)
 	if len(result.ToolCalls) != 0 {
 		t.Fatalf("expected no local tool calls for native search tools, got %#v", result.ToolCalls)
 	}
@@ -1594,7 +1645,7 @@ func TestParseXAIResponsesNormalizesBillableNativeToolUsage(t *testing.T) {
 		}
 	}`)
 
-	result := buildGenerateOutputFromParsed(EndpointResponses, payload)
+	result := buildGenerateOutputFromParsedForAdapter(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, payload, false)
 	if result.ServerSideToolUsage["web_search"] != 1 ||
 		result.ServerSideToolUsage["x_search"] != 2 ||
 		result.ServerSideToolUsage["code_interpreter"] != 3 ||
@@ -1616,7 +1667,7 @@ func TestParseResponsesKeepsClientToolCallsGeneric(t *testing.T) {
 		]
 	}`)
 
-	result := buildGenerateOutputFromParsed(EndpointResponses, payload)
+	result := buildGenerateOutputFromParsedForAdapter(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, payload, false)
 	if len(result.ServerToolCalls) != 0 {
 		t.Fatalf("expected no server-side tool calls for client tools, got %#v", result.ServerToolCalls)
 	}
@@ -1643,21 +1694,25 @@ func TestParseResponsesCitationsFromOutputAnnotations(t *testing.T) {
 		]
 	}`)
 
-	result := buildGenerateOutputFromParsed(EndpointResponses, payload)
+	result := buildGenerateOutputFromParsedForAdapter(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, payload, false)
 	if len(result.Citations) != 2 || result.Citations[0] != "https://example.com/a" || result.Citations[1] != "https://example.com/b" {
 		t.Fatalf("expected citations from annotations and server tool results, got %#v", result.Citations)
 	}
 }
 
 func TestResponsesOutputItemDoneCapturesServerSideToolCall(t *testing.T) {
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0), ServerToolCalls: make([]ToolCall, 0)}
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0), ServerToolCalls: make([]portllm.ToolCall, 0)}
 	rawStream := strings.Join([]string{
 		`event: response.output_item.done`,
 		`data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"wsc_1","status":"completed","action":{"query":"weather"},"sources":[{"url":"https://example.com/weather"}]}}`,
 		``,
 	}, "\n")
 
+<<<<<<< HEAD
 	err := consumeOpenAIGenerateStream(EndpointResponses, AdapterOpenAIResponses, strings.NewReader(rawStream), result, nil, textEncodedToolCallsInactive)
+=======
+	err := consumeOpenAIGenerateStream(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, strings.NewReader(rawStream), result, nil, false)
+>>>>>>> upstream/dev
 	if err != nil {
 		t.Fatalf("consume stream: %v", err)
 	}
@@ -1673,7 +1728,7 @@ func TestResponsesOutputItemDoneCapturesServerSideToolCall(t *testing.T) {
 }
 
 func TestResponsesStreamEmitsServerSideToolStatusEvents(t *testing.T) {
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0), ServerToolCalls: make([]ToolCall, 0)}
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0), ServerToolCalls: make([]portllm.ToolCall, 0)}
 	rawStream := strings.Join([]string{
 		`event: response.web_search_call.in_progress`,
 		`data: {"type":"response.web_search_call.in_progress","item_id":"wsc_1"}`,
@@ -1684,7 +1739,7 @@ func TestResponsesStreamEmitsServerSideToolStatusEvents(t *testing.T) {
 	}, "\n")
 
 	statuses := make([]string, 0)
-	err := consumeOpenAIGenerateStream(EndpointResponses, AdapterOpenAIResponses, strings.NewReader(rawStream), result, func(event GenerateStreamEvent) error {
+	err := consumeOpenAIGenerateStream(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, strings.NewReader(rawStream), result, func(event portllm.GenerateStreamEvent) error {
 		if event.ServerToolCall != nil {
 			statuses = append(statuses, event.ServerToolCall.Status)
 		}
@@ -1702,7 +1757,7 @@ func TestResponsesStreamEmitsServerSideToolStatusEvents(t *testing.T) {
 }
 
 func TestResponsesServerToolFinalItemReplacesStreamingPlaceholder(t *testing.T) {
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0), ServerToolCalls: make([]ToolCall, 0)}
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0), ServerToolCalls: make([]portllm.ToolCall, 0)}
 	rawStream := strings.Join([]string{
 		`event: response.web_search_call.searching`,
 		`data: {"type":"response.web_search_call.searching","action":{"type":"search","query":""}}`,
@@ -1712,7 +1767,11 @@ func TestResponsesServerToolFinalItemReplacesStreamingPlaceholder(t *testing.T) 
 		``,
 	}, "\n")
 
+<<<<<<< HEAD
 	if err := consumeOpenAIGenerateStream(EndpointResponses, AdapterOpenAIResponses, strings.NewReader(rawStream), result, nil, textEncodedToolCallsInactive); err != nil {
+=======
+	if err := consumeOpenAIGenerateStream(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, strings.NewReader(rawStream), result, nil, false); err != nil {
+>>>>>>> upstream/dev
 		t.Fatalf("consume stream: %v", err)
 	}
 	if len(result.ServerToolCalls) != 1 {
@@ -1725,15 +1784,15 @@ func TestResponsesServerToolFinalItemReplacesStreamingPlaceholder(t *testing.T) 
 }
 
 func TestResponsesStreamStatusEventCapturesNestedServerToolItem(t *testing.T) {
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0), ServerToolCalls: make([]ToolCall, 0)}
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0), ServerToolCalls: make([]portllm.ToolCall, 0)}
 	rawStream := strings.Join([]string{
 		`event: response.web_search_call.searching`,
 		`data: {"type":"response.web_search_call.searching","item":{"id":"wsc_1","action":{"query":"weather"},"sources":[{"url":"https://example.com/source"}]}}`,
 		``,
 	}, "\n")
 
-	var streamed *ToolCall
-	err := consumeOpenAIGenerateStream(EndpointResponses, AdapterOpenAIResponses, strings.NewReader(rawStream), result, func(event GenerateStreamEvent) error {
+	var streamed *portllm.ToolCall
+	err := consumeOpenAIGenerateStream(portllm.EndpointResponses, portllm.AdapterOpenAIResponses, strings.NewReader(rawStream), result, func(event portllm.GenerateStreamEvent) error {
 		if event.ServerToolCall != nil {
 			value := *event.ServerToolCall
 			streamed = &value
@@ -1752,7 +1811,7 @@ func TestResponsesStreamStatusEventCapturesNestedServerToolItem(t *testing.T) {
 }
 
 func TestResponsesStreamCapturesXSearchCustomToolInput(t *testing.T) {
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0), ServerToolCalls: make([]ToolCall, 0)}
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0), ServerToolCalls: make([]portllm.ToolCall, 0)}
 	rawStream := strings.Join([]string{
 		`event: response.output_item.added`,
 		`data: {"type":"response.output_item.added","item":{"id":"ctc_1","call_id":"xs_0","input":"","name":"x_keyword_search","type":"custom_tool_call","status":"in_progress"},"output_index":1}`,
@@ -1768,8 +1827,8 @@ func TestResponsesStreamCapturesXSearchCustomToolInput(t *testing.T) {
 		``,
 	}, "\n")
 
-	events := make([]ToolCall, 0)
-	err := consumeOpenAIGenerateStream(EndpointResponses, AdapterXAIResponses, strings.NewReader(rawStream), result, func(event GenerateStreamEvent) error {
+	events := make([]portllm.ToolCall, 0)
+	err := consumeOpenAIGenerateStream(portllm.EndpointResponses, portllm.AdapterXAIResponses, strings.NewReader(rawStream), result, func(event portllm.GenerateStreamEvent) error {
 		if event.ServerToolCall != nil {
 			events = append(events, *event.ServerToolCall)
 		}
@@ -1799,19 +1858,19 @@ func TestResponsesStreamCapturesXSearchCustomToolInput(t *testing.T) {
 }
 
 func TestBuildAnthropicToolBlocks(t *testing.T) {
-	content := buildAnthropicContent(Message{
+	content := buildAnthropicContent(portllm.Message{
 		Role:        "tool",
-		ToolResults: []ToolResult{{ToolCallID: "toolu_1", ToolName: "memory.list", OutputJSON: `{"items":[]}`, Status: "success"}},
+		ToolResults: []portllm.ToolResult{{ToolCallID: "toolu_1", ToolName: "memory.list", OutputJSON: `{"items":[]}`, Status: "success"}},
 	})
 
-	blocks := content.([]map[string]interface{})
+	blocks := content.([]map[string]any)
 	if len(blocks) != 1 || blocks[0]["type"] != "tool_result" || blocks[0]["tool_use_id"] != "toolu_1" {
 		t.Fatalf("expected anthropic tool_result block, got %#v", blocks)
 	}
 }
 
 func TestAnthropicStreamToolUseInputJSONDeltaIsCaptured(t *testing.T) {
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0)}
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0)}
 	rawStream := strings.Join([]string{
 		`event: message_start`,
 		`data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10}}}`,
@@ -1846,17 +1905,17 @@ func TestAnthropicStreamToolUseInputJSONDeltaIsCaptured(t *testing.T) {
 }
 
 func TestAnthropicStreamRejectsNativeToolUseReturnedAsClientTool(t *testing.T) {
-	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4-6", GenerateInput{
-		Messages: []Message{{Role: "user", Content: "北京今天天气"}},
-		Options: map[string]interface{}{
-			"tools": []interface{}{
-				map[string]interface{}{"type": "web_search_20260209"},
+	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4-6", portllm.GenerateInput{
+		Messages: []portllm.Message{{Role: "user", Content: "北京今天天气"}},
+		Options: map[string]any{
+			"tools": []any{
+				map[string]any{"type": "web_search_20260209"},
 			},
 		},
 	}, true)
 	classifier := newAnthropicToolClassifier(payload, nil)
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0), ServerToolCalls: make([]ToolCall, 0)}
-	events := make([]ToolCall, 0)
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0), ServerToolCalls: make([]portllm.ToolCall, 0)}
+	events := make([]portllm.ToolCall, 0)
 	rawStream := strings.Join([]string{
 		`event: message_start`,
 		`data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10}}}`,
@@ -1866,7 +1925,7 @@ func TestAnthropicStreamRejectsNativeToolUseReturnedAsClientTool(t *testing.T) {
 		``,
 	}, "\n")
 
-	err := consumeAnthropicStream(strings.NewReader(rawStream), result, func(event GenerateStreamEvent) error {
+	err := consumeAnthropicStream(strings.NewReader(rawStream), result, func(event portllm.GenerateStreamEvent) error {
 		if event.ServerToolCall != nil {
 			events = append(events, *event.ServerToolCall)
 		}
@@ -1875,7 +1934,7 @@ func TestAnthropicStreamRejectsNativeToolUseReturnedAsClientTool(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected native tool mismatch error")
 	}
-	var upstreamErr *UpstreamError
+	var upstreamErr *portllm.UpstreamError
 	if !errors.As(err, &upstreamErr) {
 		t.Fatalf("expected upstream error, got %T %v", err, err)
 	}
@@ -1894,17 +1953,17 @@ func TestAnthropicStreamRejectsNativeToolUseReturnedAsClientTool(t *testing.T) {
 }
 
 func TestAnthropicStreamKeepsDeclaredClientToolWithNativeNameLocal(t *testing.T) {
-	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4-6", GenerateInput{
-		Messages: []Message{{Role: "user", Content: "search"}},
-		Options: map[string]interface{}{
-			"tools": []interface{}{
-				map[string]interface{}{"type": "web_search_20260209"},
+	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4-6", portllm.GenerateInput{
+		Messages: []portllm.Message{{Role: "user", Content: "search"}},
+		Options: map[string]any{
+			"tools": []any{
+				map[string]any{"type": "web_search_20260209"},
 			},
 		},
-		Tools: []ToolDefinition{{Name: "web_search", Description: "Local search", InputSchema: json.RawMessage(`{"type":"object"}`)}},
+		Tools: []portllm.ToolDefinition{{Name: "web_search", Description: "Local search", InputSchema: json.RawMessage(`{"type":"object"}`)}},
 	}, true)
-	classifier := newAnthropicToolClassifier(payload, []ToolDefinition{{Name: "web_search"}})
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0), ServerToolCalls: make([]ToolCall, 0)}
+	classifier := newAnthropicToolClassifier(payload, []portllm.ToolDefinition{{Name: "web_search"}})
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0), ServerToolCalls: make([]portllm.ToolCall, 0)}
 	rawStream := strings.Join([]string{
 		`event: message_start`,
 		`data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10}}}`,
@@ -1936,7 +1995,7 @@ func TestAnthropicStreamKeepsDeclaredClientToolWithNativeNameLocal(t *testing.T)
 }
 
 func TestAnthropicStreamServerToolUseIsNotLocalToolCall(t *testing.T) {
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0), ServerToolCalls: make([]ToolCall, 0)}
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0), ServerToolCalls: make([]portllm.ToolCall, 0)}
 	rawStream := strings.Join([]string{
 		`event: message_start`,
 		`data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10}}}`,
@@ -1968,8 +2027,8 @@ func TestAnthropicStreamServerToolUseIsNotLocalToolCall(t *testing.T) {
 }
 
 func TestAnthropicStreamMergesServerToolResultIntoToolCall(t *testing.T) {
-	result := &GenerateOutput{ToolCalls: make([]ToolCall, 0), ServerToolCalls: make([]ToolCall, 0)}
-	events := make([]ToolCall, 0)
+	result := &portllm.GenerateOutput{ToolCalls: make([]portllm.ToolCall, 0), ServerToolCalls: make([]portllm.ToolCall, 0)}
+	events := make([]portllm.ToolCall, 0)
 	rawStream := strings.Join([]string{
 		`event: message_start`,
 		`data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10}}}`,
@@ -1997,7 +2056,7 @@ func TestAnthropicStreamMergesServerToolResultIntoToolCall(t *testing.T) {
 		``,
 	}, "\n")
 
-	if err := consumeAnthropicStream(strings.NewReader(rawStream), result, func(event GenerateStreamEvent) error {
+	if err := consumeAnthropicStream(strings.NewReader(rawStream), result, func(event portllm.GenerateStreamEvent) error {
 		if event.ServerToolCall != nil {
 			events = append(events, *event.ServerToolCall)
 		}
@@ -2031,21 +2090,21 @@ func TestAnthropicStreamMergesServerToolResultIntoToolCall(t *testing.T) {
 }
 
 func TestBuildGeminiToolParts(t *testing.T) {
-	parts := buildGeminiParts(Message{
+	parts := buildGeminiParts(portllm.Message{
 		Role:        "tool",
-		ToolResults: []ToolResult{{ToolCallID: "call_1", ToolName: "memory.list", OutputJSON: `{"items":[]}`, Status: "success"}},
+		ToolResults: []portllm.ToolResult{{ToolCallID: "call_1", ToolName: "memory.list", OutputJSON: `{"items":[]}`, Status: "success"}},
 	})
 
-	response := parts[0]["functionResponse"].(map[string]interface{})
+	response := parts[0]["functionResponse"].(map[string]any)
 	if response["name"] != "memory.list" {
 		t.Fatalf("expected gemini functionResponse name, got %#v", response)
 	}
 }
 
 func TestBuildGeminiToolCallPartsPreserveThoughtSignature(t *testing.T) {
-	parts := buildGeminiParts(Message{
+	parts := buildGeminiParts(portllm.Message{
 		Role: "assistant",
-		ToolCalls: []ToolCall{{
+		ToolCalls: []portllm.ToolCall{{
 			ToolName:         "search_web",
 			ArgumentsJSON:    `{"query":"SpaceX stock price"}`,
 			ThoughtSignature: "thought-signature-1",

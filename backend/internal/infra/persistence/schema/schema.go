@@ -4,14 +4,15 @@ import (
 	"errors"
 
 	domainchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/channel"
+	domainuicomponent "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/uicomponent"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/models"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/channelconfig"
 	"gorm.io/gorm"
 )
 
 // Models returns all persistent Gorm models used by the application.
-func Models() []interface{} {
-	return []interface{}{
+func Models() []any {
+	return []any{
 		&model.User{},
 		&model.UserContactVerification{},
 		&model.UserCredential{},
@@ -61,6 +62,7 @@ func Models() []interface{} {
 		&model.AnnouncementUserState{},
 		&model.PromptPreset{},
 		&model.Skill{},
+		&model.UIComponent{},
 		&model.KnowledgeBase{},
 		&model.KnowledgeBaseFile{},
 		&model.ConversationProjectMCPTool{},
@@ -110,6 +112,53 @@ func SeedModelVendors(db *gorm.DB) error {
 			entity := model.LLMModelVendor{Key: key, Name: key}
 			if err := tx.Where("key = ?", key).Attrs(entity).FirstOrCreate(&entity).Error; err != nil {
 				return err
+			}
+		}
+		return nil
+	})
+}
+
+// SeedUIComponents 按 Name 播种内置交互式组件。内置行的目录字段（描述、入参、版本、排序、渲染方式）
+// 永远以代码为准，每次启动同步，只保留管理员设置的 Enabled；目录中已移除的内置组件会被删除，
+// 避免提示词继续宣告前端不再渲染的组件。
+func SeedUIComponents(db *gorm.DB) error {
+	return db.Transaction(func(tx *gorm.DB) error {
+		builtin := domainuicomponent.Builtin()
+		names := make([]string, 0, len(builtin))
+		for _, item := range builtin {
+			names = append(names, item.Name)
+		}
+		if err := tx.Where("scope = ? AND name NOT IN ?", domainuicomponent.ScopeBuiltin, names).Delete(&model.UIComponent{}).Error; err != nil {
+			return err
+		}
+		for _, item := range builtin {
+			entity := model.UIComponent{
+				Scope:          domainuicomponent.ScopeBuiltin,
+				OwnerUserID:    0,
+				Name:           item.Name,
+				Version:        item.Version,
+				Description:    item.Description,
+				PropsSummary:   item.PropsSummary,
+				RendererKind:   domainuicomponent.RendererBuiltin,
+				RendererSource: "",
+				Enabled:        item.Enabled,
+				SortOrder:      item.SortOrder,
+			}
+			if err := tx.Where("scope = ? AND owner_user_id = 0 AND name = ?", domainuicomponent.ScopeBuiltin, item.Name).
+				Attrs(entity).
+				FirstOrCreate(&entity).Error; err != nil {
+				return err
+			}
+			if entity.RendererKind != domainuicomponent.RendererBuiltin || entity.Description != item.Description || entity.PropsSummary != item.PropsSummary || entity.Version != item.Version || entity.SortOrder != item.SortOrder {
+				if err := tx.Model(&entity).Updates(map[string]any{
+					"renderer_kind": domainuicomponent.RendererBuiltin,
+					"description":   item.Description,
+					"props_summary": item.PropsSummary,
+					"version":       item.Version,
+					"sort_order":    item.SortOrder,
+				}).Error; err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -218,10 +267,14 @@ func CleanupRemovedColumns(db *gorm.DB) error {
 	if err := dropColumns(db, &model.Skill{}, []string{"content", "sections_json"}); err != nil {
 		return err
 	}
+	// discount_percent 从未进入任何计价路径，随字段移除一并清理。
+	if err := dropColumns(db, &model.BillingPlan{}, []string{"discount_percent"}); err != nil {
+		return err
+	}
 	return nil
 }
 
-func dropColumns(db *gorm.DB, table interface{}, columns []string) error {
+func dropColumns(db *gorm.DB, table any, columns []string) error {
 	if !db.Migrator().HasTable(table) {
 		return nil
 	}
@@ -374,7 +427,6 @@ func SeedBillingCatalog(db *gorm.DB) error {
 			Description:         "默认免费套餐",
 			FeatureJSON:         `{"priority":"shared"}`,
 			PeriodCreditNanousd: 1000000000,
-			DiscountPercent:     0,
 			SortOrder:           10,
 			IsActive:            true,
 			PermissionGroupID:   copyUintPointer(defaultGroupID),
@@ -385,7 +437,6 @@ func SeedBillingCatalog(db *gorm.DB) error {
 			Description:         "轻度使用套餐",
 			FeatureJSON:         `{"priority":"standard"}`,
 			PeriodCreditNanousd: 30000000000,
-			DiscountPercent:     0,
 			SortOrder:           20,
 			IsActive:            true,
 			PermissionGroupID:   copyUintPointer(defaultGroupID),
@@ -396,7 +447,6 @@ func SeedBillingCatalog(db *gorm.DB) error {
 			Description:         "中度使用套餐",
 			FeatureJSON:         `{"priority":"advanced"}`,
 			PeriodCreditNanousd: 75000000000,
-			DiscountPercent:     0,
 			SortOrder:           30,
 			IsActive:            true,
 			PermissionGroupID:   copyUintPointer(defaultGroupID),
@@ -407,7 +457,6 @@ func SeedBillingCatalog(db *gorm.DB) error {
 			Description:         "重度使用套餐",
 			FeatureJSON:         `{"priority":"premium"}`,
 			PeriodCreditNanousd: 300000000000,
-			DiscountPercent:     0,
 			SortOrder:           40,
 			IsActive:            true,
 			PermissionGroupID:   copyUintPointer(defaultGroupID),

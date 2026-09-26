@@ -55,6 +55,9 @@ func TestTouchesEmbeddingSpaceIgnoresDerivedSignature(t *testing.T) {
 	if touchesEmbeddingSpace([]PatchItem{{Namespace: "chat", Key: "rag_top_k", Value: "8"}}) {
 		t.Fatal("retrieval tuning must not invalidate the vector space")
 	}
+	if touchesEmbeddingSpace([]PatchItem{{Namespace: "file", Key: "embedding_dimensions_policy", Value: "omit"}}) {
+		t.Fatal("request serialization policy must not invalidate the vector space")
+	}
 }
 
 func TestContainsSettingPatchMatchesExactNamespaceAndKey(t *testing.T) {
@@ -103,8 +106,16 @@ func (testEmbeddingRepo) GetActiveFileObjectByID(context.Context, uint, string) 
 	return nil, nil
 }
 
+func (testEmbeddingRepo) GetActiveFileObjectsByIDs(context.Context, uint, []string) ([]domainconversation.FileObject, error) {
+	return nil, nil
+}
+
 func (testEmbeddingRepo) GetFileObjectProcessingByObjectID(context.Context, uint) (*domainconversation.FileObjectProcessing, error) {
 	return nil, nil
+}
+
+func (testEmbeddingRepo) QueueFileEmbedding(context.Context, uint, string, string) (bool, error) {
+	return true, nil
 }
 
 func (testEmbeddingRepo) ClaimFileEmbedding(context.Context, uint, string, string) (bool, error) {
@@ -131,6 +142,6 @@ func (testEmbeddingRepo) CountFilesByEmbedStatus(context.Context, string) (int64
 	return 0, nil
 }
 
-func (testEmbeddingRepo) ListFilesForReindex(context.Context, int, uint) ([]domainconversation.FileObject, error) {
+func (testEmbeddingRepo) ListFilesForReindex(context.Context, int, uint, bool) ([]domainconversation.FileObject, error) {
 	return nil, nil
 }

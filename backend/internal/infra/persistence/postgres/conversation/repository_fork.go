@@ -2,16 +2,28 @@ package conversation
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/dberror"
 	models "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/models"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/toolresult"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-// CreateForkedConversation 在一个事务内创建 fork 会话、重建消息父链并复制仍有效的附件引用。
+const forkEventCreateBatchSize = 200
+
+type forkToolOutputKey struct {
+	runID      string
+	toolCallID string
+}
+
+// CreateForkedConversation 在一个事务内创建 fork 会话、重建消息父链，并复制仍有效的附件引用与历史展示轨迹。
 func (r *Repo) CreateForkedConversation(ctx context.Context, input repository.CreateForkedConversationInput) error {
 	if input.Conversation == nil ||
 		input.SourceConversationID == 0 ||
@@ -86,14 +98,166 @@ func (r *Repo) CreateForkedConversation(ctx context.Context, input repository.Cr
 			targetMessageIDs[item.SourceMessageID] = entity.ID
 		}
 
-		return cloneForkedAttachments(tx, target.UserID, input.SourceConversationID, createdConversation.ID, targetMessageIDs)
+		if err := cloneForkedAttachments(tx, target.UserID, input.SourceConversationID, createdConversation.ID, targetMessageIDs); err != nil {
+			return err
+		}
+		return cloneForkedDisplayTraces(tx, target.UserID, input.SourceConversationID, createdConversation.ID, targetMessageIDs)
 	})
 	if err != nil {
-		return translateError(err)
+		return dberror.Translate(err)
 	}
 
 	*input.Conversation = toConversationDomain(createdConversation)
 	return nil
+}
+
+func cloneForkedDisplayTraces(
+	tx *gorm.DB,
+	userID uint,
+	sourceConversationID uint,
+	targetConversationID uint,
+	targetMessageIDs map[uint]uint,
+) error {
+	sourceMessageIDs := make([]uint, 0, len(targetMessageIDs))
+	for sourceMessageID := range targetMessageIDs {
+		sourceMessageIDs = append(sourceMessageIDs, sourceMessageID)
+	}
+
+	sourceEvents := make([]models.ChatRunEvent, 0)
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where(
+			"conversation_id = ? AND user_id = ? AND message_id IN ? AND event_scope IN ?",
+			sourceConversationID,
+			userID,
+			sourceMessageIDs,
+			[]string{chatRunEventScopeTraceBlock, chatRunEventScopeTraceEvent, chatRunEventScopeToolCall},
+		).
+		Order("message_id ASC, seq ASC, id ASC").
+		Find(&sourceEvents).Error; err != nil {
+		return err
+	}
+	if len(sourceEvents) == 0 {
+		return nil
+	}
+
+	toolOutputs := make(map[forkToolOutputKey]string)
+	for _, source := range sourceEvents {
+		if source.EventScope == chatRunEventScopeToolCall && strings.TrimSpace(source.ToolCallID) != "" {
+			toolOutputs[forkToolOutputKey{runID: source.RunID, toolCallID: source.ToolCallID}] = source.OutputJSON
+		}
+	}
+
+	targetEvents := make([]models.ChatRunEvent, 0, len(sourceEvents))
+	for _, source := range sourceEvents {
+		targetMessageID, exists := targetMessageIDs[source.MessageID]
+		if !exists {
+			return repository.ErrInvalidInput
+		}
+		targetRunID := forkedEventRunID(targetMessageID, source.RunID)
+		payloadJSON := source.PayloadJSON
+		if source.EventScope != chatRunEventScopeToolCall {
+			payloadJSON = enrichForkedToolTracePayload(source.PayloadJSON, source.RunID, targetRunID, toolOutputs)
+		}
+		targetEvents = append(targetEvents, models.ChatRunEvent{
+			BaseModel: models.BaseModel{
+				CreatedAt: source.CreatedAt,
+				UpdatedAt: source.UpdatedAt,
+			},
+			MessageID:       targetMessageID,
+			ConversationID:  targetConversationID,
+			UserID:          userID,
+			RunID:           targetRunID,
+			EventScope:      source.EventScope,
+			EventID:         source.EventID,
+			EventType:       source.EventType,
+			Phase:           source.Phase,
+			Stage:           source.Stage,
+			RoundID:         source.RoundID,
+			ParentEventID:   source.ParentEventID,
+			Status:          source.Status,
+			Title:           source.Title,
+			Summary:         source.Summary,
+			ContentMarkdown: source.ContentMarkdown,
+			PayloadJSON:     payloadJSON,
+			Seq:             source.Seq,
+			ToolCallID:      source.ToolCallID,
+			ToolName:        source.ToolName,
+			MCPServerID:     source.MCPServerID,
+			MCPServerName:   source.MCPServerName,
+			LatencyMS:       source.LatencyMS,
+			InputJSON:       source.InputJSON,
+			OutputJSON:      source.OutputJSON,
+			ErrorJSON:       source.ErrorJSON,
+			StartedAt:       source.StartedAt,
+			EndedAt:         source.EndedAt,
+		})
+	}
+	return tx.CreateInBatches(&targetEvents, forkEventCreateBatchSize).Error
+}
+
+func enrichForkedToolTracePayload(
+	payloadJSON string,
+	sourceRunID string,
+	targetRunID string,
+	toolOutputs map[forkToolOutputKey]string,
+) string {
+	var payload map[string]any
+	if json.Unmarshal([]byte(payloadJSON), &payload) != nil {
+		return payloadJSON
+	}
+	calls, ok := payload["tool_calls"].([]any)
+	if !ok {
+		return payloadJSON
+	}
+	changed := false
+	for _, item := range calls {
+		call, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		toolCallID := forkToolCallID(call)
+		output, hasDetail := toolOutputs[forkToolOutputKey{runID: sourceRunID, toolCallID: toolCallID}]
+		if hasDetail {
+			if detailRunID := strings.TrimSpace(targetRunID); detailRunID != "" && call["detail_run_id"] != detailRunID {
+				call["detail_run_id"] = detailRunID
+				changed = true
+			}
+		} else if _, exists := call["detail_run_id"]; exists {
+			delete(call, "detail_run_id")
+			changed = true
+		}
+		if call["output_presentation"] != nil {
+			continue
+		}
+		presentation := toolresult.BuildPresentation(output)
+		if presentation == nil {
+			continue
+		}
+		call["output_presentation"] = presentation
+		changed = true
+	}
+	if !changed {
+		return payloadJSON
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return payloadJSON
+	}
+	return string(encoded)
+}
+
+func forkToolCallID(call map[string]any) string {
+	for _, key := range []string{"tool_call_id", "id", "call_id"} {
+		if value, ok := call[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func forkedEventRunID(targetMessageID uint, sourceRunID string) string {
+	sourceRunHash := sha256.Sum256([]byte(sourceRunID))
+	return fmt.Sprintf("fork_trace_%d_%x", targetMessageID, sourceRunHash[:8])
 }
 
 func cloneForkedAttachments(

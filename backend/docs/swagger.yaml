@@ -1,5 +1,30 @@
 basePath: /api/v1
 definitions:
+  ActiveMessageGenerationEventResponse:
+    properties:
+      conversationPublicID:
+        type: string
+      runID:
+        type: string
+      runs:
+        items:
+          $ref: '#/definitions/ActiveMessageGenerationResponse'
+        type: array
+      type:
+        type: string
+    required:
+    - type
+    type: object
+  ActiveMessageGenerationResponse:
+    properties:
+      conversationPublicID:
+        type: string
+      runID:
+        type: string
+    required:
+    - conversationPublicID
+    - runID
+    type: object
   ActiveSessionListResponse:
     properties:
       results:
@@ -1055,6 +1080,10 @@ definitions:
         items:
           $ref: '#/definitions/SubscriptionEntitlementResponse'
         type: array
+      totalSpentNanousd:
+        type: integer
+      totalSpentUSD:
+        type: number
     required:
     - account
     - mode
@@ -1068,6 +1097,8 @@ definitions:
     - periodUsedUSD
     - plan
     - subscriptionEntitlements
+    - totalSpentNanousd
+    - totalSpentUSD
     type: object
   BillingOverviewResponseDoc:
     properties:
@@ -1092,8 +1123,6 @@ definitions:
         type: string
       description:
         type: string
-      discountPercent:
-        type: integer
       featureJSON:
         type: string
       id:
@@ -1119,7 +1148,6 @@ definitions:
     required:
     - code
     - description
-    - discountPercent
     - featureJSON
     - id
     - isActive
@@ -1996,6 +2024,10 @@ definitions:
         x-omitempty: false
       errorJSON:
         type: string
+      errorOmitted:
+        type: boolean
+      errorSizeBytes:
+        type: integer
       eventID:
         type: string
       eventScope:
@@ -2006,12 +2038,20 @@ definitions:
         type: integer
       inputJSON:
         type: string
+      inputOmitted:
+        type: boolean
+      inputSizeBytes:
+        type: integer
       latencyMS:
         type: integer
       messageID:
         type: integer
       outputJSON:
         type: string
+      outputOmitted:
+        type: boolean
+      outputSizeBytes:
+        type: integer
       parentEventID:
         type: string
       payloadJSON:
@@ -2068,14 +2108,20 @@ definitions:
     - createdAt
     - endedAt
     - errorJSON
+    - errorOmitted
+    - errorSizeBytes
     - eventID
     - eventScope
     - eventType
     - id
     - inputJSON
+    - inputOmitted
+    - inputSizeBytes
     - latencyMS
     - messageID
     - outputJSON
+    - outputOmitted
+    - outputSizeBytes
     - parentEventID
     - payloadJSON
     - payloadOmitted
@@ -2239,6 +2285,8 @@ definitions:
         items:
           type: integer
         type: array
+      defaultModel:
+        type: string
       defaultSkillIDs:
         items:
           type: integer
@@ -2266,6 +2314,7 @@ definitions:
     - createdAt
     - defaultKnowledgeBaseIDs
     - defaultMCPToolIDs
+    - defaultModel
     - defaultSkillIDs
     - description
     - icon
@@ -2385,6 +2434,16 @@ definitions:
     - data
     - errorMsg
     type: object
+  ConversationRunStatusResponse:
+    properties:
+      runID:
+        type: string
+      status:
+        type: string
+    required:
+    - runID
+    - status
+    type: object
   ConversationSearchListResponseDoc:
     properties:
       data:
@@ -2477,6 +2536,50 @@ definitions:
     properties:
       data:
         $ref: '#/definitions/ConversationShareResponse'
+      errorMsg:
+        type: string
+    required:
+    - data
+    - errorMsg
+    type: object
+  ConversationToolCallDetailResponse:
+    properties:
+      errorJSON:
+        type: string
+      errorOmitted:
+        type: boolean
+      errorSizeBytes:
+        type: integer
+      outputJSON:
+        type: string
+      outputOmitted:
+        type: boolean
+      outputSizeBytes:
+        type: integer
+      runID:
+        type: string
+      status:
+        type: string
+      toolCallID:
+        type: string
+      toolName:
+        type: string
+    required:
+    - errorJSON
+    - errorOmitted
+    - errorSizeBytes
+    - outputJSON
+    - outputOmitted
+    - outputSizeBytes
+    - runID
+    - status
+    - toolCallID
+    - toolName
+    type: object
+  ConversationToolCallDetailResponseDoc:
+    properties:
+      data:
+        $ref: '#/definitions/ConversationToolCallDetailResponse'
       errorMsg:
         type: string
     required:
@@ -2577,6 +2680,9 @@ definitions:
           type: integer
         maxItems: 128
         type: array
+      defaultModel:
+        maxLength: 128
+        type: string
       defaultSkillIDs:
         items:
           type: integer
@@ -3090,6 +3196,62 @@ definitions:
     - data
     - errorMsg
     type: object
+  EmbeddingIndexStatusResponse:
+    properties:
+      emptyCount:
+        description: EmptyCount 是提取完成但无文本的文件数；这些文件不参与自动重建。
+        type: integer
+      failedCount:
+        type: integer
+      modelSignature:
+        type: string
+      needsReindex:
+        type: boolean
+      pendingCount:
+        type: integer
+      readyCount:
+        type: integer
+      staleCount:
+        type: integer
+    required:
+    - emptyCount
+    - failedCount
+    - modelSignature
+    - needsReindex
+    - pendingCount
+    - readyCount
+    - staleCount
+    type: object
+  EmbeddingIndexStatusResponseDoc:
+    properties:
+      data:
+        $ref: '#/definitions/EmbeddingIndexStatusResponse'
+      errorMsg:
+        type: string
+    required:
+    - data
+    - errorMsg
+    type: object
+  EmbeddingReindexResponse:
+    properties:
+      message:
+        type: string
+      submitted:
+        type: integer
+    required:
+    - message
+    - submitted
+    type: object
+  EmbeddingReindexResponseDoc:
+    properties:
+      data:
+        $ref: '#/definitions/EmbeddingReindexResponse'
+      errorMsg:
+        type: string
+    required:
+    - data
+    - errorMsg
+    type: object
   Envelope:
     properties:
       data: {}
@@ -3099,6 +3261,40 @@ definitions:
       errorMsg:
         type: string
       requestId:
+        type: string
+    required:
+    - data
+    - errorMsg
+    type: object
+  FileEmbeddingSkipResponse:
+    properties:
+      fileID:
+        type: string
+      reason:
+        type: string
+    required:
+    - fileID
+    - reason
+    type: object
+  FileEmbeddingSubmissionResponse:
+    properties:
+      skipped:
+        items:
+          $ref: '#/definitions/FileEmbeddingSkipResponse'
+        type: array
+      submittedFileIDs:
+        items:
+          type: string
+        type: array
+    required:
+    - skipped
+    - submittedFileIDs
+    type: object
+  FileEmbeddingSubmissionResponseDoc:
+    properties:
+      data:
+        $ref: '#/definitions/FileEmbeddingSubmissionResponse'
+      errorMsg:
         type: string
     required:
     - data
@@ -3131,6 +3327,8 @@ definitions:
     type: object
   FileObjectResponse:
     properties:
+      canVectorize:
+        type: boolean
       chunkCount:
         type: integer
       createdAt:
@@ -3179,7 +3377,10 @@ definitions:
         type: string
       updatedAt:
         type: string
+      vectorizationReason:
+        type: string
     required:
+    - canVectorize
     - chunkCount
     - createdAt
     - detectedMIME
@@ -3202,6 +3403,81 @@ definitions:
     - sizeBytes
     - status
     - updatedAt
+    - vectorizationReason
+    type: object
+  FileProcessingStatusResponse:
+    properties:
+      canVectorize:
+        type: boolean
+      chunkCount:
+        type: integer
+      completedAt:
+        type: string
+        x-nullable: true
+        x-omitempty: false
+      detectedMIME:
+        type: string
+      embedError:
+        type: string
+      embedStatus:
+        type: string
+      errorCode:
+        type: string
+      errorMessage:
+        type: string
+      extractChars:
+        type: integer
+      extractPages:
+        type: integer
+      extractStatus:
+        type: string
+      fileCategory:
+        type: string
+      fileID:
+        type: string
+      ocrUsed:
+        type: boolean
+      previewText:
+        type: string
+      processingReady:
+        type: boolean
+      processingStatus:
+        type: string
+      ragReady:
+        type: boolean
+      ragReason:
+        type: string
+      startedAt:
+        type: string
+        x-nullable: true
+        x-omitempty: false
+      updatedAt:
+        type: string
+      vectorizationReason:
+        type: string
+    required:
+    - canVectorize
+    - chunkCount
+    - completedAt
+    - detectedMIME
+    - embedError
+    - embedStatus
+    - errorCode
+    - errorMessage
+    - extractChars
+    - extractPages
+    - extractStatus
+    - fileCategory
+    - fileID
+    - ocrUsed
+    - previewText
+    - processingReady
+    - processingStatus
+    - ragReady
+    - ragReason
+    - startedAt
+    - updatedAt
+    - vectorizationReason
     type: object
   FileUpdateResponseDoc:
     properties:
@@ -3225,6 +3501,49 @@ definitions:
     - file
     - quota
     - reused
+    type: object
+  GetConversationRunStatusesRequest:
+    properties:
+      runIDs:
+        items:
+          type: string
+        maxItems: 100
+        minItems: 1
+        type: array
+    required:
+    - runIDs
+    type: object
+  GetFileProcessingStatusesRequest:
+    properties:
+      fileIDs:
+        items:
+          type: string
+        maxItems: 100
+        minItems: 1
+        type: array
+    required:
+    - fileIDs
+    type: object
+  GetKnowledgeBaseFileProcessingSnapshotRequest:
+    properties:
+      fileIDs:
+        items:
+          type: string
+        maxItems: 100
+        type: array
+    required:
+    - fileIDs
+    type: object
+  GetKnowledgeBaseFileProcessingStatusesRequest:
+    properties:
+      fileIDs:
+        items:
+          type: string
+        maxItems: 100
+        minItems: 1
+        type: array
+    required:
+    - fileIDs
     type: object
   GroupModelsResponse:
     properties:
@@ -3612,6 +3931,40 @@ definitions:
     required:
     - file
     type: object
+  KnowledgeBaseFileEmbeddingSkipResponse:
+    properties:
+      fileID:
+        type: string
+      reason:
+        type: string
+    required:
+    - fileID
+    - reason
+    type: object
+  KnowledgeBaseFileEmbeddingSubmissionResponse:
+    properties:
+      skipped:
+        items:
+          $ref: '#/definitions/KnowledgeBaseFileEmbeddingSkipResponse'
+        type: array
+      submittedFileIDs:
+        items:
+          type: string
+        type: array
+    required:
+    - skipped
+    - submittedFileIDs
+    type: object
+  KnowledgeBaseFileEmbeddingSubmissionResponseDoc:
+    properties:
+      data:
+        $ref: '#/definitions/KnowledgeBaseFileEmbeddingSubmissionResponse'
+      errorMsg:
+        type: string
+    required:
+    - data
+    - errorMsg
+    type: object
   KnowledgeBaseFileMutationDataResponse:
     properties:
       updated:
@@ -3649,15 +4002,79 @@ definitions:
     - data
     - errorMsg
     type: object
+  KnowledgeBaseFileProcessingSnapshotResponse:
+    properties:
+      knowledgeBase:
+        $ref: '#/definitions/KnowledgeBaseResponse'
+      statuses:
+        items:
+          $ref: '#/definitions/KnowledgeBaseFileProcessingStatusResponse'
+        type: array
+    required:
+    - knowledgeBase
+    - statuses
+    type: object
+  KnowledgeBaseFileProcessingStatusResponse:
+    properties:
+      canVectorize:
+        type: boolean
+      chunkCount:
+        type: integer
+      detectedMIME:
+        type: string
+      embedError:
+        type: string
+      embedStatus:
+        type: string
+      extractStatus:
+        type: string
+      fileCategory:
+        type: string
+      fileID:
+        type: string
+      processing:
+        type: boolean
+      processingReady:
+        type: boolean
+      processingStatus:
+        type: string
+      ragOptOut:
+        type: boolean
+      updatedAt:
+        type: string
+      vectorizationReason:
+        type: string
+    required:
+    - canVectorize
+    - chunkCount
+    - detectedMIME
+    - embedError
+    - embedStatus
+    - extractStatus
+    - fileCategory
+    - fileID
+    - processing
+    - processingReady
+    - processingStatus
+    - ragOptOut
+    - updatedAt
+    - vectorizationReason
+    type: object
   KnowledgeBaseFileResponse:
     properties:
+      canVectorize:
+        type: boolean
       chunkCount:
         type: integer
       createdAt:
         type: string
       detectedMIME:
         type: string
+      embedError:
+        type: string
       embedStatus:
+        type: string
+      extractStatus:
         type: string
       fileCategory:
         type: string
@@ -3667,6 +4084,8 @@ definitions:
         type: string
       mimeType:
         type: string
+      processing:
+        type: boolean
       processingReady:
         type: boolean
       processingStatus:
@@ -3677,20 +4096,27 @@ definitions:
         type: integer
       updatedAt:
         type: string
+      vectorizationReason:
+        type: string
     required:
+    - canVectorize
     - chunkCount
     - createdAt
     - detectedMIME
+    - embedError
     - embedStatus
+    - extractStatus
     - fileCategory
     - fileID
     - fileName
     - mimeType
+    - processing
     - processingReady
     - processingStatus
     - ragOptOut
     - sizeBytes
     - updatedAt
+    - vectorizationReason
     type: object
   KnowledgeBaseFileResponseDoc:
     properties:
@@ -3734,6 +4160,8 @@ definitions:
         type: integer
       name:
         type: string
+      processingFileCount:
+        type: integer
       publicID:
         type: string
       readyFileCount:
@@ -3755,6 +4183,7 @@ definitions:
     - enabled
     - fileCount
     - name
+    - processingFileCount
     - publicID
     - readyFileCount
     - revision
@@ -3778,6 +4207,13 @@ definitions:
         type: string
     required:
     - errorMsg
+    type: object
+  LocalGrantExchangeRequest:
+    properties:
+      grant:
+        type: string
+    required:
+    - grant
     type: object
   LoginOptionsResponse:
     properties:
@@ -3843,6 +4279,11 @@ definitions:
       expiresAt:
         type: string
       refreshExpiresAt:
+        type: string
+      refreshToken:
+        description: |-
+          RefreshToken 仅在原生客户端（X-Client-Platform: desktop|mobile）请求时填充，
+          由客户端存入系统 keychain / SecureStore；浏览器响应中始终为空。
         type: string
       sessionID:
         type: string
@@ -3930,7 +4371,7 @@ definitions:
         maxLength: 128
         type: string
       options:
-        additionalProperties: true
+        additionalProperties: {}
         type: object
       parentMessagePublicID:
         maxLength: 32
@@ -3979,6 +4420,26 @@ definitions:
     - billedUSD
     - billingMode
     - pricingSnapshotJSON
+    type: object
+  MessageDeleteResponse:
+    properties:
+      deleted:
+        type: boolean
+      reparentedMessageCount:
+        type: integer
+    required:
+    - deleted
+    - reparentedMessageCount
+    type: object
+  MessageDeleteResponseDoc:
+    properties:
+      data:
+        $ref: '#/definitions/MessageDeleteResponse'
+      errorMsg:
+        type: string
+    required:
+    - data
+    - errorMsg
     type: object
   MessageFeedbackResponse:
     properties:
@@ -4303,6 +4764,8 @@ definitions:
       roundID:
         type: string
       stage:
+        type: string
+      startedAt:
         type: string
       status:
         type: string
@@ -4632,6 +5095,11 @@ definitions:
         type: number
       cacheWriteNanousdPerMTokens:
         type: integer
+      cacheWritePriceBasis:
+        enum:
+        - direct
+        - anthropic_5m
+        type: string
       cacheWriteUSDPerMTokens:
         type: number
       callNanousdPerCall:
@@ -4666,6 +5134,8 @@ definitions:
         type: string
       pricingMode:
         type: string
+      schedulePricingJSON:
+        type: string
       tieredPricingJSON:
         type: string
       updatedAt:
@@ -4691,6 +5161,7 @@ definitions:
     - outputUSDPerMTokens
     - platformModelName
     - pricingMode
+    - schedulePricingJSON
     - tieredPricingJSON
     - updatedAt
     type: object
@@ -4854,6 +5325,8 @@ definitions:
         type: string
       cbWindowMin:
         type: integer
+      contextWindow:
+        type: integer
       createdAt:
         type: string
       description:
@@ -4902,6 +5375,7 @@ definitions:
     - cbFailureThreshold
     - cbPolicyMode
     - cbWindowMin
+    - contextWindow
     - createdAt
     - description
     - displayGroupID
@@ -5207,17 +5681,42 @@ definitions:
     properties:
       canonicalSlug:
         type: string
+      contextLength:
+        type: integer
       id:
         type: string
+      maxCompletionTokens:
+        type: integer
       name:
         type: string
       pricing:
         $ref: '#/definitions/OpenRouterOfficialPricingUnitPricingResponse'
     required:
     - canonicalSlug
+    - contextLength
     - id
+    - maxCompletionTokens
     - name
     - pricing
+    type: object
+  OpenRouterOfficialPricingOverrideResponse:
+    properties:
+      completion:
+        type: string
+      inputCacheRead:
+        type: string
+      inputCacheWrite:
+        type: string
+      minPromptTokens:
+        type: integer
+      prompt:
+        type: string
+    required:
+    - completion
+    - inputCacheRead
+    - inputCacheWrite
+    - minPromptTokens
+    - prompt
     type: object
   OpenRouterOfficialPricingResponseDoc:
     properties:
@@ -5231,15 +5730,29 @@ definitions:
     type: object
   OpenRouterOfficialPricingUnitPricingResponse:
     properties:
+      cacheWritePriceBasis:
+        enum:
+        - direct
+        - anthropic_5m
+        type: string
       completion:
         type: string
       inputCacheRead:
         type: string
       inputCacheWrite:
         type: string
+      overrides:
+        items:
+          $ref: '#/definitions/OpenRouterOfficialPricingOverrideResponse'
+        type: array
       prompt:
         type: string
+      unsupportedFields:
+        items:
+          type: string
+        type: array
     required:
+    - cacheWritePriceBasis
     - completion
     - inputCacheRead
     - inputCacheWrite
@@ -5508,6 +6021,31 @@ definitions:
       trigger:
         maxLength: 64
         type: string
+    type: object
+  PatchUIComponentRequest:
+    properties:
+      description:
+        maxLength: 256
+        type: string
+      enabled:
+        type: boolean
+      name:
+        maxLength: 64
+        type: string
+      propsSchema:
+        maxLength: 16384
+        type: string
+      propsSummary:
+        maxLength: 1024
+        type: string
+      rendererSource:
+        maxLength: 262144
+        type: string
+      sortOrder:
+        type: integer
+      version:
+        minimum: 1
+        type: integer
     type: object
   PatchUserRequest:
     properties:
@@ -6019,6 +6557,10 @@ definitions:
     properties:
       cacheReadUSDPerMTokens:
         type: number
+      cacheWrite1hMultiplier:
+        type: number
+      cacheWrite5mMultiplier:
+        type: number
       cacheWriteUSDPerMTokens:
         type: number
       callUSDPerCall:
@@ -6035,12 +6577,21 @@ definitions:
         type: string
       outputUSDPerMTokens:
         type: number
+      schedulePeriods:
+        description: 时段倍率按服务器本地时区定义；客户端用 scheduleUTCOffsetMinutes 判断当前命中的时段。
+        items:
+          $ref: '#/definitions/PublicSchedulePeriodResponse'
+        type: array
+      scheduleUTCOffsetMinutes:
+        type: integer
       tiers:
         items:
           $ref: '#/definitions/PublicModelPricingTierResponse'
         type: array
     required:
     - cacheReadUSDPerMTokens
+    - cacheWrite1hMultiplier
+    - cacheWrite5mMultiplier
     - cacheWriteUSDPerMTokens
     - callUSDPerCall
     - currency
@@ -6049,6 +6600,8 @@ definitions:
     - isFree
     - mode
     - outputUSDPerMTokens
+    - schedulePeriods
+    - scheduleUTCOffsetMinutes
     - tiers
     type: object
   PublicModelPricingTierResponse:
@@ -6126,6 +6679,27 @@ definitions:
     - vendorIcon
     - vendorName
     type: object
+  PublicSchedulePeriodResponse:
+    properties:
+      end:
+        type: string
+      name:
+        type: string
+      ratePercent:
+        type: integer
+      start:
+        type: string
+      weekdays:
+        items:
+          type: integer
+        type: array
+    required:
+    - end
+    - name
+    - ratePercent
+    - start
+    - weekdays
+    type: object
   PublicSharedConversationResponse:
     properties:
       createdAt:
@@ -6148,6 +6722,9 @@ definitions:
         type: string
       title:
         type: string
+      uiComponentsEnabled:
+        description: UIComponentsEnabled 为 false 时，分享页不渲染 deeix-ui 组件块。
+        type: boolean
     required:
     - createdAt
     - defaultMessagePublicIDs
@@ -6156,6 +6733,7 @@ definitions:
     - model
     - shareID
     - title
+    - uiComponentsEnabled
     type: object
   PublicSharedConversationResponseDoc:
     properties:
@@ -6426,6 +7004,102 @@ definitions:
     required:
     - data
     - errorMsg
+    type: object
+  RedemptionRecordListResponseDoc:
+    properties:
+      data:
+        properties:
+          results:
+            items:
+              $ref: '#/definitions/RedemptionRecordResponse'
+            type: array
+          total:
+            type: integer
+        required:
+        - results
+        - total
+        type: object
+      errorMsg:
+        type: string
+    required:
+    - data
+    - errorMsg
+    type: object
+  RedemptionRecordResponse:
+    properties:
+      balanceAfterNanousd:
+        type: integer
+        x-nullable: true
+        x-omitempty: false
+      balanceBeforeNanousd:
+        description: BalanceBeforeNanousd / BalanceAfterNanousd 来自余额流水；订阅类兑换无流水时为
+          null。
+        type: integer
+        x-nullable: true
+        x-omitempty: false
+      codeDescription:
+        type: string
+      codeHint:
+        type: string
+      codeID:
+        type: integer
+      codeStatus:
+        type: string
+      createdAt:
+        type: string
+      creditNanousd:
+        type: integer
+      creditUSD:
+        type: number
+      durationDays:
+        type: integer
+      id:
+        type: integer
+      mode:
+        type: string
+      planID:
+        type: integer
+      planName:
+        type: string
+      refNo:
+        type: string
+      rewardType:
+        type: string
+      snapshotJSON:
+        type: string
+      subscriptionID:
+        type: integer
+      userDisplayName:
+        type: string
+      userID:
+        type: integer
+      userLabel:
+        type: string
+      username:
+        type: string
+    required:
+    - balanceAfterNanousd
+    - balanceBeforeNanousd
+    - codeDescription
+    - codeHint
+    - codeID
+    - codeStatus
+    - createdAt
+    - creditNanousd
+    - creditUSD
+    - durationDays
+    - id
+    - mode
+    - planID
+    - planName
+    - refNo
+    - rewardType
+    - snapshotJSON
+    - subscriptionID
+    - userDisplayName
+    - userID
+    - userLabel
+    - username
     type: object
   RedemptionResponse:
     properties:
@@ -6760,7 +7434,7 @@ definitions:
         maxLength: 128
         type: string
       options:
-        additionalProperties: true
+        additionalProperties: {}
         type: object
       parentMessagePublicID:
         maxLength: 32
@@ -6778,6 +7452,12 @@ definitions:
       sourceMessagePublicID:
         maxLength: 32
         type: string
+      uiComponentIDs:
+        description: UIComponentIDs 是本次会话勾选的交互式组件；后端据此注入组件目录提示词，不可见的 ID 被忽略。
+        items:
+          type: integer
+        maxItems: 32
+        type: array
     required:
     - content
     - contentType
@@ -7247,6 +7927,28 @@ definitions:
     - usedBytes
     - userID
     type: object
+  SubmitFileEmbeddingsRequest:
+    properties:
+      fileIDs:
+        items:
+          type: string
+        maxItems: 100
+        minItems: 1
+        type: array
+    required:
+    - fileIDs
+    type: object
+  SubmitPlatformFileEmbeddingsRequest:
+    properties:
+      fileIDs:
+        items:
+          type: string
+        maxItems: 100
+        minItems: 1
+        type: array
+    required:
+    - fileIDs
+    type: object
   SubscribeRequest:
     properties:
       cycles:
@@ -7379,21 +8081,36 @@ definitions:
         type: integer
       inactivatedModels:
         type: integer
+      protectedUpstreamModels:
+        type: integer
+      reactivatedModels:
+        type: integer
       skippedUpstreamModels:
         type: integer
+      snapshotID:
+        type: string
       syncedModels:
         items:
           $ref: '#/definitions/UpstreamSyncModelResponse'
         type: array
       totalUpstream:
         type: integer
+      unchangedUpstreamModels:
+        type: integer
+      updatedUpstreamModels:
+        type: integer
     required:
     - createdUpstreamModels
     - existingUpstreamModels
     - inactivatedModels
+    - protectedUpstreamModels
+    - reactivatedModels
     - skippedUpstreamModels
+    - snapshotID
     - syncedModels
     - totalUpstream
+    - unchangedUpstreamModels
+    - updatedUpstreamModels
     type: object
   SyncUpstreamModelsResponseDoc:
     properties:
@@ -7465,6 +8182,69 @@ definitions:
     - traceID
     - updatedAt
     type: object
+  TemporaryChatHistoryMessage:
+    properties:
+      content:
+        maxLength: 200000
+        type: string
+      role:
+        enum:
+        - user
+        - assistant
+        type: string
+    required:
+    - content
+    - role
+    type: object
+  TemporaryChatMessageRequest:
+    properties:
+      clientRunID:
+        maxLength: 64
+        type: string
+      htmlVisualPrompt:
+        type: boolean
+      knowledgeBaseIDs:
+        items:
+          type: string
+        maxItems: 8
+        type: array
+      messages:
+        items:
+          $ref: '#/definitions/TemporaryChatHistoryMessage'
+        maxItems: 100
+        minItems: 1
+        type: array
+      model:
+        maxLength: 128
+        type: string
+      options:
+        additionalProperties: {}
+        type: object
+      selectedToolIDs:
+        items:
+          type: integer
+        maxItems: 128
+        type: array
+      sessionID:
+        maxLength: 64
+        type: string
+      skillIDs:
+        items:
+          type: integer
+        maxItems: 128
+        type: array
+      uiComponentIDs:
+        description: UIComponentIDs 是本次会话勾选的交互式组件。
+        items:
+          type: integer
+        maxItems: 32
+        type: array
+    required:
+    - clientRunID
+    - messages
+    - model
+    - sessionID
+    type: object
   ToolListResponse:
     properties:
       results:
@@ -7513,6 +8293,8 @@ definitions:
         type: string
       name:
         type: string
+      priceNanousd:
+        type: integer
       serverID:
         type: integer
       serverName:
@@ -7534,6 +8316,7 @@ definitions:
     - id
     - inputSchemaJSON
     - name
+    - priceNanousd
     - serverID
     - serverName
     - sortOrder
@@ -7548,6 +8331,116 @@ definitions:
         type: string
     required:
     - data
+    - errorMsg
+    type: object
+  UIComponentDataResponse:
+    properties:
+      component:
+        $ref: '#/definitions/UIComponentResponse'
+    required:
+    - component
+    type: object
+  UIComponentDeleteDataResponse:
+    properties:
+      deleted:
+        type: boolean
+    required:
+    - deleted
+    type: object
+  UIComponentDeleteResponseDoc:
+    properties:
+      data:
+        $ref: '#/definitions/UIComponentDeleteDataResponse'
+      errorMsg:
+        type: string
+    required:
+    - data
+    - errorMsg
+    type: object
+  UIComponentPageResponseDoc:
+    properties:
+      data:
+        properties:
+          results:
+            items:
+              $ref: '#/definitions/UIComponentResponse'
+            type: array
+          total:
+            type: integer
+        required:
+        - results
+        - total
+        type: object
+      errorMsg:
+        type: string
+    required:
+    - data
+    - errorMsg
+    type: object
+  UIComponentResponse:
+    properties:
+      createdAt:
+        type: string
+      createdByUserID:
+        type: integer
+      description:
+        type: string
+      enabled:
+        type: boolean
+      id:
+        type: integer
+      name:
+        type: string
+      propsSchema:
+        type: string
+      propsSummary:
+        type: string
+      rendererKind:
+        type: string
+      rendererSource:
+        type: string
+      scope:
+        type: string
+      sortOrder:
+        type: integer
+      updatedAt:
+        type: string
+      updatedByUserID:
+        type: integer
+      version:
+        type: integer
+    required:
+    - createdAt
+    - createdByUserID
+    - description
+    - enabled
+    - id
+    - name
+    - propsSchema
+    - propsSummary
+    - rendererKind
+    - rendererSource
+    - scope
+    - sortOrder
+    - updatedAt
+    - updatedByUserID
+    - version
+    type: object
+  UIComponentResponseDoc:
+    properties:
+      data:
+        $ref: '#/definitions/UIComponentDataResponse'
+      errorMsg:
+        type: string
+    required:
+    - data
+    - errorMsg
+    type: object
+  UicomponentErrorDoc:
+    properties:
+      errorMsg:
+        type: string
+    required:
     - errorMsg
     type: object
   UpdateBillingAccountBalanceRequest:
@@ -7578,10 +8471,6 @@ definitions:
       description:
         maxLength: 255
         type: string
-      discountPercent:
-        maximum: 100
-        minimum: 0
-        type: integer
       name:
         maxLength: 64
         minLength: 1
@@ -7596,7 +8485,6 @@ definitions:
     - amountUSD
     - billingInterval
     - description
-    - discountPercent
     - name
     - periodCreditUSD
     type: object
@@ -7626,6 +8514,9 @@ definitions:
           type: integer
         maxItems: 128
         type: array
+      defaultModel:
+        maxLength: 128
+        type: string
       defaultSkillIDs:
         items:
           type: integer
@@ -7862,6 +8753,10 @@ definitions:
         type: string
       displayName:
         type: string
+      priceNanousd:
+        description: PriceNanousd 单次调用价格（nano USD），0 表示不单独计费。
+        minimum: 0
+        type: integer
       status:
         type: string
     type: object
@@ -8052,6 +8947,11 @@ definitions:
       cacheReadUSDPerMTokens:
         minimum: 0
         type: number
+      cacheWritePriceBasis:
+        enum:
+        - direct
+        - anthropic_5m
+        type: string
       cacheWriteUSDPerMTokens:
         minimum: 0
         type: number
@@ -8081,6 +8981,10 @@ definitions:
         - call
         - duration
         - tiered
+        type: string
+      schedulePricingJSON:
+        description: SchedulePricingJSON 是时段倍率配置 {"periods":[{"name","weekdays","start","end","ratePercent"}]}，空表示不启用。
+        maxLength: 20000
         type: string
       tieredPricingJSON:
         maxLength: 20000
@@ -8352,6 +9256,40 @@ definitions:
     - upstreamModelVendor
     - weight
     type: object
+  UpstreamModelSyncPlanResponse:
+    properties:
+      addedModels:
+        items:
+          type: string
+        type: array
+      inactivatedModels:
+        items:
+          type: string
+        type: array
+      protectedModels:
+        items:
+          type: string
+        type: array
+      reactivatedModels:
+        items:
+          type: string
+        type: array
+      unchangedModels:
+        items:
+          type: string
+        type: array
+      updatedModels:
+        items:
+          type: string
+        type: array
+    required:
+    - addedModels
+    - inactivatedModels
+    - protectedModels
+    - reactivatedModels
+    - unchangedModels
+    - updatedModels
+    type: object
   UpstreamRemoteModelResponse:
     properties:
       alreadyBound:
@@ -8396,10 +9334,16 @@ definitions:
         items:
           $ref: '#/definitions/UpstreamRemoteModelResponse'
         type: array
+      snapshotID:
+        type: string
+      syncPlan:
+        $ref: '#/definitions/UpstreamModelSyncPlanResponse'
       total:
         type: integer
     required:
     - items
+    - snapshotID
+    - syncPlan
     - total
     type: object
   UpstreamRemoteModelsResponseDoc:
@@ -8495,18 +9439,27 @@ definitions:
         type: boolean
       kindsJSON:
         type: string
+      protected:
+        type: boolean
+      reactivated:
+        type: boolean
       status:
         type: string
       suggestedProtocol:
         type: string
+      updated:
+        type: boolean
       upstreamModelName:
         type: string
     required:
     - bindingCode
     - created
     - kindsJSON
+    - protected
+    - reactivated
     - status
     - suggestedProtocol
+    - updated
     - upstreamModelName
     type: object
   UsageDailyListResponseDoc:
@@ -9166,12 +10119,44 @@ definitions:
     - data
     - errorMsg
     type: object
+  UserDailyActivityItem:
+    properties:
+      date:
+        type: string
+      requestCount:
+        type: integer
+      tokenUsage:
+        type: integer
+    required:
+    - date
+    - requestCount
+    - tokenUsage
+    type: object
+  UserDailyActivityListResponseDoc:
+    properties:
+      data:
+        items:
+          $ref: '#/definitions/UserDailyActivityItem'
+        type: array
+      errorMsg:
+        type: string
+    required:
+    - data
+    - errorMsg
+    type: object
   UserDataResponse:
     properties:
       user:
         $ref: '#/definitions/AdminUserResponse'
     required:
     - user
+    type: object
+  UserErrorDoc:
+    properties:
+      errorMsg:
+        type: string
+    required:
+    - errorMsg
     type: object
   UserListResponseDoc:
     properties:
@@ -9333,11 +10318,41 @@ definitions:
     - title
     - trigger
     type: object
+  WriteUIComponentRequest:
+    properties:
+      description:
+        maxLength: 256
+        type: string
+      enabled:
+        type: boolean
+      name:
+        maxLength: 64
+        type: string
+      propsSchema:
+        maxLength: 16384
+        type: string
+      propsSummary:
+        maxLength: 1024
+        type: string
+      rendererSource:
+        maxLength: 262144
+        type: string
+      sortOrder:
+        type: integer
+      version:
+        minimum: 1
+        type: integer
+    required:
+    - description
+    - name
+    - propsSummary
+    - rendererSource
+    type: object
 info:
   contact: {}
   description: DEEIX Chat 后端 API 文档
   title: DEEIX Chat API
-  version: "0.3.6"
+  version: "0.4.4-beta.1"
 paths:
   /admin/announcements:
     get:
@@ -9854,7 +10869,9 @@ paths:
     get:
       consumes:
       - application/json
-      description: 从 storage 缓存读取 OpenRouter 模型定价；缓存不存在、过期或 refresh=true 时由后端刷新。
+      description: 从 storage 缓存读取 OpenRouter 模型标识、基础定价、输入 token 阶梯覆盖和上下文限制；无法映射到当前
+        token 计费模型的附加字段会在 unsupportedFields 中标记，快速配置会忽略这些字段并继续导入可识别的 token 价格。由原生工具计费负责的按次字段（例如
+        web_search）会被忽略。
       parameters:
       - description: 强制刷新缓存
         in: query
@@ -9877,7 +10894,7 @@ paths:
             $ref: '#/definitions/BillingErrorDoc'
       security:
       - BearerAuth: []
-      summary: 管理员获取 OpenRouter 官方模型定价
+      summary: 管理员获取 OpenRouter 官方模型目录
       tags:
       - admin-billing
   /admin/billing/plans/{id}:
@@ -10534,6 +11551,17 @@ paths:
         in: query
         name: q
         type: string
+      - description: 排序方式(default/name/created/updated/files)
+        in: query
+        name: sort
+        type: string
+      - collectionFormat: csv
+        description: 知识库ID
+        in: query
+        items:
+          type: string
+        name: id
+        type: array
       - description: 可用状态
         in: query
         name: enabled
@@ -10594,6 +11622,23 @@ paths:
       security:
       - BearerAuth: []
       summary: 删除内置知识库
+      tags:
+      - admin-knowledge-bases
+    get:
+      parameters:
+      - description: 知识库ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/KnowledgeBaseResponseDoc'
+      security:
+      - BearerAuth: []
+      summary: 查询内置知识库详情
       tags:
       - admin-knowledge-bases
     patch:
@@ -10772,6 +11817,84 @@ paths:
       summary: 获取内置知识库文件内容
       tags:
       - admin-knowledge-bases
+  /admin/knowledge-bases/{id}/files/processing/snapshot:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 知识库公开ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 当前页处理中或待确认的文件ID，最多100个，可为空
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/GetKnowledgeBaseFileProcessingSnapshotRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/KnowledgeBaseFileProcessingSnapshotResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/KnowledgebaseErrorDoc'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/KnowledgebaseErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 查询内置知识库处理快照
+      tags:
+      - admin-knowledge-bases
+  /admin/knowledge-bases/{id}/files/processing/statuses:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 知识库ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 文件ID，最多100个
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/GetKnowledgeBaseFileProcessingStatusesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/KnowledgeBaseFileProcessingStatusResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/KnowledgebaseErrorDoc'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/KnowledgebaseErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/KnowledgebaseErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 批量查询内置知识库文件处理状态
+      tags:
+      - admin-knowledge-bases
   /admin/knowledge-bases/files:
     get:
       description: 分页返回供内置知识库复用的全部平台资料
@@ -10906,6 +12029,42 @@ paths:
       security:
       - BearerAuth: []
       summary: 获取平台资料内容
+      tags:
+      - admin-knowledge-bases
+  /admin/knowledge-bases/files/embeddings:
+    post:
+      consumes:
+      - application/json
+      description: 为管理员选中的平台资料提交向量化任务，最多100个；重复提交会幂等跳过
+      parameters:
+      - description: 平台资料ID，最多100个
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/SubmitPlatformFileEmbeddingsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/KnowledgeBaseFileEmbeddingSubmissionResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/KnowledgebaseErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/KnowledgebaseErrorDoc'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/KnowledgebaseErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 批量提交平台资料向量化
       tags:
       - admin-knowledge-bases
   /admin/llm/icon-assets:
@@ -12516,7 +13675,7 @@ paths:
     get:
       consumes:
       - application/json
-      description: 调用上游 models 接口，仅返回可导入预览，不直接落库
+      description: 调用上游 models 接口，返回可导入模型与目录变更预览，不直接落库
       parameters:
       - description: 上游ID
         in: path
@@ -12555,13 +13714,21 @@ paths:
     post:
       consumes:
       - application/json
-      description: 调用上游 models 接口写入上游真实模型清单，不自动绑定平台模型
+      description: 调用上游 models 接口获取完整目录，原子更新远端管理模型可用状态，不删除平台模型或路由配置
       parameters:
       - description: 上游ID
         in: path
         name: id
         required: true
         type: integer
+      - description: 确认允许空模型目录对账
+        in: query
+        name: allow_empty
+        type: boolean
+      - description: 用户确认的远端目录快照标识
+        in: query
+        name: expected_snapshot
+        type: string
       produces:
       - application/json
       responses:
@@ -12575,6 +13742,10 @@ paths:
             $ref: '#/definitions/ChannelErrorDoc'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/ChannelErrorDoc'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/ChannelErrorDoc'
         "500":
@@ -13511,6 +14682,68 @@ paths:
       summary: 管理员更新内置提示词
       tags:
       - admin-prompt-presets
+  /admin/redemptions:
+    get:
+      consumes:
+      - application/json
+      description: 管理员分页查看兑换码兑换明细，含奖励内容与余额变动，已删除兑换码的历史仍可查询
+      parameters:
+      - description: 页码
+        in: query
+        name: page
+        type: integer
+      - description: 每页数量
+        in: query
+        name: page_size
+        type: integer
+      - description: 搜索兑换流水号、兑换码摘要、兑换码备注
+        in: query
+        name: query
+        type: string
+      - description: 兑换码ID
+        in: query
+        name: code_id
+        type: integer
+      - description: 用户ID
+        in: query
+        name: user_id
+        type: integer
+      - description: 奖励类型(balance/subscription)
+        in: query
+        name: reward_type
+        type: string
+      - description: 兑换时间起点(RFC3339)
+        in: query
+        name: created_from
+        type: string
+      - description: 兑换时间终点(RFC3339)
+        in: query
+        name: created_to
+        type: string
+      - description: 排序方式
+        in: query
+        name: sort
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/RedemptionRecordListResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/AdminErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/AdminErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 管理员查询兑换记录
+      tags:
+      - admin
   /admin/settings:
     get:
       description: 按 namespace 分组返回全部动态配置项
@@ -13586,13 +14819,19 @@ paths:
       - admin/settings
   /admin/settings/embedding/reindex:
     post:
+      description: include_empty=true 时同时重试提取无文本的 empty 文件，适用于更换 OCR 引擎后
+      parameters:
+      - description: 是否包含 empty 终态文件
+        in: query
+        name: include_empty
+        type: boolean
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/Envelope'
+            $ref: '#/definitions/EmbeddingReindexResponseDoc'
       security:
       - BearerAuth: []
       summary: 触发向量重建（重索引所有 stale/failed 文件）
@@ -13620,7 +14859,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/Envelope'
+            $ref: '#/definitions/EmbeddingIndexStatusResponseDoc'
       security:
       - BearerAuth: []
       summary: 查询向量索引健康状态
@@ -14083,6 +15322,164 @@ paths:
       summary: 管理员查询系统事件
       tags:
       - admin
+  /admin/ui-components:
+    get:
+      consumes:
+      - application/json
+      parameters:
+      - description: 搜索关键词
+        in: query
+        name: q
+        type: string
+      - description: 作用域：builtin 或 platform，留空为全部
+        in: query
+        name: scope
+        type: string
+      - description: 是否启用
+        in: query
+        name: enabled
+        type: boolean
+      - description: 页码
+        in: query
+        name: page
+        type: integer
+      - description: 每页数量
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/UIComponentPageResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 查询内置与平台组件
+      tags:
+      - admin/ui-components
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 组件内容
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/WriteUIComponentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/UIComponentResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 创建平台组件
+      tags:
+      - admin/ui-components
+  /admin/ui-components/{id}:
+    delete:
+      consumes:
+      - application/json
+      description: 内置组件受保护，不允许删除
+      parameters:
+      - description: 组件ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/UIComponentDeleteResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 删除平台组件
+      tags:
+      - admin/ui-components
+    patch:
+      consumes:
+      - application/json
+      description: 内置组件只允许修改启用状态、描述与排序
+      parameters:
+      - description: 组件ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 更新字段
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/PatchUIComponentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/UIComponentResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 更新内置或平台组件
+      tags:
+      - admin/ui-components
   /admin/usage-statistics:
     get:
       consumes:
@@ -14624,6 +16021,32 @@ paths:
       summary: 今日不再显示公告
       tags:
       - announcements
+  /auth/local/exchange:
+    post:
+      consumes:
+      - application/json
+      description: 仅在服务器以本地 sidecar 模式运行时可用；grant 由启动握手交给桌面壳，只能使用一次
+      parameters:
+      - description: 本地登录 grant
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/LocalGrantExchangeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/LoginResponseDoc'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/AuthErrorDoc'
+      summary: 本地模式：一次性 grant 换取会话
+      tags:
+      - auth
   /auth/login:
     post:
       consumes:
@@ -14649,6 +16072,10 @@ paths:
             $ref: '#/definitions/AuthErrorDoc'
         "401":
           description: Unauthorized
+          schema:
+            $ref: '#/definitions/AuthErrorDoc'
+        "423":
+          description: Locked
           schema:
             $ref: '#/definitions/AuthErrorDoc'
         "429":
@@ -14846,6 +16273,10 @@ paths:
             $ref: '#/definitions/AuthErrorDoc'
         "409":
           description: Conflict
+          schema:
+            $ref: '#/definitions/AuthErrorDoc'
+        "423":
+          description: Locked
           schema:
             $ref: '#/definitions/AuthErrorDoc'
       summary: 兑换第三方登录一次性授权码
@@ -15573,7 +17004,7 @@ paths:
         in: query
         name: after
         type: integer
-      - description: 是否返回可替换当前正文的权威文本快照
+      - description: 是否返回正文与当前思考轮次的权威内容快照
         in: query
         name: snapshot
         type: boolean
@@ -15591,6 +17022,100 @@ paths:
       security:
       - BearerAuth: []
       summary: 恢复流式生成订阅
+      tags:
+      - chat
+  /conversation-runs/{run_id}/tool-calls/{tool_call_id}:
+    get:
+      consumes:
+      - application/json
+      description: 查询当前用户指定会话运行内的持久化工具调用结果；超限字段仅返回原始大小与省略标记
+      parameters:
+      - description: 运行 ID
+        in: path
+        name: run_id
+        required: true
+        type: string
+      - description: 工具调用 ID
+        in: path
+        name: tool_call_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/ConversationToolCallDetailResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 查询工具调用结果详情
+      tags:
+      - chat
+  /conversation-runs/statuses:
+    post:
+      consumes:
+      - application/json
+      description: 按运行 ID 一次查询当前用户多个会话任务的最小状态快照
+      parameters:
+      - description: 运行ID，最多100个
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/GetConversationRunStatusesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/ConversationRunStatusResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 批量查询会话运行状态
+      tags:
+      - chat
+  /conversation-runs/stream:
+    get:
+      description: Sends an authoritative snapshot followed by live user-scoped run
+        state events; the snapshot is re-sent periodically for client-side reconciliation
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/ActiveMessageGenerationEventResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: Stream active conversation generations
       tags:
       - chat
   /conversations:
@@ -15976,6 +17501,10 @@ paths:
           description: Not Found
           schema:
             $ref: '#/definitions/ConversationErrorDoc'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
         "500":
           description: Internal Server Error
           schema:
@@ -15985,11 +17514,55 @@ paths:
       summary: 发送消息
       tags:
       - chat
+  /conversations/{id}/messages/{message_id}:
+    delete:
+      consumes:
+      - application/json
+      description: 删除会话中任意位置的一条消息；其子消息将重接到被删消息的父消息上，后续消息保留并向前衔接。会话第一条消息与生成中的消息不允许删除
+      parameters:
+      - description: 会话 public_id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 消息 public_id
+        in: path
+        name: message_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/MessageDeleteResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 删除指定消息
+      tags:
+      - chat
   /conversations/{id}/messages/{message_id}/fork:
     post:
       consumes:
       - application/json
-      description: 将会话从开头到指定消息（含）的祖先链复制为一个新会话；不携带原会话的运行记录与计费，附件以引用方式复用
+      description: 仅允许从助手消息 fork；将会话从开头到指定助手消息（含）的祖先链复制为一个新会话，保留历史展示轨迹；不携带原会话的运行记录与计费，附件以引用方式复用
       parameters:
       - description: 会话 public_id
         in: path
@@ -16796,6 +18369,76 @@ paths:
       summary: 获取文件内容
       tags:
       - chat
+  /files/embeddings:
+    post:
+      consumes:
+      - application/json
+      description: 为当前用户已完成文本提取的文件提交向量化任务，最多100个；重复提交会幂等跳过
+      parameters:
+      - description: 文件ID，最多100个
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/SubmitFileEmbeddingsRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/FileEmbeddingSubmissionResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 批量提交指定文件向量化
+      tags:
+      - chat
+  /files/processing/statuses:
+    post:
+      consumes:
+      - application/json
+      description: 一次查询当前用户多个文件的处理状态
+      parameters:
+      - description: 文件ID，最多100个
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/GetFileProcessingStatusesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/FileProcessingStatusResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 批量查询文件处理状态
+      tags:
+      - chat
   /knowledge-bases:
     get:
       parameters:
@@ -16803,6 +18446,17 @@ paths:
         in: query
         name: q
         type: string
+      - description: 排序方式(default/name/created/updated/files)
+        in: query
+        name: sort
+        type: string
+      - collectionFormat: csv
+        description: 知识库ID
+        in: query
+        items:
+          type: string
+        name: id
+        type: array
       - description: 页码
         in: query
         name: page
@@ -16903,6 +18557,84 @@ paths:
       summary: 获取知识库文件内容
       tags:
       - knowledge-bases
+  /knowledge-bases/{id}/files/processing/snapshot:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 知识库公开ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 当前页处理中或待确认的文件ID，最多100个，可为空
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/GetKnowledgeBaseFileProcessingSnapshotRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/KnowledgeBaseFileProcessingSnapshotResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/KnowledgebaseErrorDoc'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/KnowledgebaseErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 查询当前用户可见知识库处理快照
+      tags:
+      - knowledge-bases
+  /knowledge-bases/{id}/files/processing/statuses:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 知识库ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 文件ID，最多100个
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/GetKnowledgeBaseFileProcessingStatusesRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/KnowledgeBaseFileProcessingStatusResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/KnowledgebaseErrorDoc'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/KnowledgebaseErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/KnowledgebaseErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 批量查询知识库文件处理状态
+      tags:
+      - knowledge-bases
   /knowledge-bases/mine:
     get:
       parameters:
@@ -16910,6 +18642,17 @@ paths:
         in: query
         name: q
         type: string
+      - description: 排序方式(default/name/created/updated/files)
+        in: query
+        name: sort
+        type: string
+      - collectionFormat: csv
+        description: 知识库ID
+        in: query
+        items:
+          type: string
+        name: id
+        type: array
       - description: 可用状态
         in: query
         name: enabled
@@ -17715,6 +19458,20 @@ paths:
       summary: 查询聊天上下文策略
       tags:
       - settings
+  /settings/feature-policy:
+    get:
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/Envelope'
+      security:
+      - BearerAuth: []
+      summary: 查询用户侧功能开关策略
+      tags:
+      - settings
   /settings/login-page:
     get:
       produces:
@@ -18135,6 +19892,7 @@ paths:
       summary: 更新我的自定义技能
       tags:
       - skills
+<<<<<<< HEAD
   /skills/mine/{id}/package:
     post:
       consumes:
@@ -18142,21 +19900,171 @@ paths:
       description: 用新的 zip 覆盖当前用户包技能的文件与元数据
       parameters:
       - description: 技能ID
-        in: path
-        name: id
+=======
+  /temporary-chat/messages/stream:
+    post:
+      consumes:
+      - application/json
+      - multipart/form-data
+      description: 由浏览器提交完整上下文和可选请求级附件；服务端不创建会话、消息、运行、文件或断线续传记录
+      parameters:
+      - description: 临时对话参数
+        in: body
+        name: body
         required: true
+        schema:
+          $ref: '#/definitions/TemporaryChatMessageRequest'
+      produces:
+      - application/x-ndjson
+      responses:
+        "200":
+          description: NDJSON stream
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 流式发送临时对话消息
+      tags:
+      - chat
+  /ui-components:
+    get:
+      consumes:
+      - application/json
+      description: 返回已启用的内置、平台组件与当前用户自定义组件，含渲染源，用于会话勾选与消息渲染
+      parameters:
+      - description: 搜索关键词
+        in: query
+        name: q
+        type: string
+      - description: 页码
+        in: query
+        name: page
         type: integer
-      - description: 技能包 zip 文件
-        in: formData
-        name: file
-        required: true
-        type: file
+      - description: 每页数量
+        in: query
+        name: page_size
+        type: integer
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
+            $ref: '#/definitions/UIComponentPageResponseDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 查询当前用户可用的交互式组件
+      tags:
+      - ui-components
+  /ui-components/mine:
+    get:
+      consumes:
+      - application/json
+      parameters:
+      - description: 搜索关键词
+        in: query
+        name: q
+        type: string
+      - description: 是否启用
+        in: query
+        name: enabled
+        type: boolean
+      - description: 页码
+        in: query
+        name: page
+        type: integer
+      - description: 每页数量
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/UIComponentPageResponseDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 查询我的自定义组件
+      tags:
+      - ui-components
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 组件内容
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/WriteUIComponentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/UIComponentResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 创建我的自定义组件
+      tags:
+      - ui-components
+  /ui-components/mine/{id}:
+    delete:
+      consumes:
+      - application/json
+      parameters:
+      - description: 组件ID
+>>>>>>> upstream/dev
+        in: path
+        name: id
+        required: true
+        type: integer
+<<<<<<< HEAD
+      - description: 技能包 zip 文件
+        in: formData
+        name: file
+        required: true
+        type: file
+=======
+>>>>>>> upstream/dev
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+<<<<<<< HEAD
             $ref: '#/definitions/SkillResponseDoc'
         "400":
           description: Bad Request
@@ -18190,12 +20098,48 @@ paths:
         name: file
         required: true
         type: file
+=======
+            $ref: '#/definitions/UIComponentDeleteResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 删除我的自定义组件
+      tags:
+      - ui-components
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: 组件ID
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: 更新字段
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/PatchUIComponentRequest'
+>>>>>>> upstream/dev
       produces:
       - application/json
       responses:
         "200":
           description: OK
           schema:
+<<<<<<< HEAD
             $ref: '#/definitions/SkillResponseDoc'
         "400":
           description: Bad Request
@@ -18245,6 +20189,30 @@ paths:
       summary: 解析我的技能包（zip 预览）
       tags:
       - skills
+=======
+            $ref: '#/definitions/UIComponentResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/UicomponentErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 更新我的自定义组件
+      tags:
+      - ui-components
+>>>>>>> upstream/dev
   /user/settings:
     get:
       description: 返回当前用户全部个人偏好配置，缺失项以默认值填充
@@ -18295,6 +20263,36 @@ paths:
       summary: 更新当前用户的配置
       tags:
       - user/settings
+  /user/stats/activity:
+    get:
+      consumes:
+      - application/json
+      description: 查询当前用户按计费归属日聚合的模型请求数与 token 消耗，逐日补零
+      parameters:
+      - description: 统计天数(默认365，最大366)
+        in: query
+        name: days
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/UserDailyActivityListResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/UserErrorDoc'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/UserErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 查询每日活跃度
+      tags:
+      - user
 securityDefinitions:
   BearerAuth:
     in: header

@@ -2,17 +2,19 @@ package conversation
 
 import (
 	"context"
+	domainuicomponent "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/uicomponent"
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
 type messageRoutePromptInput struct {
 	UserContent              string
 	ProjectSystemPrompt      string
 	HTMLVisualPromptEnabled  bool
+	UIComponents             []domainuicomponent.Component
 	ReasoningContentPassback bool
 	DomainMessages           []model.Message
 	StableAttachments        []AttachmentInput
@@ -25,12 +27,12 @@ type messageRoutePromptInput struct {
 }
 
 func withMessageRouteReasoningPassbackOptions(
-	options map[string]interface{},
-	inputOptions map[string]interface{},
+	options map[string]any,
+	inputOptions map[string]any,
 	route *channel.ResolvedRoute,
 	reasoningContentPassback bool,
 	messages []llm.Message,
-) map[string]interface{} {
+) map[string]any {
 	if route == nil || !shouldApplyReasoningPassbackRequestOptions(
 		reasoningContentPassback,
 		route.ReasoningPassbackRequestOptions,
@@ -46,13 +48,24 @@ func withMessageRouteReasoningPassbackOptions(
 	)
 }
 
+// planRoutePrompt 按路由决定推理内容是否回传后构建提示词；路由故障转移时对新路由重新规划。
+// 返回值中的 bool 是该路由生效的推理回传开关。
+func (s *Service) planRoutePrompt(
+	ctx context.Context,
+	userID uint,
+	base messageRoutePromptInput,
+	route *channel.ResolvedRoute,
+) (PromptPlan, bool, error) {
+	passbackEnabled := s.reasoningContentPassbackEnabled(ctx, userID, route)
+	base.ReasoningContentPassback = passbackEnabled
+	plan, err := s.buildMessageRoutePrompt(ctx, route, base)
+	return plan, passbackEnabled, err
+}
+
 func (s *Service) buildMessageRoutePrompt(ctx context.Context, route *channel.ResolvedRoute, input messageRoutePromptInput) (PromptPlan, error) {
-	routeMessages := s.applyContextTokenBudget(
-		input.DomainMessages,
-		route.UpstreamModel,
-		route.ModelCapabilitiesJSON,
-		input.ReasoningContentPassback,
-	)
+	// 模型上下文预算在最终 GenerateInput 完整组装后统一执行。这里保留完整活跃
+	// 分支，避免先按历史消息耗尽预算，再遗漏文件、RAG、Skill 与工具定义开销。
+	routeMessages := input.DomainMessages
 	historyMessages := historyMessagesFromDomain(routeMessages, historyMessageOptions{
 		ReasoningContentPassback: input.ReasoningContentPassback,
 	})
@@ -63,12 +76,16 @@ func (s *Service) buildMessageRoutePrompt(ctx context.Context, route *channel.Re
 			return PromptPlan{}, err
 		}
 	}
+	// 图片注入按「过滤后的历史下标」对齐，必须在注入之后合并，避免下标错位。
+	historyMessages = mergeConsecutiveSameRoleMessages(historyMessages)
 	if len(historyMessages) == 0 {
 		historyMessages = append(historyMessages, llm.Message{Role: "user", Content: input.UserContent})
 	}
 
-	assembler := NewContextAssembler(int64(input.Config.ContextMaxInputTokens))
-	systemPrompt := resolveMessageSystemPromptInjection(input.Config, route, input.ProjectSystemPrompt, input.HTMLVisualPromptEnabled)
+	// ContextAssembler 只负责稳定的槽位排序与去重；最终模型窗口由完整请求预算器
+	// 统一约束，避免旧的固定 32K 上限提前丢弃偏好等系统上下文。
+	assembler := NewContextAssembler(0)
+	systemPrompt := resolveMessageSystemPromptInjection(input.Config, route, input.ProjectSystemPrompt, requestPromptOptions{HTMLVisual: input.HTMLVisualPromptEnabled, UIComponents: input.UIComponents})
 	if systemPrompt.Content != "" {
 		if systemPrompt.InlineToUser {
 			historyMessages = inlineSystemPromptIntoLatestUserMessage(historyMessages, systemPrompt.Content)

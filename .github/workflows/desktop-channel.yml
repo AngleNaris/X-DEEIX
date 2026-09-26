@@ -1,0 +1,32 @@
+name: Desktop Channel
+
+# Keeps the rolling `desktop-beta` updater manifest current.
+#
+# Stable installs poll GitHub's `releases/latest/download/latest.json`, which the
+# platform resolves to the newest published non-prerelease release — nothing to
+# do. Beta installs poll `releases/download/desktop-beta/latest.json`, a rolling
+# tag GitHub cannot resolve on its own, so when a release is published this
+# workflow copies its signed `latest.json` there. Desktop Release runs the same
+# script after building, which covers releases that were published before
+# their assets existed (tag created from the Releases page).
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-beta-manifest:
+    name: Refresh beta manifest
+    # The rolling tag is itself a prerelease; do not recurse when it gets (re)published.
+    if: github.event.release.tag_name != 'desktop-beta'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Refresh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: bash apps/desktop/scripts/refresh-beta-manifest.sh "${{ github.event.release.tag_name }}"

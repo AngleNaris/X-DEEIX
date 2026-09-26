@@ -1,6 +1,26 @@
 package usersettings
 
-import "testing"
+import (
+	"errors"
+	"testing"
+
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
+)
+
+func TestSettingValidationErrorKeepsStablePublicContract(t *testing.T) {
+	t.Parallel()
+
+	err := settingValidationError(ErrInvalidSettingValue, "invalid value for chat.content_width")
+	if !errors.Is(err, ErrInvalidSettingValue) {
+		t.Fatal("validation error must preserve sentinel identity")
+	}
+	if code := apperr.Code(err); code != ErrInvalidSettingValue.Code() {
+		t.Fatalf("code = %q, want %q", code, ErrInvalidSettingValue.Code())
+	}
+	if message := apperr.MessageOr(err, ""); message != ErrInvalidSettingValue.Message() {
+		t.Fatalf("message = %q, want %q", message, ErrInvalidSettingValue.Message())
+	}
+}
 
 func TestValidateDefaultMCPToolIDs(t *testing.T) {
 	t.Parallel()
@@ -104,5 +124,27 @@ func TestAutoGenerateLabelsSettingIsAllowed(t *testing.T) {
 	}
 	if err := validateValue("chat.auto_generate_labels", "yes"); err == nil {
 		t.Fatal("expected invalid chat.auto_generate_labels to be rejected")
+	}
+}
+
+func TestTraceAutoExpandSettingsAreAllowed(t *testing.T) {
+	t.Parallel()
+
+	keys := []string{
+		"chat.auto_expand_thinking",
+		"chat.auto_expand_tool_calls",
+	}
+	for _, key := range keys {
+		if got := allowedKeys[key]; got != "true" {
+			t.Fatalf("expected %s default to be true, got %q", key, got)
+		}
+		for _, value := range []string{"true", "false"} {
+			if err := validateValue(key, value); err != nil {
+				t.Fatalf("expected %s=%s to be accepted, got %v", key, value, err)
+			}
+		}
+		if err := validateValue(key, "yes"); err == nil {
+			t.Fatalf("expected invalid %s to be rejected", key)
+		}
 	}
 }

@@ -3,13 +3,15 @@ package conversation
 import (
 	"context"
 	"fmt"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
 	"strings"
 
 	appstorage "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/objectstorage"
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	domainskill "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/skill"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/tokenestimate"
 )
 
 // PromptBlockKind 标识 PromptPlan 中每一类上下文块。
@@ -53,6 +55,21 @@ type PromptTrace struct {
 type PromptPlan struct {
 	Messages []llm.Message
 	Trace    PromptTrace
+}
+
+// applyMessages 让规划结果与最终发送消息保持一致。预算裁剪只会删除历史轮次，
+// 因此需要同步更新对话块与总量，避免诊断信息继续展示裁剪前的 Prompt。
+func (p *PromptPlan) applyMessages(messages []llm.Message) {
+	p.Messages = cloneLLMMessages(messages)
+	p.Trace.TotalTokenEstimate = estimatePromptTokens(messages)
+	for index := range p.Trace.Blocks {
+		if p.Trace.Blocks[index].Kind != PromptBlockTranscript {
+			continue
+		}
+		p.Trace.Blocks[index].TokenEstimate = estimateTranscriptTokens(messages)
+		p.Trace.Blocks[index].SourceCount = countMessagesByRole(messages, "user") + countMessagesByRole(messages, "assistant")
+		break
+	}
 }
 
 type promptPlanInput struct {
@@ -247,7 +264,7 @@ func stableAttachmentSourceRefs(attachments []AttachmentInput, currentArtifacts 
 		}
 		sourceID := stableAttachmentSourceID(att)
 		if artifact, ok := fallbackArtifacts[fallbackFileSourceID(att)]; ok {
-			refs = appendPromptSourceRefWithArtifactID(refs, string(domainconversation.ContextArtifactFileRAGFallback), sourceID, firstNonEmptyString(att.FileName, artifact.SourceTitle), artifact.ID)
+			refs = appendPromptSourceRefWithArtifactID(refs, string(domainconversation.ContextArtifactFileRAGFallback), sourceID, textutil.FirstNonEmpty(att.FileName, artifact.SourceTitle), artifact.ID)
 			continue
 		}
 		refs = appendPromptSourceRef(refs, "file_full", sourceID, att.FileName)
@@ -389,7 +406,7 @@ func estimateContextArtifactsTokens(artifacts []domainconversation.ContextArtifa
 			total += artifact.TokenEstimate
 			continue
 		}
-		total += estimateTokens(artifact.Content)
+		total += tokenestimate.Estimate(artifact.Content)
 	}
 	return total
 }

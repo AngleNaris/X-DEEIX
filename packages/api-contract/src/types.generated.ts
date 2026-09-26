@@ -11,6 +11,18 @@
  * ---------------------------------------------------------------
  */
 
+export interface ActiveMessageGenerationEventResponse {
+  conversationPublicID?: string;
+  runID?: string;
+  runs?: ActiveMessageGenerationResponse[];
+  type: string;
+}
+
+export interface ActiveMessageGenerationResponse {
+  conversationPublicID: string;
+  runID: string;
+}
+
 export interface ActiveSessionListResponse {
   results: ActiveSessionResponse[];
   total: number;
@@ -428,6 +440,8 @@ export interface BillingOverviewResponse {
   periodUsedUSD: number;
   plan: BillingPlanResponse | null;
   subscriptionEntitlements: SubscriptionEntitlementResponse[];
+  totalSpentNanousd: number;
+  totalSpentUSD: number;
 }
 
 export interface BillingOverviewResponseDoc {
@@ -442,7 +456,6 @@ export interface BillingPlanDataResponse {
 export interface BillingPlanResponse {
   code: string;
   description: string;
-  discountPercent: number;
   featureJSON: string;
   id: number;
   isActive: boolean;
@@ -829,14 +842,20 @@ export interface ConversationEventResponse {
   createdAt: string;
   endedAt: string | null;
   errorJSON: string;
+  errorOmitted: boolean;
+  errorSizeBytes: number;
   eventID: string;
   eventScope: string;
   eventType: string;
   id: number;
   inputJSON: string;
+  inputOmitted: boolean;
+  inputSizeBytes: number;
   latencyMS: number;
   messageID: number;
   outputJSON: string;
+  outputOmitted: boolean;
+  outputSizeBytes: number;
   parentEventID: string;
   payloadJSON: string;
   payloadOmitted: boolean;
@@ -917,6 +936,7 @@ export interface ConversationProjectResponse {
   createdAt: string;
   defaultKnowledgeBaseIDs: string[];
   defaultMCPToolIDs: number[];
+  defaultModel: string;
   defaultSkillIDs: number[];
   description: string;
   icon: string;
@@ -967,6 +987,11 @@ export interface ConversationRunListResponseDoc {
   errorMsg: string;
 }
 
+export interface ConversationRunStatusResponse {
+  runID: string;
+  status: string;
+}
+
 export interface ConversationSearchListResponseDoc {
   data: ConversationSearchPageResponse;
   errorMsg: string;
@@ -1003,6 +1028,24 @@ export interface ConversationShareResponse {
 
 export interface ConversationShareResponseDoc {
   data: ConversationShareResponse;
+  errorMsg: string;
+}
+
+export interface ConversationToolCallDetailResponse {
+  errorJSON: string;
+  errorOmitted: boolean;
+  errorSizeBytes: number;
+  outputJSON: string;
+  outputOmitted: boolean;
+  outputSizeBytes: number;
+  runID: string;
+  status: string;
+  toolCallID: string;
+  toolName: string;
+}
+
+export interface ConversationToolCallDetailResponseDoc {
+  data: ConversationToolCallDetailResponse;
   errorMsg: string;
 }
 
@@ -1057,6 +1100,8 @@ export interface CreateConversationProjectRequest {
   defaultKnowledgeBaseIDs: string[];
   /** @maxItems 128 */
   defaultMCPToolIDs?: number[];
+  /** @maxLength 128 */
+  defaultModel?: string;
   /** @maxItems 128 */
   defaultSkillIDs?: number[];
   /** @maxLength 255 */
@@ -1365,12 +1410,53 @@ export interface EmailVerificationStartResponseDoc {
   errorMsg: string;
 }
 
+export interface EmbeddingIndexStatusResponse {
+  /** EmptyCount 是提取完成但无文本的文件数；这些文件不参与自动重建。 */
+  emptyCount: number;
+  failedCount: number;
+  modelSignature: string;
+  needsReindex: boolean;
+  pendingCount: number;
+  readyCount: number;
+  staleCount: number;
+}
+
+export interface EmbeddingIndexStatusResponseDoc {
+  data: EmbeddingIndexStatusResponse;
+  errorMsg: string;
+}
+
+export interface EmbeddingReindexResponse {
+  message: string;
+  submitted: number;
+}
+
+export interface EmbeddingReindexResponseDoc {
+  data: EmbeddingReindexResponse;
+  errorMsg: string;
+}
+
 export interface Envelope {
   data: any;
   details?: any;
   errorCode?: string;
   errorMsg: string;
   requestId?: string;
+}
+
+export interface FileEmbeddingSkipResponse {
+  fileID: string;
+  reason: string;
+}
+
+export interface FileEmbeddingSubmissionResponse {
+  skipped: FileEmbeddingSkipResponse[];
+  submittedFileIDs: string[];
+}
+
+export interface FileEmbeddingSubmissionResponseDoc {
+  data: FileEmbeddingSubmissionResponse;
+  errorMsg: string;
 }
 
 export interface FileListResponse {
@@ -1386,6 +1472,7 @@ export interface FileListResponseDoc {
 
 export interface FileObjectResponse {
   sha256: string;
+  canVectorize: boolean;
   chunkCount: number;
   createdAt: string;
   detectedMIME: string;
@@ -1408,6 +1495,32 @@ export interface FileObjectResponse {
   sizeBytes: number;
   status: string;
   updatedAt: string;
+  vectorizationReason: string;
+}
+
+export interface FileProcessingStatusResponse {
+  canVectorize: boolean;
+  chunkCount: number;
+  completedAt: string | null;
+  detectedMIME: string;
+  embedError: string;
+  embedStatus: string;
+  errorCode: string;
+  errorMessage: string;
+  extractChars: number;
+  extractPages: number;
+  extractStatus: string;
+  fileCategory: string;
+  fileID: string;
+  ocrUsed: boolean;
+  previewText: string;
+  processingReady: boolean;
+  processingStatus: string;
+  ragReady: boolean;
+  ragReason: string;
+  startedAt: string | null;
+  updatedAt: string;
+  vectorizationReason: string;
 }
 
 export interface FileUpdateResponseDoc {
@@ -1419,6 +1532,35 @@ export interface FileUploadResponse {
   file: FileObjectResponse;
   quota: StorageQuotaResponse;
   reused: boolean;
+}
+
+export interface GetConversationRunStatusesRequest {
+  /**
+   * @maxItems 100
+   * @minItems 1
+   */
+  runIDs: string[];
+}
+
+export interface GetFileProcessingStatusesRequest {
+  /**
+   * @maxItems 100
+   * @minItems 1
+   */
+  fileIDs: string[];
+}
+
+export interface GetKnowledgeBaseFileProcessingSnapshotRequest {
+  /** @maxItems 100 */
+  fileIDs: string[];
+}
+
+export interface GetKnowledgeBaseFileProcessingStatusesRequest {
+  /**
+   * @maxItems 100
+   * @minItems 1
+   */
+  fileIDs: string[];
 }
 
 export interface GroupModelsResponse {
@@ -1595,6 +1737,21 @@ export interface KnowledgeBaseFileDataResponse {
   file: KnowledgeBaseFileResponse;
 }
 
+export interface KnowledgeBaseFileEmbeddingSkipResponse {
+  fileID: string;
+  reason: string;
+}
+
+export interface KnowledgeBaseFileEmbeddingSubmissionResponse {
+  skipped: KnowledgeBaseFileEmbeddingSkipResponse[];
+  submittedFileIDs: string[];
+}
+
+export interface KnowledgeBaseFileEmbeddingSubmissionResponseDoc {
+  data: KnowledgeBaseFileEmbeddingSubmissionResponse;
+  errorMsg: string;
+}
+
 export interface KnowledgeBaseFileMutationDataResponse {
   updated: boolean;
 }
@@ -1612,20 +1769,47 @@ export interface KnowledgeBaseFilePageResponseDoc {
   errorMsg: string;
 }
 
+export interface KnowledgeBaseFileProcessingSnapshotResponse {
+  knowledgeBase: KnowledgeBaseResponse;
+  statuses: KnowledgeBaseFileProcessingStatusResponse[];
+}
+
+export interface KnowledgeBaseFileProcessingStatusResponse {
+  canVectorize: boolean;
+  chunkCount: number;
+  detectedMIME: string;
+  embedError: string;
+  embedStatus: string;
+  extractStatus: string;
+  fileCategory: string;
+  fileID: string;
+  processing: boolean;
+  processingReady: boolean;
+  processingStatus: string;
+  ragOptOut: boolean;
+  updatedAt: string;
+  vectorizationReason: string;
+}
+
 export interface KnowledgeBaseFileResponse {
+  canVectorize: boolean;
   chunkCount: number;
   createdAt: string;
   detectedMIME: string;
+  embedError: string;
   embedStatus: string;
+  extractStatus: string;
   fileCategory: string;
   fileID: string;
   fileName: string;
   mimeType: string;
+  processing: boolean;
   processingReady: boolean;
   processingStatus: string;
   ragOptOut: boolean;
   sizeBytes: number;
   updatedAt: string;
+  vectorizationReason: string;
 }
 
 export interface KnowledgeBaseFileResponseDoc {
@@ -1647,6 +1831,7 @@ export interface KnowledgeBaseResponse {
   enabled: boolean;
   fileCount: number;
   name: string;
+  processingFileCount: number;
   publicID: string;
   readyFileCount: number;
   revision: number;
@@ -1662,6 +1847,10 @@ export interface KnowledgeBaseResponseDoc {
 
 export interface KnowledgebaseErrorDoc {
   errorMsg: string;
+}
+
+export interface LocalGrantExchangeRequest {
+  grant: string;
 }
 
 export interface LoginOptionsResponse {
@@ -1698,6 +1887,11 @@ export interface LoginResponse {
   accessToken: string;
   expiresAt: string;
   refreshExpiresAt: string;
+  /**
+   * RefreshToken 仅在原生客户端（X-Client-Platform: desktop|mobile）请求时填充，
+   * 由客户端存入系统 keychain / SecureStore；浏览器响应中始终为空。
+   */
+  refreshToken?: string;
   sessionID: string;
   twoFactorChallengeToken?: string;
   twoFactorRequired: boolean;
@@ -1762,6 +1956,16 @@ export interface MessageBillingCostResponse {
   billedUSD: number;
   billingMode: string;
   pricingSnapshotJSON: string;
+}
+
+export interface MessageDeleteResponse {
+  deleted: boolean;
+  reparentedMessageCount: number;
+}
+
+export interface MessageDeleteResponseDoc {
+  data: MessageDeleteResponse;
+  errorMsg: string;
 }
 
 export interface MessageFeedbackResponse {
@@ -1892,6 +2096,7 @@ export interface MessageTraceBlockResponse {
   payloadJSON?: string;
   roundID?: string;
   stage?: string;
+  startedAt?: string;
   status: string;
   summary: string;
   title: string;
@@ -2031,6 +2236,7 @@ export interface ModelPricingResponse {
   cacheReadNanousdPerMTokens: number;
   cacheReadUSDPerMTokens: number;
   cacheWriteNanousdPerMTokens: number;
+  cacheWritePriceBasis?: "direct" | "anthropic_5m";
   cacheWriteUSDPerMTokens: number;
   callNanousdPerCall: number;
   callUSDPerCall: number;
@@ -2048,6 +2254,7 @@ export interface ModelPricingResponse {
   outputUSDPerMTokens: number;
   platformModelName: string;
   pricingMode: string;
+  schedulePricingJSON: string;
   tieredPricingJSON: string;
   updatedAt: string;
 }
@@ -2125,6 +2332,7 @@ export interface ModelResponse {
   cbFailureThreshold: number;
   cbPolicyMode: string;
   cbWindowMin: number;
+  contextWindow: number;
   createdAt: string;
   description: string;
   displayGroupID: number | null;
@@ -2263,9 +2471,19 @@ export interface OpenRouterOfficialPricingDataResponse {
 
 export interface OpenRouterOfficialPricingItemResponse {
   canonicalSlug: string;
+  contextLength: number;
   id: string;
+  maxCompletionTokens: number;
   name: string;
   pricing: OpenRouterOfficialPricingUnitPricingResponse;
+}
+
+export interface OpenRouterOfficialPricingOverrideResponse {
+  completion: string;
+  inputCacheRead: string;
+  inputCacheWrite: string;
+  minPromptTokens: number;
+  prompt: string;
 }
 
 export interface OpenRouterOfficialPricingResponseDoc {
@@ -2274,10 +2492,13 @@ export interface OpenRouterOfficialPricingResponseDoc {
 }
 
 export interface OpenRouterOfficialPricingUnitPricingResponse {
+  cacheWritePriceBasis: "direct" | "anthropic_5m";
   completion: string;
   inputCacheRead: string;
   inputCacheWrite: string;
+  overrides?: OpenRouterOfficialPricingOverrideResponse[];
   prompt: string;
+  unsupportedFields?: string[];
 }
 
 export interface PackageFileResponse {
@@ -2430,6 +2651,23 @@ export interface PatchSkillRequest {
   title?: string;
   /** @maxLength 64 */
   trigger?: string;
+}
+
+export interface PatchUIComponentRequest {
+  /** @maxLength 256 */
+  description?: string;
+  enabled?: boolean;
+  /** @maxLength 64 */
+  name?: string;
+  /** @maxLength 16384 */
+  propsSchema?: string;
+  /** @maxLength 1024 */
+  propsSummary?: string;
+  /** @maxLength 262144 */
+  rendererSource?: string;
+  sortOrder?: number;
+  /** @min 1 */
+  version?: number;
 }
 
 export interface PatchUserRequest {
@@ -2681,6 +2919,8 @@ export interface PublicModelListResponseDoc {
 }
 
 export interface PublicModelPricingResponse {
+  cacheWrite1hMultiplier: number;
+  cacheWrite5mMultiplier: number;
   cacheReadUSDPerMTokens: number;
   cacheWriteUSDPerMTokens: number;
   callUSDPerCall: number;
@@ -2690,6 +2930,9 @@ export interface PublicModelPricingResponse {
   isFree: boolean;
   mode: string;
   outputUSDPerMTokens: number;
+  /** 时段倍率按服务器本地时区定义；客户端用 scheduleUTCOffsetMinutes 判断当前命中的时段。 */
+  schedulePeriods: PublicSchedulePeriodResponse[];
+  scheduleUTCOffsetMinutes: number;
   tiers: PublicModelPricingTierResponse[];
 }
 
@@ -2719,6 +2962,14 @@ export interface PublicModelResponse {
   vendorName: string;
 }
 
+export interface PublicSchedulePeriodResponse {
+  end: string;
+  name: string;
+  ratePercent: number;
+  start: string;
+  weekdays: number[];
+}
+
 export interface PublicSharedConversationResponse {
   createdAt: string;
   defaultMessagePublicIDs: string[];
@@ -2727,6 +2978,8 @@ export interface PublicSharedConversationResponse {
   model: string;
   shareID: string;
   title: string;
+  /** UIComponentsEnabled 为 false 时，分享页不渲染 deeix-ui 组件块。 */
+  uiComponentsEnabled: boolean;
 }
 
 export interface PublicSharedConversationResponseDoc {
@@ -2841,6 +3094,40 @@ export interface RedemptionCodeResponse {
 export interface RedemptionCodeResponseDoc {
   data: RedemptionCodeDataResponse;
   errorMsg: string;
+}
+
+export interface RedemptionRecordListResponseDoc {
+  data: {
+    results: RedemptionRecordResponse[];
+    total: number;
+  };
+  errorMsg: string;
+}
+
+export interface RedemptionRecordResponse {
+  balanceAfterNanousd: number | null;
+  /** BalanceBeforeNanousd / BalanceAfterNanousd 来自余额流水；订阅类兑换无流水时为 null。 */
+  balanceBeforeNanousd: number | null;
+  codeDescription: string;
+  codeHint: string;
+  codeID: number;
+  codeStatus: string;
+  createdAt: string;
+  creditNanousd: number;
+  creditUSD: number;
+  durationDays: number;
+  id: number;
+  mode: string;
+  planID: number;
+  planName: string;
+  refNo: string;
+  rewardType: string;
+  snapshotJSON: string;
+  subscriptionID: number;
+  userDisplayName: string;
+  userID: number;
+  userLabel: string;
+  username: string;
 }
 
 export interface RedemptionResponse {
@@ -2997,6 +3284,11 @@ export interface SendMessageRequest {
   skillIDs?: number[];
   /** @maxLength 32 */
   sourceMessagePublicID?: string;
+  /**
+   * UIComponentIDs 是本次会话勾选的交互式组件；后端据此注入组件目录提示词，不可见的 ID 被忽略。
+   * @maxItems 32
+   */
+  uiComponentIDs?: number[];
 }
 
 export interface SendMessageResponse {
@@ -3219,6 +3511,22 @@ export interface StorageQuotaResponse {
   userID: number;
 }
 
+export interface SubmitFileEmbeddingsRequest {
+  /**
+   * @maxItems 100
+   * @minItems 1
+   */
+  fileIDs: string[];
+}
+
+export interface SubmitPlatformFileEmbeddingsRequest {
+  /**
+   * @maxItems 100
+   * @minItems 1
+   */
+  fileIDs: string[];
+}
+
 export interface SubscribeRequest {
   /**
    * @min 1
@@ -3281,9 +3589,14 @@ export interface SyncUpstreamModelsResponse {
   createdUpstreamModels: number;
   existingUpstreamModels: number;
   inactivatedModels: number;
+  protectedUpstreamModels: number;
+  reactivatedModels: number;
   skippedUpstreamModels: number;
+  snapshotID: string;
   syncedModels: UpstreamSyncModelResponse[];
   totalUpstream: number;
+  unchangedUpstreamModels: number;
+  updatedUpstreamModels: number;
 }
 
 export interface SyncUpstreamModelsResponseDoc {
@@ -3314,6 +3627,39 @@ export interface SystemEventResponse {
   updatedAt: string;
 }
 
+export interface TemporaryChatHistoryMessage {
+  /** @maxLength 200000 */
+  content: string;
+  role: "user" | "assistant";
+}
+
+export interface TemporaryChatMessageRequest {
+  /** @maxLength 64 */
+  clientRunID: string;
+  htmlVisualPrompt?: boolean;
+  /** @maxItems 8 */
+  knowledgeBaseIDs?: string[];
+  /**
+   * @maxItems 100
+   * @minItems 1
+   */
+  messages: TemporaryChatHistoryMessage[];
+  /** @maxLength 128 */
+  model: string;
+  options?: Record<string, any>;
+  /** @maxItems 128 */
+  selectedToolIDs?: number[];
+  /** @maxLength 64 */
+  sessionID: string;
+  /** @maxItems 128 */
+  skillIDs?: number[];
+  /**
+   * UIComponentIDs 是本次会话勾选的交互式组件。
+   * @maxItems 32
+   */
+  uiComponentIDs?: number[];
+}
+
 export interface ToolListResponse {
   results: ToolResponse[];
 }
@@ -3334,6 +3680,7 @@ export interface ToolResponse {
   id: number;
   inputSchemaJSON: string;
   name: string;
+  priceNanousd: number;
   serverID: number;
   serverName: string;
   sortOrder: number;
@@ -3343,6 +3690,54 @@ export interface ToolResponse {
 
 export interface ToolResponseDoc {
   data: ToolResponse;
+  errorMsg: string;
+}
+
+export interface UIComponentDataResponse {
+  component: UIComponentResponse;
+}
+
+export interface UIComponentDeleteDataResponse {
+  deleted: boolean;
+}
+
+export interface UIComponentDeleteResponseDoc {
+  data: UIComponentDeleteDataResponse;
+  errorMsg: string;
+}
+
+export interface UIComponentPageResponseDoc {
+  data: {
+    results: UIComponentResponse[];
+    total: number;
+  };
+  errorMsg: string;
+}
+
+export interface UIComponentResponse {
+  createdAt: string;
+  createdByUserID: number;
+  description: string;
+  enabled: boolean;
+  id: number;
+  name: string;
+  propsSchema: string;
+  propsSummary: string;
+  rendererKind: string;
+  rendererSource: string;
+  scope: string;
+  sortOrder: number;
+  updatedAt: string;
+  updatedByUserID: number;
+  version: number;
+}
+
+export interface UIComponentResponseDoc {
+  data: UIComponentDataResponse;
+  errorMsg: string;
+}
+
+export interface UicomponentErrorDoc {
   errorMsg: string;
 }
 
@@ -3361,11 +3756,6 @@ export interface UpdateBillingPlanRequest {
   currency?: string;
   /** @maxLength 255 */
   description: string;
-  /**
-   * @min 0
-   * @max 100
-   */
-  discountPercent: number;
   /**
    * @minLength 1
    * @maxLength 64
@@ -3388,6 +3778,8 @@ export interface UpdateConversationProjectRequest {
   defaultKnowledgeBaseIDs: string[];
   /** @maxItems 128 */
   defaultMCPToolIDs?: number[];
+  /** @maxLength 128 */
+  defaultModel?: string;
   /** @maxItems 128 */
   defaultSkillIDs?: number[];
   /** @maxLength 255 */
@@ -3523,6 +3915,11 @@ export interface UpdateToolRequest {
   attachmentPromptArgument?: string;
   description?: string;
   displayName?: string;
+  /**
+   * PriceNanousd 单次调用价格（nano USD），0 表示不单独计费。
+   * @min 0
+   */
+  priceNanousd?: number;
   status?: string;
 }
 
@@ -3637,6 +4034,7 @@ export interface UpsertMemoryResponse {
 export interface UpsertModelPricingRequest {
   /** @min 0 */
   cacheReadUSDPerMTokens: number;
+  cacheWritePriceBasis?: "direct" | "anthropic_5m";
   /** @min 0 */
   cacheWriteUSDPerMTokens: number;
   /** @min 0 */
@@ -3653,6 +4051,11 @@ export interface UpsertModelPricingRequest {
   /** @maxLength 128 */
   platformModelName: string;
   pricingMode: "token" | "call" | "duration" | "tiered";
+  /**
+   * SchedulePricingJSON 是时段倍率配置 {"periods":[{"name","weekdays","start","end","ratePercent"}]}，空表示不启用。
+   * @maxLength 20000
+   */
+  schedulePricingJSON?: string;
   /** @maxLength 20000 */
   tieredPricingJSON?: string;
 }
@@ -3778,6 +4181,15 @@ export interface UpstreamModelResponse {
   weight: number;
 }
 
+export interface UpstreamModelSyncPlanResponse {
+  addedModels: string[];
+  inactivatedModels: string[];
+  protectedModels: string[];
+  reactivatedModels: string[];
+  unchangedModels: string[];
+  updatedModels: string[];
+}
+
 export interface UpstreamRemoteModelResponse {
   alreadyBound: boolean;
   alreadySynced: boolean;
@@ -3793,6 +4205,8 @@ export interface UpstreamRemoteModelResponse {
 
 export interface UpstreamRemoteModelsResponse {
   items: UpstreamRemoteModelResponse[];
+  snapshotID: string;
+  syncPlan: UpstreamModelSyncPlanResponse;
   total: number;
 }
 
@@ -3831,8 +4245,11 @@ export interface UpstreamSyncModelResponse {
   bindingCode: string;
   created: boolean;
   kindsJSON: string;
+  protected: boolean;
+  reactivated: boolean;
   status: string;
   suggestedProtocol: string;
+  updated: boolean;
   upstreamModelName: string;
 }
 
@@ -4073,8 +4490,23 @@ export interface UserAuthEventListResponseDoc {
   errorMsg: string;
 }
 
+export interface UserDailyActivityItem {
+  date: string;
+  requestCount: number;
+  tokenUsage: number;
+}
+
+export interface UserDailyActivityListResponseDoc {
+  data: UserDailyActivityItem[];
+  errorMsg: string;
+}
+
 export interface UserDataResponse {
   user: AdminUserResponse;
+}
+
+export interface UserErrorDoc {
+  errorMsg: string;
 }
 
 export interface UserListResponseDoc {
@@ -4154,6 +4586,23 @@ export interface WriteSkillRequest {
   title: string;
   /** @maxLength 64 */
   trigger: string;
+}
+
+export interface WriteUIComponentRequest {
+  /** @maxLength 256 */
+  description: string;
+  enabled?: boolean;
+  /** @maxLength 64 */
+  name: string;
+  /** @maxLength 16384 */
+  propsSchema?: string;
+  /** @maxLength 1024 */
+  propsSummary: string;
+  /** @maxLength 262144 */
+  rendererSource: string;
+  sortOrder?: number;
+  /** @min 1 */
+  version?: number;
 }
 
 export namespace Admin {
@@ -4455,10 +4904,10 @@ export namespace Admin {
   }
 
   /**
-   * @description 从 storage 缓存读取 OpenRouter 模型定价；缓存不存在、过期或 refresh=true 时由后端刷新。
+   * @description 从 storage 缓存读取 OpenRouter 模型标识、基础定价、输入 token 阶梯覆盖和上下文限制；无法映射到当前 token 计费模型的附加字段会在 unsupportedFields 中标记，快速配置会忽略这些字段并继续导入可识别的 token 价格。由原生工具计费负责的按次字段（例如 web_search）会被忽略。
    * @tags admin-billing
    * @name BillingOfficialPricingOpenrouterList
-   * @summary 管理员获取 OpenRouter 官方模型定价
+   * @summary 管理员获取 OpenRouter 官方模型目录
    * @request GET:/admin/billing/official-pricing/openrouter
    * @secure
    */
@@ -4896,12 +5345,16 @@ export namespace Admin {
     export type RequestQuery = {
       /** 可用状态 */
       enabled?: boolean;
+      /** 知识库ID */
+      id?: string[];
       /** 页码 */
       page?: number;
       /** 每页数量 */
       page_size?: number;
       /** 搜索关键词 */
       q?: string;
+      /** 排序方式(default/name/created/updated/files) */
+      sort?: string;
     };
     export type RequestBody = never;
     export type RequestHeaders = {};
@@ -4970,6 +5423,22 @@ export namespace Admin {
   }
 
   /**
+   * @description 为管理员选中的平台资料提交向量化任务，最多100个；重复提交会幂等跳过
+   * @tags admin-knowledge-bases
+   * @name KnowledgeBasesFilesEmbeddingsCreate
+   * @summary 批量提交平台资料向量化
+   * @request POST:/admin/knowledge-bases/files/embeddings
+   * @secure
+   */
+  export namespace KnowledgeBasesFilesEmbeddingsCreate {
+    export type RequestParams = {};
+    export type RequestQuery = {};
+    export type RequestBody = SubmitPlatformFileEmbeddingsRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = KnowledgeBaseFileEmbeddingSubmissionResponseDoc;
+  }
+
+  /**
    * @description 仅允许删除未被任何知识库、会话或账户资料引用的平台资料
    * @tags admin-knowledge-bases
    * @name KnowledgeBasesFilesDelete
@@ -5005,6 +5474,25 @@ export namespace Admin {
     export type RequestBody = never;
     export type RequestHeaders = {};
     export type ResponseBody = Blob;
+  }
+
+  /**
+   * No description
+   * @tags admin-knowledge-bases
+   * @name KnowledgeBasesDetail
+   * @summary 查询内置知识库详情
+   * @request GET:/admin/knowledge-bases/{id}
+   * @secure
+   */
+  export namespace KnowledgeBasesDetail {
+    export type RequestParams = {
+      /** 知识库ID */
+      id: string;
+    };
+    export type RequestQuery = {};
+    export type RequestBody = never;
+    export type RequestHeaders = {};
+    export type ResponseBody = KnowledgeBaseResponseDoc;
   }
 
   /**
@@ -5119,6 +5607,44 @@ export namespace Admin {
     export type RequestBody = AddKnowledgeBaseFilesRequest;
     export type RequestHeaders = {};
     export type ResponseBody = KnowledgeBaseFileMutationResponseDoc;
+  }
+
+  /**
+   * No description
+   * @tags admin-knowledge-bases
+   * @name KnowledgeBasesFilesProcessingSnapshotCreate
+   * @summary 查询内置知识库处理快照
+   * @request POST:/admin/knowledge-bases/{id}/files/processing/snapshot
+   * @secure
+   */
+  export namespace KnowledgeBasesFilesProcessingSnapshotCreate {
+    export type RequestParams = {
+      /** 知识库公开ID */
+      id: string;
+    };
+    export type RequestQuery = {};
+    export type RequestBody = GetKnowledgeBaseFileProcessingSnapshotRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = KnowledgeBaseFileProcessingSnapshotResponse;
+  }
+
+  /**
+   * No description
+   * @tags admin-knowledge-bases
+   * @name KnowledgeBasesFilesProcessingStatusesCreate
+   * @summary 批量查询内置知识库文件处理状态
+   * @request POST:/admin/knowledge-bases/{id}/files/processing/statuses
+   * @secure
+   */
+  export namespace KnowledgeBasesFilesProcessingStatusesCreate {
+    export type RequestParams = {
+      /** 知识库ID */
+      id: string;
+    };
+    export type RequestQuery = {};
+    export type RequestBody = GetKnowledgeBaseFileProcessingStatusesRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = KnowledgeBaseFileProcessingStatusResponse[];
   }
 
   /**
@@ -5907,7 +6433,7 @@ export namespace Admin {
   }
 
   /**
-   * @description 调用上游 models 接口，仅返回可导入预览，不直接落库
+   * @description 调用上游 models 接口，返回可导入模型与目录变更预览，不直接落库
    * @tags llm
    * @name LlmUpstreamsModelsRemoteList
    * @summary 管理员预览上游远程模型
@@ -5926,7 +6452,7 @@ export namespace Admin {
   }
 
   /**
-   * @description 调用上游 models 接口写入上游真实模型清单，不自动绑定平台模型
+   * @description 调用上游 models 接口获取完整目录，原子更新远端管理模型可用状态，不删除平台模型或路由配置
    * @tags llm
    * @name LlmUpstreamsModelsSyncCreate
    * @summary 管理员同步上游模型目录
@@ -5938,7 +6464,12 @@ export namespace Admin {
       /** 上游ID */
       id: number;
     };
-    export type RequestQuery = {};
+    export type RequestQuery = {
+      /** 确认允许空模型目录对账 */
+      allow_empty?: boolean;
+      /** 用户确认的远端目录快照标识 */
+      expected_snapshot?: string;
+    };
     export type RequestBody = never;
     export type RequestHeaders = {};
     export type ResponseBody = SyncUpstreamModelsResponseDoc;
@@ -6552,6 +7083,41 @@ export namespace Admin {
   }
 
   /**
+   * @description 管理员分页查看兑换码兑换明细，含奖励内容与余额变动，已删除兑换码的历史仍可查询
+   * @tags admin
+   * @name RedemptionsList
+   * @summary 管理员查询兑换记录
+   * @request GET:/admin/redemptions
+   * @secure
+   */
+  export namespace RedemptionsList {
+    export type RequestParams = {};
+    export type RequestQuery = {
+      /** 兑换码ID */
+      code_id?: number;
+      /** 兑换时间起点(RFC3339) */
+      created_from?: string;
+      /** 兑换时间终点(RFC3339) */
+      created_to?: string;
+      /** 页码 */
+      page?: number;
+      /** 每页数量 */
+      page_size?: number;
+      /** 搜索兑换流水号、兑换码摘要、兑换码备注 */
+      query?: string;
+      /** 奖励类型(balance/subscription) */
+      reward_type?: string;
+      /** 排序方式 */
+      sort?: string;
+      /** 用户ID */
+      user_id?: number;
+    };
+    export type RequestBody = never;
+    export type RequestHeaders = {};
+    export type ResponseBody = RedemptionRecordListResponseDoc;
+  }
+
+  /**
    * @description 按 namespace 分组返回全部动态配置项
    * @tags admin/settings
    * @name SettingsList
@@ -6600,7 +7166,7 @@ export namespace Admin {
   }
 
   /**
-   * No description
+   * @description include_empty=true 时同时重试提取无文本的 empty 文件，适用于更换 OCR 引擎后
    * @tags admin/settings
    * @name SettingsEmbeddingReindexCreate
    * @summary 触发向量重建（重索引所有 stale/failed 文件）
@@ -6609,10 +7175,13 @@ export namespace Admin {
    */
   export namespace SettingsEmbeddingReindexCreate {
     export type RequestParams = {};
-    export type RequestQuery = {};
+    export type RequestQuery = {
+      /** 是否包含 empty 终态文件 */
+      include_empty?: boolean;
+    };
     export type RequestBody = never;
     export type RequestHeaders = {};
-    export type ResponseBody = Envelope;
+    export type ResponseBody = EmbeddingReindexResponseDoc;
   }
 
   /**
@@ -6644,7 +7213,7 @@ export namespace Admin {
     export type RequestQuery = {};
     export type RequestBody = never;
     export type RequestHeaders = {};
-    export type ResponseBody = Envelope;
+    export type ResponseBody = EmbeddingIndexStatusResponseDoc;
   }
 
   /**
@@ -7007,6 +7576,87 @@ export namespace Admin {
   }
 
   /**
+   * No description
+   * @tags admin/ui-components
+   * @name UiComponentsList
+   * @summary 查询内置与平台组件
+   * @request GET:/admin/ui-components
+   * @secure
+   */
+  export namespace UiComponentsList {
+    export type RequestParams = {};
+    export type RequestQuery = {
+      /** 是否启用 */
+      enabled?: boolean;
+      /** 页码 */
+      page?: number;
+      /** 每页数量 */
+      page_size?: number;
+      /** 搜索关键词 */
+      q?: string;
+      /** 作用域：builtin 或 platform，留空为全部 */
+      scope?: string;
+    };
+    export type RequestBody = never;
+    export type RequestHeaders = {};
+    export type ResponseBody = UIComponentPageResponseDoc;
+  }
+
+  /**
+   * No description
+   * @tags admin/ui-components
+   * @name UiComponentsCreate
+   * @summary 创建平台组件
+   * @request POST:/admin/ui-components
+   * @secure
+   */
+  export namespace UiComponentsCreate {
+    export type RequestParams = {};
+    export type RequestQuery = {};
+    export type RequestBody = WriteUIComponentRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = UIComponentResponseDoc;
+  }
+
+  /**
+   * @description 内置组件受保护，不允许删除
+   * @tags admin/ui-components
+   * @name UiComponentsDelete
+   * @summary 删除平台组件
+   * @request DELETE:/admin/ui-components/{id}
+   * @secure
+   */
+  export namespace UiComponentsDelete {
+    export type RequestParams = {
+      /** 组件ID */
+      id: number;
+    };
+    export type RequestQuery = {};
+    export type RequestBody = never;
+    export type RequestHeaders = {};
+    export type ResponseBody = UIComponentDeleteResponseDoc;
+  }
+
+  /**
+   * @description 内置组件只允许修改启用状态、描述与排序
+   * @tags admin/ui-components
+   * @name UiComponentsPartialUpdate
+   * @summary 更新内置或平台组件
+   * @request PATCH:/admin/ui-components/{id}
+   * @secure
+   */
+  export namespace UiComponentsPartialUpdate {
+    export type RequestParams = {
+      /** 组件ID */
+      id: number;
+    };
+    export type RequestQuery = {};
+    export type RequestBody = PatchUIComponentRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = UIComponentResponseDoc;
+  }
+
+  /**
    * @description 管理员按日期、统计对象、平台模型和计费范围查看全局费用、Token、调用次数及排名；用户与权限组筛选互斥
    * @tags admin
    * @name UsageStatisticsList
@@ -7283,6 +7933,21 @@ export namespace Announcements {
 }
 
 export namespace Auth {
+  /**
+   * @description 仅在服务器以本地 sidecar 模式运行时可用；grant 由启动握手交给桌面壳，只能使用一次
+   * @tags auth
+   * @name LocalExchangeCreate
+   * @summary 本地模式：一次性 grant 换取会话
+   * @request POST:/auth/local/exchange
+   */
+  export namespace LocalExchangeCreate {
+    export type RequestParams = {};
+    export type RequestQuery = {};
+    export type RequestBody = LocalGrantExchangeRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = LoginResponseDoc;
+  }
+
   /**
    * @description 登录后返回JWT访问令牌
    * @tags auth
@@ -7852,6 +8517,38 @@ export namespace ConversationProjects {
 
 export namespace ConversationRuns {
   /**
+   * @description 按运行 ID 一次查询当前用户多个会话任务的最小状态快照
+   * @tags chat
+   * @name StatusesCreate
+   * @summary 批量查询会话运行状态
+   * @request POST:/conversation-runs/statuses
+   * @secure
+   */
+  export namespace StatusesCreate {
+    export type RequestParams = {};
+    export type RequestQuery = {};
+    export type RequestBody = GetConversationRunStatusesRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = ConversationRunStatusResponse[];
+  }
+
+  /**
+   * @description Sends an authoritative snapshot followed by live user-scoped run state events; the snapshot is re-sent periodically for client-side reconciliation
+   * @tags chat
+   * @name StreamList
+   * @summary Stream active conversation generations
+   * @request GET:/conversation-runs/stream
+   * @secure
+   */
+  export namespace StreamList {
+    export type RequestParams = {};
+    export type RequestQuery = {};
+    export type RequestBody = never;
+    export type RequestHeaders = {};
+    export type ResponseBody = ActiveMessageGenerationEventResponse;
+  }
+
+  /**
    * @description 仅在用户显式点击暂停时取消对应 run；浏览器刷新或断开连接不会调用此接口
    * @tags chat
    * @name CancelCreate
@@ -7873,12 +8570,14 @@ export namespace ConversationRuns {
   /**
    * @description 页面刷新后按 run_id 重新订阅仍在运行的生成流，返回 NDJSON 事件
    * @tags chat
-   * @name StreamList
+   * @name StreamList2
    * @summary 恢复流式生成订阅
    * @request GET:/conversation-runs/{run_id}/stream
+   * @originalName streamList
+   * @duplicate
    * @secure
    */
-  export namespace StreamList {
+  export namespace StreamList2 {
     export type RequestParams = {
       /** 运行 ID */
       runId: string;
@@ -7886,12 +8585,33 @@ export namespace ConversationRuns {
     export type RequestQuery = {
       /** 已接收的最后事件序号 */
       after?: number;
-      /** 是否返回可替换当前正文的权威文本快照 */
+      /** 是否返回正文与当前思考轮次的权威内容快照 */
       snapshot?: boolean;
     };
     export type RequestBody = never;
     export type RequestHeaders = {};
     export type ResponseBody = string;
+  }
+
+  /**
+   * @description 查询当前用户指定会话运行内的持久化工具调用结果；超限字段仅返回原始大小与省略标记
+   * @tags chat
+   * @name ToolCallsDetail
+   * @summary 查询工具调用结果详情
+   * @request GET:/conversation-runs/{run_id}/tool-calls/{tool_call_id}
+   * @secure
+   */
+  export namespace ToolCallsDetail {
+    export type RequestParams = {
+      /** 运行 ID */
+      runId: string;
+      /** 工具调用 ID */
+      toolCallId: string;
+    };
+    export type RequestQuery = {};
+    export type RequestBody = never;
+    export type RequestHeaders = {};
+    export type ResponseBody = ConversationToolCallDetailResponseDoc;
   }
 }
 
@@ -8230,7 +8950,28 @@ export namespace Conversations {
   }
 
   /**
-   * @description 将会话从开头到指定消息（含）的祖先链复制为一个新会话；不携带原会话的运行记录与计费，附件以引用方式复用
+   * @description 删除会话中任意位置的一条消息；其子消息将重接到被删消息的父消息上，后续消息保留并向前衔接。会话第一条消息与生成中的消息不允许删除
+   * @tags chat
+   * @name MessagesDelete
+   * @summary 删除指定消息
+   * @request DELETE:/conversations/{id}/messages/{message_id}
+   * @secure
+   */
+  export namespace MessagesDelete {
+    export type RequestParams = {
+      /** 会话 public_id */
+      id: string;
+      /** 消息 public_id */
+      messageId: string;
+    };
+    export type RequestQuery = {};
+    export type RequestBody = never;
+    export type RequestHeaders = {};
+    export type ResponseBody = MessageDeleteResponseDoc;
+  }
+
+  /**
+   * @description 仅允许从助手消息 fork；将会话从开头到指定助手消息（含）的祖先链复制为一个新会话，保留历史展示轨迹；不携带原会话的运行记录与计费，附件以引用方式复用
    * @tags chat
    * @name MessagesForkCreate
    * @summary 从指定消息 fork 新会话
@@ -8480,6 +9221,38 @@ export namespace Files {
   }
 
   /**
+   * @description 为当前用户已完成文本提取的文件提交向量化任务，最多100个；重复提交会幂等跳过
+   * @tags chat
+   * @name EmbeddingsCreate
+   * @summary 批量提交指定文件向量化
+   * @request POST:/files/embeddings
+   * @secure
+   */
+  export namespace EmbeddingsCreate {
+    export type RequestParams = {};
+    export type RequestQuery = {};
+    export type RequestBody = SubmitFileEmbeddingsRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = FileEmbeddingSubmissionResponseDoc;
+  }
+
+  /**
+   * @description 一次查询当前用户多个文件的处理状态
+   * @tags chat
+   * @name ProcessingStatusesCreate
+   * @summary 批量查询文件处理状态
+   * @request POST:/files/processing/statuses
+   * @secure
+   */
+  export namespace ProcessingStatusesCreate {
+    export type RequestParams = {};
+    export type RequestQuery = {};
+    export type RequestBody = GetFileProcessingStatusesRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = FileProcessingStatusResponse[];
+  }
+
+  /**
    * @description 删除指定文件并回收用户配额
    * @tags chat
    * @name FilesDelete
@@ -8549,12 +9322,16 @@ export namespace KnowledgeBases {
   export namespace KnowledgeBasesList {
     export type RequestParams = {};
     export type RequestQuery = {
+      /** 知识库ID */
+      id?: string[];
       /** 页码 */
       page?: number;
       /** 每页数量 */
       page_size?: number;
       /** 搜索关键词 */
       q?: string;
+      /** 排序方式(default/name/created/updated/files) */
+      sort?: string;
     };
     export type RequestBody = never;
     export type RequestHeaders = {};
@@ -8574,12 +9351,16 @@ export namespace KnowledgeBases {
     export type RequestQuery = {
       /** 可用状态 */
       enabled?: boolean;
+      /** 知识库ID */
+      id?: string[];
       /** 页码 */
       page?: number;
       /** 每页数量 */
       page_size?: number;
       /** 搜索关键词 */
       q?: string;
+      /** 排序方式(default/name/created/updated/files) */
+      sort?: string;
     };
     export type RequestBody = never;
     export type RequestHeaders = {};
@@ -8750,6 +9531,44 @@ export namespace KnowledgeBases {
     export type RequestBody = never;
     export type RequestHeaders = {};
     export type ResponseBody = KnowledgeBaseFilePageResponseDoc;
+  }
+
+  /**
+   * No description
+   * @tags knowledge-bases
+   * @name FilesProcessingSnapshotCreate
+   * @summary 查询当前用户可见知识库处理快照
+   * @request POST:/knowledge-bases/{id}/files/processing/snapshot
+   * @secure
+   */
+  export namespace FilesProcessingSnapshotCreate {
+    export type RequestParams = {
+      /** 知识库公开ID */
+      id: string;
+    };
+    export type RequestQuery = {};
+    export type RequestBody = GetKnowledgeBaseFileProcessingSnapshotRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = KnowledgeBaseFileProcessingSnapshotResponse;
+  }
+
+  /**
+   * No description
+   * @tags knowledge-bases
+   * @name FilesProcessingStatusesCreate
+   * @summary 批量查询知识库文件处理状态
+   * @request POST:/knowledge-bases/{id}/files/processing/statuses
+   * @secure
+   */
+  export namespace FilesProcessingStatusesCreate {
+    export type RequestParams = {
+      /** 知识库ID */
+      id: string;
+    };
+    export type RequestQuery = {};
+    export type RequestBody = GetKnowledgeBaseFileProcessingStatusesRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = KnowledgeBaseFileProcessingStatusResponse[];
   }
 
   /**
@@ -9145,6 +9964,22 @@ export namespace Settings {
   /**
    * No description
    * @tags settings
+   * @name FeaturePolicyList
+   * @summary 查询用户侧功能开关策略
+   * @request GET:/settings/feature-policy
+   * @secure
+   */
+  export namespace FeaturePolicyList {
+    export type RequestParams = {};
+    export type RequestQuery = {};
+    export type RequestBody = never;
+    export type RequestHeaders = {};
+    export type ResponseBody = Envelope;
+  }
+
+  /**
+   * No description
+   * @tags settings
    * @name LoginPageList
    * @summary 查询公开登录页配置
    * @request GET:/settings/login-page
@@ -9462,6 +10297,128 @@ export namespace Skills {
   }
 }
 
+export namespace TemporaryChat {
+  /**
+   * @description 由浏览器提交完整上下文和可选请求级附件；服务端不创建会话、消息、运行、文件或断线续传记录
+   * @tags chat
+   * @name MessagesStreamCreate
+   * @summary 流式发送临时对话消息
+   * @request POST:/temporary-chat/messages/stream
+   * @secure
+   */
+  export namespace MessagesStreamCreate {
+    export type RequestParams = {};
+    export type RequestQuery = {};
+    export type RequestBody = TemporaryChatMessageRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = string;
+  }
+}
+
+export namespace UiComponents {
+  /**
+   * @description 返回已启用的内置、平台组件与当前用户自定义组件，含渲染源，用于会话勾选与消息渲染
+   * @tags ui-components
+   * @name UiComponentsList
+   * @summary 查询当前用户可用的交互式组件
+   * @request GET:/ui-components
+   * @secure
+   */
+  export namespace UiComponentsList {
+    export type RequestParams = {};
+    export type RequestQuery = {
+      /** 页码 */
+      page?: number;
+      /** 每页数量 */
+      page_size?: number;
+      /** 搜索关键词 */
+      q?: string;
+    };
+    export type RequestBody = never;
+    export type RequestHeaders = {};
+    export type ResponseBody = UIComponentPageResponseDoc;
+  }
+
+  /**
+   * No description
+   * @tags ui-components
+   * @name MineList
+   * @summary 查询我的自定义组件
+   * @request GET:/ui-components/mine
+   * @secure
+   */
+  export namespace MineList {
+    export type RequestParams = {};
+    export type RequestQuery = {
+      /** 是否启用 */
+      enabled?: boolean;
+      /** 页码 */
+      page?: number;
+      /** 每页数量 */
+      page_size?: number;
+      /** 搜索关键词 */
+      q?: string;
+    };
+    export type RequestBody = never;
+    export type RequestHeaders = {};
+    export type ResponseBody = UIComponentPageResponseDoc;
+  }
+
+  /**
+   * No description
+   * @tags ui-components
+   * @name MineCreate
+   * @summary 创建我的自定义组件
+   * @request POST:/ui-components/mine
+   * @secure
+   */
+  export namespace MineCreate {
+    export type RequestParams = {};
+    export type RequestQuery = {};
+    export type RequestBody = WriteUIComponentRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = UIComponentResponseDoc;
+  }
+
+  /**
+   * No description
+   * @tags ui-components
+   * @name MineDelete
+   * @summary 删除我的自定义组件
+   * @request DELETE:/ui-components/mine/{id}
+   * @secure
+   */
+  export namespace MineDelete {
+    export type RequestParams = {
+      /** 组件ID */
+      id: number;
+    };
+    export type RequestQuery = {};
+    export type RequestBody = never;
+    export type RequestHeaders = {};
+    export type ResponseBody = UIComponentDeleteResponseDoc;
+  }
+
+  /**
+   * No description
+   * @tags ui-components
+   * @name MinePartialUpdate
+   * @summary 更新我的自定义组件
+   * @request PATCH:/ui-components/mine/{id}
+   * @secure
+   */
+  export namespace MinePartialUpdate {
+    export type RequestParams = {
+      /** 组件ID */
+      id: number;
+    };
+    export type RequestQuery = {};
+    export type RequestBody = PatchUIComponentRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = UIComponentResponseDoc;
+  }
+}
+
 export namespace User {
   /**
    * @description 返回当前用户全部个人偏好配置，缺失项以默认值填充
@@ -9493,5 +10450,24 @@ export namespace User {
     export type RequestBody = UserSettingsPatchSettingsRequest;
     export type RequestHeaders = {};
     export type ResponseBody = UserSettingsResponseDoc;
+  }
+
+  /**
+   * @description 查询当前用户按计费归属日聚合的模型请求数与 token 消耗，逐日补零
+   * @tags user
+   * @name StatsActivityList
+   * @summary 查询每日活跃度
+   * @request GET:/user/stats/activity
+   * @secure
+   */
+  export namespace StatsActivityList {
+    export type RequestParams = {};
+    export type RequestQuery = {
+      /** 统计天数(默认365，最大366) */
+      days?: number;
+    };
+    export type RequestBody = never;
+    export type RequestHeaders = {};
+    export type ResponseBody = UserDailyActivityListResponseDoc;
   }
 }

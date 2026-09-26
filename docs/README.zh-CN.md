@@ -1,7 +1,7 @@
 <p align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./frontend/public/logo-white.svg" />
-    <img src="../frontend/public/logo-black.svg" alt="DEEIX Chat" width="160" />
+    <source media="(prefers-color-scheme: dark)" srcset="../apps/web/public/logo-white.svg" />
+    <img src="../apps/web/public/logo-black.svg" alt="DEEIX Chat" width="160" />
   </picture>
 </p>
 
@@ -30,7 +30,7 @@ DEEIX Chat 是一款开源可部署的 AI 平台，面向需要长期、稳定�
 
 系统围绕简单部署、高效静态分发和低资源的运行时占用设计，轻量而不简陋、克制而不缺能力、开放而不失秩序。
 
-![DEEIX Chat 工作区](../frontend/public/DEEIX-Chat.jpg)
+![DEEIX Chat 工作区](./assets/screenshots/DEEIX-Chat.jpg)
 
 ## 核心能力
 
@@ -48,14 +48,14 @@ DEEIX Chat 是一款开源可部署的 AI 平台，面向需要长期、稳定�
 | 部署与运维 | 支持单运行时托管前端与 API、Docker 部署、SQLite 或 PostgreSQL、内存缓存或 Redis、S3 兼容存储、Swagger、结构化日志、版本接口、GeoIP 和 OpenTelemetry。 |
 
 <p align="center">
-  <img src="../frontend/public/DEEIX-Chat-Image.png" alt="DEEIX Chat 图片生成" width="49.45%" />
-  <img src="../frontend/public/DEEIX-Chat-Dark.png" alt="DEEIX Chat 深色模式" width="49.45%" />
+  <img src="./assets/screenshots/DEEIX-Chat-Image.png" alt="DEEIX Chat 图片生成" width="49.45%" />
+  <img src="./assets/screenshots/DEEIX-Chat-Dark.png" alt="DEEIX Chat 深色模式" width="49.45%" />
 </p>
 
 <p align="center">
-  <img src="../frontend/public/DEEIX-Chat-Usage.png" alt="DEEIX Chat 用量与计费" width="32.3%" />
-  <img src="../frontend/public/DEEIX-Chat-Artifacts.png" alt="DEEIX Chat Artifacts" width="32.3%" />
-  <img src="../frontend/public/DEEIX-Chat-Html.png" alt="DEEIX Chat HTML 渲染" width="32.3%" />
+  <img src="./assets/screenshots/DEEIX-Chat-Usage.png" alt="DEEIX Chat 用量与计费" width="32.3%" />
+  <img src="./assets/screenshots/DEEIX-Chat-Artifacts.png" alt="DEEIX Chat Artifacts" width="32.3%" />
+  <img src="./assets/screenshots/DEEIX-Chat-Html.png" alt="DEEIX Chat HTML 渲染" width="32.3%" />
 </p>
 
 ## 系统架构与技术栈
@@ -112,7 +112,52 @@ flowchart TB
 | 工具协议 | MCP 工具接入和厂商官方原生工具调用 | MCP Streamable HTTP JSON-RPC、Provider Native Tools |
 | 部署运行 | 单节点轻量部署或多节点生产部署 | Docker、Docker Compose、SQLite/内存缓存、PostgreSQL/Redis |
 
-后端内部保持清晰分层：`cmd/internal/cli` 负责启动入口，`internal/app` 负责应用装配，`transport/http` 负责 HTTP 边界，`application` 负责业务用例与事务编排，`domain` 表达领域语义，`infra` 承载数据库、缓存、存储和外部协议实现。数据层按领域前缀组织表结构，财务流水、审计日志、系统事件和高增长向量数据保持独立事实源。
+后端内部保持清晰分层：`backend/cmd/server` 是可执行入口，`backend/internal/cli` 负责进程启动，`backend/internal/app` 负责应用装配和依赖注入，`backend/internal/transport/http` 负责 HTTP 边界。请求随后经过 `application` 用例层，依赖消费方定义的 `repository` 或 `ports` 接口，再由 `infra` 提供具体实现。数据层按领域前缀组织表结构，财务流水、审计日志、系统事件和高增长向量数据保持独立事实源。
+
+## 仓库目录
+
+```text
+.
+├── backend/                  # Go API 与单运行时服务
+│   ├── cmd/server/            # 可执行入口
+│   ├── internal/
+│   │   ├── cli/               # 进程启动
+│   │   ├── app/               # 依赖注入与生命周期
+│   │   ├── application/       # 用例与业务编排
+│   │   ├── domain/            # 业务概念与规则
+│   │   ├── ports/              # 外部集成契约
+│   │   ├── repository/         # 持久化契约
+│   │   ├── infra/              # 持久化、缓存、存储和服务商适配
+│   │   ├── transport/http/     # Handler、DTO、中间件和路由
+│   │   └── shared/             # 响应、安全等横切代码
+│   └── docs/                  # 生成的 Swagger 文件
+├── apps/                     # 客户端应用（每个平台一个目录）
+│   ├── web/                  # Next.js App Router 与静态导出
+│   └── desktop/              # Tauri 2 桌面壳：托盘、深链接、自动更新、系统 keychain
+│       ├── app/              # 路由入口和布局
+│       ├── features/         # 按业务域组织的 UI 与客户端流程
+│       ├── entities/         # 可复用业务实体
+│       ├── shared/           # API、认证、UI、hooks、模型和工具
+│       ├── components/       # 基础 UI 与视觉组件
+│       └── public/           # 静态资源
+├── packages/
+│   ├── api-contract/         # 生成的 TypeScript API 契约（所有客户端的唯一来源）
+│   └── core/                 # Web / 桌面 / 移动端共享的平台无关客户端逻辑
+├── deploy/                    # Docker 部署：compose 方案、配置模板、可选服务
+├── docs/                      # 项目指南和截图
+└── Dockerfile                 # 前后端生产镜像
+```
+
+`apps/web/` 和 `backend/` 是由 pnpm 与 Turborepo 管理的独立工作区。`packages/api-contract/` 通过生成的 Swagger 类型连接两者；修改 HTTP 契约时先更新 Go 传输层，再重新生成共享包。`packages/core/` 存放必须在各端保持一致的客户端逻辑，禁止引入任何 UI 或平台框架。平台边界与规则见 [docs/ARCHITECTURE.md](ARCHITECTURE.md)。
+
+## 开发前置条件
+
+- Node.js 20.9 或更高版本（仓库 Docker 镜像和 CI 使用 Node.js 24）。
+- pnpm 10.17.0，通常通过 Corepack 启用。
+- Go 1.26.8，用于后端开发。
+- Docker Engine 与 Docker Compose v2，用于容器部署或启动本地 PostgreSQL/Redis。
+
+SQLite 方案不要求单独管理数据库或缓存。默认开发配置使用 PostgreSQL 和 Redis；完整 Compose 方案会自动启动这两个服务。
 
 ## 快速开始
 
@@ -125,7 +170,7 @@ flowchart TB
 1. 准备后端配置：
 
 ```bash
-cp config.example.yaml config.yaml
+cp deploy/config.example.yaml config.yaml
 ```
 
 根据本机环境调整 `config.yaml` 中的 `database.postgres.dsn`、`database.redis.*` 和公开访问地址。
@@ -134,36 +179,59 @@ cp config.example.yaml config.yaml
 
 ```bash
 pnpm install
-cp frontend/.env.example frontend/.env.local
+cp apps/web/.env.example apps/web/.env.local
 ```
 
 3. 同时启动前端和后端：
 
 ```bash
-pnpm dev
+make dev
 ```
 
-只启动单个工作区时，使用 `pnpm dev:web` 或 `pnpm dev:api`。
+`make api`、`make web`、`make desktop` 单独启动某一端；`make help` 列出全部目标。
 
-前端请求后端使用 `NEXT_PUBLIC_API_BASE_URL`。本地开发时确认 `frontend/.env.local` 中包含：
+前端请求后端使用 `NEXT_PUBLIC_API_BASE_URL`。本地开发时确认 `apps/web/.env.local` 中包含：
 
 ```env
 NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8080
 ```
 
-访问地址：
+服务地址与探针：
 
 | 服务 | 地址 |
 | --- | --- |
 | 前端 | `http://localhost:3000` |
 | API | `http://localhost:8080` |
-| Swagger | `http://localhost:8080/swagger/index.html` |
+| 存活探针 | `http://localhost:8080/healthz` |
+| 就绪探针 | `http://localhost:8080/readyz` |
+| 版本接口 | `http://localhost:8080/api/v1/version` |
+| Swagger（仅开发环境） | `http://localhost:8080/swagger/index.html` |
 
 不配置 `NEXT_PUBLIC_API_BASE_URL` 时，本地默认指向 `localhost:8080`；同源部署默认请求当前 origin。
 
+### 工作区命令
+
+根目录的 `Makefile` 是唯一入口，所有目标都在仓库根目录执行，底层再分发给 pnpm / turbo / cargo / go：
+
+| 命令 | 用途 |
+| --- | --- |
+| `make dev` | 以监听模式同时启动前端和后端。 |
+| `make api` / `make web` / `make desktop` | 单独启动某一端。 |
+| `make check` | 全工作区的 lint、类型、架构与版本检查。 |
+| `make test` | 全工作区测试。 |
+| `make build` | 静态前端、后端二进制、桌面端（turbo 缓存）。 |
+| `make build-desktop` / `make release-desktop` | 本地快速 `.app` / 签名发版包。 |
+| `make verify` | check + test + build，即 CI 跑的内容。 |
+| `make api-docs` | 重新生成 Swagger 与 TypeScript API 类型。 |
+| `make version` | 把 `VERSION` 同步到所有包清单。 |
+
+同一组动作也以 pnpm 脚本存在（`pnpm dev:api`、`pnpm check` …），CI 直接用它们。
+
+前端以静态资源形式导出，`pnpm build` 会把浏览器产物写入 `apps/web/out`。生产镜像中的 Go 服务，或配置了 `server.frontend_dist_dir` 的 Go 服务，可以直接托管该目录。
+
 ### Docker 部署
 
-Docker 部署先选择安装方案，再复制对应的配置文件。三套根目录 compose 文件都默认将应用暴露在 `http://localhost:8080`，并把仓库根目录的 `config.yaml` 挂载到容器内 `/app/config.yaml`。
+所有 Docker 部署资源都在 [`deploy/`](../deploy/README.md) 目录；把这个目录整体拷到服务器即可，不需要应用源码。以下命令均在 `deploy/` 目录内执行。先选择安装方案，再把对应的配置模板复制为 `deploy/config.yaml`。三套 compose 方案都默认将应用暴露在 `http://localhost:8080`，并把 `./config.yaml`（相对 `deploy/`）挂载到容器内 `/app/config.yaml`。
 
 | 方案 | 适合场景 | 配置文件 | Compose 文件 | 内置依赖 |
 | --- | --- | --- | --- | --- |
@@ -176,6 +244,7 @@ Docker 部署先选择安装方案，再复制对应的配置文件。三套根�
 依赖最少的部署方式，只启动 `app` 容器。数据和本地向量索引使用 SQLite，缓存使用进程内 memory，适合本地试用、个人部署和小型单节点场景。
 
 ```bash
+cd deploy
 cp config.sqlite.example.yaml config.yaml
 docker compose -f docker-compose.sqlite.yml up -d
 ```
@@ -187,6 +256,7 @@ SQLite + memory cache 只适合单进程。多节点、高并发或更严格的�
 适合已经有外部 PostgreSQL 和 Redis 的部署环境。启动前需要把数据库和 Redis 地址改成容器内可访问的地址；如果服务在 Docker 宿主机上，通常可以使用 `host.docker.internal`。
 
 ```bash
+cd deploy
 cp config.example.yaml config.yaml
 # 修改 database.postgres.dsn、database.redis.* 和公开访问地址
 docker compose up -d
@@ -199,6 +269,7 @@ docker compose up -d
 适合希望 compose 同时启动应用、PostgreSQL 和 Redis 的部署方式。
 
 ```bash
+cd deploy
 cp config.full.example.yaml config.yaml
 docker compose -f docker-compose.full.yml up -d
 ```
@@ -218,23 +289,26 @@ docker compose -f docker-compose.full.yml up -d
 | PostgreSQL 数据 | `/var/lib/postgresql/data`，仅全量安装 |
 | Redis 数据 | `/data`，仅全量安装 |
 
-默认应用镜像为 `ghcr.io/deeix-ai/deeix-chat:latest`。测试自定义构建时可通过 `DEEIX_CHAT_IMAGE` 覆盖：
+默认应用镜像为 `ghcr.io/deeix-ai/deeix-chat:latest`。Compose 文件只引用镜像，不定义构建步骤。测试本地构建时先在仓库根目录生成镜像，再通过 `DEEIX_CHAT_IMAGE` 选择它：
 
 ```bash
-DEEIX_CHAT_IMAGE=deeix-chat:local docker compose up -d --build
+docker build -t deeix-chat:local .
+cd deploy && DEEIX_CHAT_IMAGE=deeix-chat:local docker compose up -d
 ```
+
+使用其他方案时，在启动命令中加入对应的 `-f docker-compose.sqlite.yml` 或 `-f docker-compose.full.yml`。
 
 `APP_ENV` 支持 `dev`/`development` 和 `prod`/`production`，内部会规范化为 `dev` 或 `prod`；未配置时默认 `prod`。`dev` 只用于本地开发；公网生产部署应保持 `APP_ENV=prod` 或 `APP_ENV=production` 并使用生产密钥。
 
 #### 可选安装服务
 
 这些服务不是必须安装。只有在后台或 `config.yaml` 中启用对应文件处理能力时才需要启动。
-这些 compose 文件会接入 `deeix-chat-network`；请先启动任一根目录 compose 方案，或手动执行 `docker network create deeix-chat-network`。
+这些服务位于 `deploy/services/`，会接入 `deeix-chat-network`；请先启动任一应用 compose 方案，或手动执行 `docker network create deeix-chat-network`。在 `deploy/` 目录内执行：
 
 ```bash
-docker compose -f docker/tika/docker-compose.yml up -d
-docker compose -f docker/tesseract/docker-compose.yml up -d --build
-docker compose -f docker/docling/docker-compose.yml up -d --build
+docker compose -f services/tika/docker-compose.yml up -d
+docker compose -f services/tesseract/docker-compose.yml up -d --build
+docker compose -f services/docling/docker-compose.yml up -d --build
 ```
 
 默认本地地址：
@@ -245,7 +319,7 @@ docker compose -f docker/docling/docker-compose.yml up -d --build
 | Tesseract OCR | `http://127.0.0.1:8004/ocr` | OCR 服务 |
 | Docling | `http://127.0.0.1:8005/ocr` | 文档/OCR 提取 |
 
-`docker/rapidocr` 当前提供 Dockerfile 和服务入口，但还没有 compose 文件。如果选择 RapidOCR，需要自行补 compose 或手动运行。
+`deploy/services/rapidocr` 当前提供 Dockerfile 和服务入口，但还没有 compose 文件。如果选择 RapidOCR，需要自行补 compose 或手动运行。
 
 ### 分离部署
 
@@ -271,7 +345,7 @@ docker compose -f docker/docling/docker-compose.yml up -d --build
    NEXT_PUBLIC_API_BASE_URL=https://api.example.com pnpm --filter @deeix/web build
    ```
 
-   静态产物在 `frontend/out`，可由 Nginx、CDN、对象存储或任意静态服务托管。如需由 Go 后端托管前端，把 `frontend/out` 放到 `server.frontend_dist_dir` 指向的目录；Docker 镜像默认是 `/app/frontend/out`。
+   静态产物在 `apps/web/out`，可由 Nginx、CDN、对象存储或任意静态服务托管。如需由 Go 后端托管前端，把 `apps/web/out` 放到 `server.frontend_dist_dir` 指向的目录；Docker 镜像默认是 `/app/frontend/out`。
 
 3. 配置 CDN 规则。
 
@@ -279,20 +353,23 @@ docker compose -f docker/docling/docker-compose.yml up -d --build
    | --- | --- |
    | `/_next/static/*` | 缓存 1 年，并启用 immutable 静态资源缓存。 |
    | `/logo*.svg`、`/*.ico`、`/*.png`、`/*.jpg`、`/*.webp`、`/*.woff2` | 缓存 1 天到 30 天。 |
-   | `/`、`/*.html`、`/chat*`、`/recent*`、`/files*`、`/knowledges*`、`/setting*`、`/admin*`、`/share*` | 不做长期缓存，建议使用 `no-cache` 或较短 TTL。 |
+   | `/`、`/*.html`、`/login*`、`/auth*`、`/chat*`、`/recent*`、`/files*`、`/knowledges*`、`/skills-prompt*`、`/setting*`、`/admin*`、`/share*`、`/preview*` | 不做长期缓存，建议使用 `no-cache` 或较短 TTL。 |
    | `/api/*`、`/healthz`、`/readyz`、`/swagger/*` | 绕过 CDN 缓存，并完整转发请求头、方法、查询参数和请求体。 |
 
-   如果 CDN 从对象存储托管 `frontend/out`，需要开启路由回退，让无扩展名地址能命中导出的 `index.html`，例如 `/chat` -> `/chat/index.html`。
+   如果 CDN 从对象存储托管 `apps/web/out`，需要开启路由回退，让无扩展名地址能命中导出的 `index.html`，例如 `/chat` -> `/chat/index.html`。
 
 ### 启动后检查与首次登录
 
-应用启动后，先确认健康检查、配置文件和启动日志。Docker 部署可用：
+应用启动后，先确认存活、就绪、挂载配置文件和启动日志。Docker 部署可用：
 
 ```bash
 curl http://localhost:8080/healthz
+curl http://localhost:8080/readyz
 docker compose exec app ls -l /app/config.yaml
 docker compose logs app
 ```
+
+只有 `APP_ENV=dev` 或 `APP_ENV=development` 时才会注册 Swagger；生产部署不会暴露 Swagger UI 路由。
 
 如果数据库中还不存在超级管理员，后端会在首次启动时自动创建初始管理员，并且只在创建当次输出一次初始密码。
 
@@ -311,7 +388,7 @@ docker compose logs app
 
 后端配置分为静态运行配置和运行时业务配置。静态运行配置用于描述品牌以及服务启动所需的基础设施、安全和存储参数，由 `config.yaml` 与环境变量提供；运行时业务配置用于认证、会话、模型、文件、计费等产品能力，写入 `system_settings` 并通过后台管理维护。环境变量会覆盖配置文件中的同名项，适合容器化、分离部署和密钥注入场景。
 
-后端启动时会按运行目录解析默认配置文件：从仓库根目录启动读取 `config.yaml`，从 `backend/` 目录启动读取 `../config.yaml`。Docker 部署通常将宿主机 `./config.yaml` 只读挂载到容器内 `/app/config.yaml`；如果配置文件放在其他位置，请使用 `CONFIG_FILE` 指向实际运行环境可访问的路径。
+后端启动时会按运行目录解析默认配置文件：从仓库根目录启动读取 `config.yaml`，从 `backend/` 目录启动读取 `../config.yaml`。Docker 部署将 `deploy/config.yaml` 只读挂载到容器内 `/app/config.yaml`；如果配置文件放在其他位置，请使用 `CONFIG_FILE` 指向实际运行环境可访问的路径。最终生效优先级是 `环境变量 > config.yaml > 代码内置默认值`。
 
 前端品牌同样属于运行时配置。在 `config.yaml` 中设置 `branding` 后重启应用即可生效，无需重新构建前端或 Docker 镜像。详见[自定义品牌资源](./BRANDING.md)。
 
@@ -319,7 +396,7 @@ docker compose logs app
 
 | 所属域 | 环境变量 | 说明 |
 | --- | --- | --- |
-| 前端构建 | `NEXT_PUBLIC_API_BASE_URL` | 浏览器请求后端 API 的地址；本地写入 `frontend/.env.local`，分离部署在构建时传入。 |
+| 前端构建 | `NEXT_PUBLIC_API_BASE_URL` | 浏览器请求后端 API 的地址；本地写入 `apps/web/.env.local`，分离部署在构建时传入。 |
 | 配置文件 | `CONFIG_FILE` | 可选配置文件路径；Docker 场景应填写容器内路径。 |
 | 应用 | `APP_NAME` | 应用名称。 |
 | 应用 | `APP_ENV` | 运行环境，支持 `dev`/`development` 和 `prod`/`production`；未配置时默认 `prod`。 |
@@ -388,7 +465,7 @@ docker compose logs app
 
 生产环境启用 SSRF 防护后，管理员保存的模型、MCP、Embedding、OIDC/OAuth2 和自定义 Turnstile endpoint 均按精确 origin（协议、主机和端口）获得局部授权，不需要加入全局白名单。模型、MCP 与 Embedding 保留标准重定向兼容性：跨 origin 的公网目标可以继续访问，跨 origin 的私网目标必须命中 `SSRF_ALLOWED_HOSTS` 或 `SSRF_ALLOWED_CIDRS`；OIDC/OAuth2 与 Turnstile 继续维持更严格的身份边界。模型生成的图片或视频由后端下载、校验并转存：私网制品 URL 只有与本次选中的模型 endpoint 同 origin 时才继承该局部信任；跨 origin 的公网制品仍按严格公网策略下载，跨 origin 的私网制品会被拦截。全局白名单也继续用于无法绑定管理员保存 endpoint 的部署级集成，例如部分 GeoIP 或提取服务部署。链路本地、组播、未指定地址和已知云元数据目标始终禁止。白名单配置不合法会阻止后端启动；全局白名单修改后需重启生效。
 
-### Web、App 与桌面端 OAuth 回调（多端暂未发布）
+### Web、App 与桌面端 OAuth 回调
 
 启用第三方授权桥前，请先把 `PUBLIC_API_BASE_URL` 配置为外部可访问的 API 地址。每个 OIDC/OAuth2 身份源都应登记后台身份源弹窗展示的服务器回调：
 
@@ -422,10 +499,11 @@ Web、App 与桌面端会自动复用当前实例的这个回调。外部身份�
 - [进阶指南](https://deeix.com/zh/docs/deeix-chat/advanced-capabilities-passthrough-tools)
 - 后端说明：[backend/README.md](../backend/README.md)
 - 后端规范：[backend/docs/README.md](../backend/docs/README.md)
-- 前端说明：[frontend/README.md](../frontend/README.md)
+- 前端说明：[apps/web/README.md](../apps/web/README.md)
+- API 契约包：[packages/api-contract/README.md](../packages/api-contract/README.md)
 - 贡献指南：[CONTRIBUTING.md](../.github/CONTRIBUTING.md)
 - 安全策略：[SECURITY.md](../.github/SECURITY.md)
-- Swagger UI：`http://localhost:8080/swagger/index.html`
+- Swagger UI（仅开发环境）：`http://localhost:8080/swagger/index.html`
 
 ## 鸣谢
 

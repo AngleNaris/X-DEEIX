@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
 	"math"
 	"sort"
 	"strconv"
@@ -17,11 +18,10 @@ import (
 	domainbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/billing"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/nativetool"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/pagination"
 )
 
 const (
-	defaultPageSize            = 20
-	maxPageSize                = 1000
 	defaultMonthlyUsageMonths  = 12
 	maxMonthlyUsageMonths      = 24
 	defaultDailyUsageDays      = 30
@@ -103,8 +103,8 @@ func (s *Service) resolveGroupRatePercent(ctx context.Context, userID uint, plat
 	return s.groupRateResolver.GetUserModelGroupRateMultiplierPercent(ctx, userID, platformModelID, extraGroupIDs)
 }
 
-// composeGroupRatePercent 将权限组倍率百分比叠加到基础倍率。
-func composeGroupRatePercent(base billingRateMultiplier, percent int) billingRateMultiplier {
+// composeRatePercent 按百分比叠加倍率（100 = 1.0x），权限组倍率与时段倍率共用。
+func composeRatePercent(base billingRateMultiplier, percent int) billingRateMultiplier {
 	if percent <= 0 || percent == 100 {
 		return base
 	}
@@ -128,22 +128,28 @@ type nativeToolCatalogProvider interface {
 	ListNativeToolDefinitions(ctx context.Context) ([]nativetool.Definition, error)
 }
 
+// BilledReasonModerationBlockedUpstreamUsage 标注被内容审核拦截却仍要结算的账本：
+// 拦截只撤回内容，不撤回上游已产生的用量。
+const BilledReasonModerationBlockedUpstreamUsage = "moderation_blocked_upstream_usage"
+
 // UsagePricingInput 定义账单计算入参。
 type UsagePricingInput struct {
-	Authorization       *domainbilling.UsageAuthorization
-	UserID              uint
-	ConversationID      uint
-	PlatformModelName   string
-	RoutedBindingCode   string
-	ProviderProtocol    string
-	UpstreamName        string
-	UpstreamModelName   string
-	CacheTimeout        string
-	RequestSpeed        string
-	UsageSpeed          string
-	RequestServiceTier  string
-	UsageServiceTier    string
-	UsageSource         string
+	Authorization      *domainbilling.UsageAuthorization
+	UserID             uint
+	ConversationID     uint
+	PlatformModelName  string
+	RoutedBindingCode  string
+	ProviderProtocol   string
+	UpstreamName       string
+	UpstreamModelName  string
+	CacheTimeout       string
+	RequestSpeed       string
+	UsageSpeed         string
+	RequestServiceTier string
+	UsageServiceTier   string
+	UsageSource        string
+	// BilledReason 说明正常结算之外为何仍计费（如审核拦截后的上游用量），写入账单快照供用户与审计查看。
+	BilledReason        string
 	ServiceOnly         bool
 	InputTokens         int64
 	CacheReadTokens     int64
@@ -159,27 +165,29 @@ type UsagePricingInput struct {
 	InputImageCount     int64
 	LatencyMS           int64
 	ServerSideToolUsage map[string]int64
-	ServiceItems        []ServiceUsageInput
-	RawUsageJSON        string
-	BillingAt           time.Time
+	// MCPToolUsage 聚合应用侧工具循环内成功的 MCP 调用（价格为调用时的工具配置快照）。
+	MCPToolUsage []MCPToolUsageInput
+	ServiceItems []ServiceUsageInput
+	RawUsageJSON string
+	BillingAt    time.Time
 }
 
-func upstreamUsageSnapshot(input UsagePricingInput) interface{} {
+func upstreamUsageSnapshot(input UsagePricingInput) any {
 	raw := strings.TrimSpace(input.RawUsageJSON)
 	if raw == "" {
-		return map[string]interface{}{}
+		return map[string]any{}
 	}
-	var decoded interface{}
+	var decoded any
 	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
-		return map[string]interface{}{}
+		return map[string]any{}
 	}
 	switch value := decoded.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		return value
-	case []interface{}:
+	case []any:
 		return value
 	default:
-		return map[string]interface{}{}
+		return map[string]any{}
 	}
 }
 
@@ -189,6 +197,16 @@ type PlatformModelIdentity struct {
 	PlatformModelName string
 	ModelVendor       string
 	ModelIcon         string
+}
+
+// MCPToolUsageInput 定义一次运行内某个 MCP 工具的成功调用计量。
+// PriceNanousd 为调用时的工具配置快照，0 表示该工具不单独计费。
+type MCPToolUsageInput struct {
+	ServerID     uint
+	ServerName   string
+	ToolName     string
+	CallCount    int64
+	PriceNanousd int64
 }
 
 // ServiceUsageInput 定义基础服务计费入参。
@@ -235,10 +253,12 @@ type ModelPricingInput struct {
 	InputNanousdPerMTokens      int64
 	CacheReadNanousdPerMTokens  int64
 	CacheWriteNanousdPerMTokens int64
+	CacheWritePriceBasis        string
 	OutputNanousdPerMTokens     int64
 	CallNanousdPerCall          int64
 	DurationNanousdPerSecond    int64
 	TieredPricingJSON           string
+	SchedulePricingJSON         string
 }
 
 // UsageListFilter 描述用户用量账本的筛选和排序条件。
@@ -303,7 +323,6 @@ type PlanUpdateInput struct {
 	Name                string
 	Description         string
 	PeriodCreditNanousd int64
-	DiscountPercent     int
 	Currency            string
 	AmountCents         int64
 	BillingInterval     string
@@ -436,7 +455,11 @@ func (s *Service) NormalizeNativeToolPricingJSON(ctx context.Context, overrides 
 	if err != nil {
 		return "", err
 	}
-	return nativetool.PricingOverridesJSONForDefinitions(overrides, definitions)
+	value, err := nativetool.PricingOverridesJSONForDefinitions(overrides, definitions)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrInvalidNativeToolPricing, err)
+	}
+	return value, nil
 }
 
 func (s *Service) nativeToolDefinitions(ctx context.Context) ([]nativetool.Definition, error) {
@@ -488,9 +511,9 @@ func (s *Service) ListBillingAccountSnapshots(ctx context.Context, userIDs []uin
 	for _, account := range accounts {
 		results[account.UserID] = UserBillingAccountSnapshot{
 			UserID:         account.UserID,
-			Currency:       firstNonEmpty(account.Currency, "USD"),
+			Currency:       textutil.FirstNonEmpty(account.Currency, "USD"),
 			BalanceNanousd: account.BalanceNanousd,
-			Status:         firstNonEmpty(account.Status, "active"),
+			Status:         textutil.FirstNonEmpty(account.Status, "active"),
 		}
 	}
 	return results, nil
@@ -538,7 +561,6 @@ func (s *Service) ListPlans(ctx context.Context) ([]BillingPlanView, error) {
 			Description:         item.Description,
 			FeatureJSON:         item.FeatureJSON,
 			PeriodCreditNanousd: item.PeriodCreditNanousd,
-			DiscountPercent:     item.DiscountPercent,
 			SortOrder:           item.SortOrder,
 			IsActive:            item.IsActive,
 			PermissionGroupID:   item.PermissionGroupID,
@@ -616,9 +638,9 @@ func (s *Service) ListCurrentSubscriptionSnapshots(
 		results[userID] = UserSubscriptionSnapshot{
 			UserID:            userID,
 			PlanID:            &planID,
-			PlanName:          firstNonEmpty(planName, strings.ToUpper(planCode)),
-			Tier:              firstNonEmpty(planCode, "free"),
-			Status:            firstNonEmpty(status, "free"),
+			PlanName:          textutil.FirstNonEmpty(planName, strings.ToUpper(planCode)),
+			Tier:              textutil.FirstNonEmpty(planCode, "free"),
+			Status:            textutil.FirstNonEmpty(status, "free"),
 			ExpiresAt:         expiresAt,
 			PermissionGroupID: permGroupID,
 		}
@@ -629,20 +651,41 @@ func (s *Service) ListCurrentSubscriptionSnapshots(
 
 // Subscribe 创建用户订阅。
 func (s *Service) Subscribe(ctx context.Context, userID uint, priceID uint, cycles int) (*domainbilling.Subscription, error) {
+	if userID == 0 || priceID == 0 {
+		return nil, ErrInvalidBillingPlan
+	}
 	if cycles <= 0 {
 		cycles = 1
 	}
 
 	price, err := s.repo.GetPriceByID(ctx, priceID)
 	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrBillingPlanNotFound
+		}
+		if errors.Is(err, repository.ErrInvalidInput) {
+			return nil, ErrInvalidBillingPlan
+		}
 		return nil, err
+	}
+	if price == nil {
+		return nil, ErrBillingPlanNotFound
 	}
 	plan, err := s.repo.GetPlanByID(ctx, price.PlanID)
 	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrBillingPlanNotFound
+		}
+		if errors.Is(err, repository.ErrInvalidInput) {
+			return nil, ErrInvalidBillingPlan
+		}
 		return nil, err
 	}
+	if plan == nil {
+		return nil, ErrBillingPlanNotFound
+	}
 	if !plan.IsActive || !price.IsActive {
-		return nil, repository.ErrNotFound
+		return nil, ErrBillingPlanNotFound
 	}
 	now := time.Now()
 	if strings.TrimSpace(plan.Code) == "free" {
@@ -676,6 +719,12 @@ func (s *Service) Subscribe(ctx context.Context, userID uint, priceID uint, cycl
 		AutoRenew:            price.BillingInterval != domainbilling.IntervalLifetime,
 	}
 	if err := s.repo.ReplaceSubscription(ctx, item); err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrBillingPlanNotFound
+		}
+		if errors.Is(err, repository.ErrInvalidInput) {
+			return nil, ErrInvalidBillingPlan
+		}
 		return nil, err
 	}
 	return item, nil
@@ -785,35 +834,44 @@ func (s *Service) CreatePaymentOrder(ctx context.Context, input PaymentOrderInpu
 
 	price, err := s.repo.GetPriceByID(ctx, input.PriceID)
 	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, nil, nil, ErrBillingPlanNotFound
+		}
 		return nil, nil, nil, err
 	}
 	plan, err := s.repo.GetPlanByID(ctx, price.PlanID)
 	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, nil, nil, ErrBillingPlanNotFound
+		}
 		return nil, nil, nil, err
 	}
 	if input.UserID == 0 || !plan.IsActive || !price.IsActive {
-		return nil, nil, nil, repository.ErrInvalidInput
+		return nil, nil, nil, ErrInvalidPaymentOrder
 	}
 	if price.AmountCents <= 0 {
-		return nil, nil, nil, repository.ErrInvalidInput
+		return nil, nil, nil, ErrInvalidPaymentOrder
 	}
 	baseCurrency := normalizeCurrency(price.Currency)
 	baseAmountCents := price.AmountCents * int64(cycles)
 	if baseAmountCents <= 0 {
-		return nil, nil, nil, repository.ErrInvalidInput
+		return nil, nil, nil, ErrInvalidPaymentOrder
 	}
 	quote := resolvePaymentQuote(provider, baseCurrency, baseAmountCents, input.USDToCNYRate, input.PreferredPayCurrency)
 	if quote.PayAmountCents <= 0 {
-		return nil, nil, nil, repository.ErrInvalidInput
+		return nil, nil, nil, ErrInvalidPaymentOrder
 	}
 
 	orderNo, err := generateOrderNo()
 	if err != nil {
+		if errors.Is(err, repository.ErrInvalidInput) {
+			return nil, nil, nil, ErrInvalidPaymentOrder
+		}
 		return nil, nil, nil, err
 	}
 	now := time.Now()
 	expiredAt := now.Add(30 * time.Minute)
-	snapshot := map[string]interface{}{
+	snapshot := map[string]any{
 		"plan_id":           plan.ID,
 		"plan_code":         plan.Code,
 		"plan_name":         plan.Name,
@@ -872,7 +930,7 @@ func (s *Service) CreateTopUpPaymentOrder(ctx context.Context, input TopUpPaymen
 		return nil, ErrPaymentProviderUnavailable
 	}
 	if input.UserID == 0 || input.AmountMinorUnits <= 0 {
-		return nil, repository.ErrInvalidInput
+		return nil, ErrInvalidPaymentOrder
 	}
 
 	baseCurrency := "USD"
@@ -882,7 +940,7 @@ func (s *Service) CreateTopUpPaymentOrder(ctx context.Context, input TopUpPaymen
 	if amountCurrency == "CNY" {
 		baseAmountUSD = baseAmountUSD / rate
 	} else if amountCurrency != "USD" {
-		return nil, repository.ErrInvalidInput
+		return nil, ErrInvalidPaymentOrder
 	}
 	creditNanousd := usdToNanousd(baseAmountUSD)
 	baseAmountCents := int64(math.Round(baseAmountUSD * 100))
@@ -893,7 +951,7 @@ func (s *Service) CreateTopUpPaymentOrder(ctx context.Context, input TopUpPaymen
 		quote.PayAmountCents = int64(math.Round(baseAmountUSD * rate * 100))
 	}
 	if quote.BaseAmountCents <= 0 || quote.PayAmountCents <= 0 || creditNanousd <= 0 {
-		return nil, repository.ErrInvalidInput
+		return nil, ErrInvalidPaymentOrder
 	}
 
 	orderNo, err := generateOrderNo()
@@ -902,7 +960,7 @@ func (s *Service) CreateTopUpPaymentOrder(ctx context.Context, input TopUpPaymen
 	}
 	now := time.Now()
 	expiredAt := now.Add(30 * time.Minute)
-	snapshot := map[string]interface{}{
+	snapshot := map[string]any{
 		"order_type":         domainbilling.PaymentOrderTypeTopUp,
 		"base_currency":      quote.BaseCurrency,
 		"base_amount_cents":  quote.BaseAmountCents,
@@ -918,7 +976,7 @@ func (s *Service) CreateTopUpPaymentOrder(ctx context.Context, input TopUpPaymen
 	if raw, marshalErr := json.Marshal(snapshot); marshalErr == nil {
 		snapshotJSON = string(raw)
 	}
-	return s.repo.CreatePaymentOrder(ctx, &domainbilling.PaymentOrder{
+	order, err := s.repo.CreatePaymentOrder(ctx, &domainbilling.PaymentOrder{
 		OrderNo:         orderNo,
 		OrderType:       domainbilling.PaymentOrderTypeTopUp,
 		UserID:          input.UserID,
@@ -935,6 +993,10 @@ func (s *Service) CreateTopUpPaymentOrder(ctx context.Context, input TopUpPaymen
 		ExpiredAt:       &expiredAt,
 		SnapshotJSON:    snapshotJSON,
 	})
+	if errors.Is(err, repository.ErrInvalidInput) {
+		return nil, ErrInvalidPaymentOrder
+	}
+	return order, err
 }
 
 // AttachPaymentCheckout 保存外部收银台信息。
@@ -944,13 +1006,26 @@ func (s *Service) AttachPaymentCheckout(ctx context.Context, orderNo string, ext
 
 // GetPaymentOrder 查询支付单。
 func (s *Service) GetPaymentOrder(ctx context.Context, orderNo string) (*domainbilling.PaymentOrder, error) {
-	return s.repo.GetPaymentOrderByOrderNo(ctx, orderNo)
+	order, err := s.repo.GetPaymentOrderByOrderNo(ctx, orderNo)
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, ErrPaymentOrderNotFound
+	}
+	if errors.Is(err, repository.ErrInvalidInput) {
+		return nil, ErrInvalidPaymentOrder
+	}
+	return order, err
 }
 
 // CompletePaymentOrder 支付成功后开通订阅。
 func (s *Service) CompletePaymentOrder(ctx context.Context, orderNo string, externalPaymentID string, paidAt time.Time) (*domainbilling.PaymentOrder, bool, error) {
 	order, err := s.repo.GetPaymentOrderByOrderNo(ctx, orderNo)
 	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, false, ErrPaymentOrderNotFound
+		}
+		if errors.Is(err, repository.ErrInvalidInput) {
+			return nil, false, ErrInvalidPaymentOrder
+		}
 		return nil, false, err
 	}
 	if order.Status == domainbilling.PaymentStatusPaid {
@@ -960,7 +1035,14 @@ func (s *Service) CompletePaymentOrder(ctx context.Context, orderNo string, exte
 		paidAt = time.Now()
 	}
 	if order.OrderType == domainbilling.PaymentOrderTypeTopUp {
-		return s.repo.MarkPaymentOrderPaidAndCreditBalance(ctx, orderNo, externalPaymentID, paidAt)
+		result, credited, err := s.repo.MarkPaymentOrderPaidAndCreditBalance(ctx, orderNo, externalPaymentID, paidAt)
+		if errors.Is(err, repository.ErrInvalidInput) {
+			return nil, false, ErrPaymentOrderStateInvalid
+		}
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, false, ErrPaymentOrderNotFound
+		}
+		return result, credited, err
 	}
 	endAt := resolvePeriodEnd(paidAt, order.BillingInterval, order.Cycles)
 	subscription := &domainbilling.Subscription{
@@ -975,7 +1057,14 @@ func (s *Service) CompletePaymentOrder(ctx context.Context, orderNo string, exte
 		CanceledAt:           nil,
 		AutoRenew:            order.BillingInterval != domainbilling.IntervalLifetime,
 	}
-	return s.repo.MarkPaymentOrderPaidAndGrantSubscription(ctx, orderNo, externalPaymentID, paidAt, subscription)
+	result, activated, err := s.repo.MarkPaymentOrderPaidAndGrantSubscription(ctx, orderNo, externalPaymentID, paidAt, subscription)
+	if errors.Is(err, repository.ErrInvalidInput) {
+		return nil, false, ErrPaymentOrderStateInvalid
+	}
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, false, ErrPaymentOrderNotFound
+	}
+	return result, activated, err
 }
 
 // UpdatePlan 保存周期套餐与默认价格。
@@ -998,11 +1087,10 @@ func (s *Service) UpdatePlan(ctx context.Context, planID uint, input PlanUpdateI
 	plan := &domainbilling.Plan{
 		ID:                  current.ID,
 		Code:                current.Code,
-		Name:                firstNonEmpty(input.Name, current.Name),
+		Name:                textutil.FirstNonEmpty(input.Name, current.Name),
 		Description:         strings.TrimSpace(input.Description),
 		FeatureJSON:         current.FeatureJSON,
 		PeriodCreditNanousd: clampNonNegative(input.PeriodCreditNanousd),
-		DiscountPercent:     clampPercent(input.DiscountPercent),
 		SortOrder:           current.SortOrder,
 		IsActive:            true,
 		PermissionGroupID:   permissionGroupID,
@@ -1010,7 +1098,7 @@ func (s *Service) UpdatePlan(ctx context.Context, planID uint, input PlanUpdateI
 	price := &domainbilling.Price{
 		PlanID:          current.ID,
 		Code:            current.Code + "-default",
-		BillingInterval: normalizeInterval(input.BillingInterval),
+		BillingInterval: domainbilling.NormalizeInterval(input.BillingInterval),
 		Currency:        "USD",
 		AmountCents:     clampNonNegative(input.AmountCents),
 		IsActive:        true,
@@ -1026,7 +1114,6 @@ func (s *Service) UpdatePlan(ctx context.Context, planID uint, input PlanUpdateI
 		Description:         plan.Description,
 		FeatureJSON:         plan.FeatureJSON,
 		PeriodCreditNanousd: plan.PeriodCreditNanousd,
-		DiscountPercent:     plan.DiscountPercent,
 		SortOrder:           plan.SortOrder,
 		IsActive:            plan.IsActive,
 		PermissionGroupID:   plan.PermissionGroupID,
@@ -1166,7 +1253,7 @@ func (s *Service) AuthorizeUsage(ctx context.Context, userID uint, platformModel
 		return nil, err
 	}
 	mode = strings.TrimSpace(mode)
-	authorization := &domainbilling.UsageAuthorization{Mode: mode}
+	authorization := &domainbilling.UsageAuthorization{Mode: mode, RefNo: strings.TrimSpace(refNo)}
 	if mode != "usage" && mode != "period" {
 		return authorization, nil
 	}
@@ -1180,7 +1267,7 @@ func (s *Service) AuthorizeUsage(ctx context.Context, userID uint, platformModel
 	if pricing.IsFree {
 		return authorization, nil
 	}
-	if normalizePricingMode(pricing.PricingMode) == domainbilling.PricingModeDuration {
+	if domainbilling.NormalizePricingMode(pricing.PricingMode) == domainbilling.PricingModeDuration {
 		if s.modelPricingCatalog == nil {
 			return nil, ErrModelPricingRequired
 		}
@@ -1198,7 +1285,7 @@ func (s *Service) AuthorizeUsage(ctx context.Context, userID uint, platformModel
 	}
 	request := domainbilling.UsageBalanceReservationRequest{
 		UserID:           userID,
-		RefNo:            strings.TrimSpace(refNo),
+		RefNo:            authorization.RefNo,
 		Mode:             mode,
 		RequestedNanousd: reservationNanousd,
 	}
@@ -1227,6 +1314,138 @@ func (s *Service) AuthorizeUsage(ctx context.Context, userID uint, platformModel
 	}
 	authorization.Reservation = reservation
 	return authorization, nil
+}
+
+// UsageEstimateInput 描述请求形状确定后可预估的成本要素。尚未发生的输入按非缓存单价估算
+// （缓存命中只会更便宜），已观测的缓存读写按各自单价计入；OutputTokens 是计费输出总量
+// （可见输出 + 思考），尚未发生的部分只计入请求明确限定的最大输出，未限定时为 0。
+type UsageEstimateInput struct {
+	PlatformModelName  string
+	ProviderProtocol   string
+	UpstreamModelName  string
+	CacheTimeout       string
+	RequestSpeed       string
+	RequestServiceTier string
+	InputTokens        int64
+	CacheReadTokens    int64
+	CacheWriteTokens   int64
+	OutputTokens       int64
+	CallCount          int64
+	DurationSeconds    int64
+}
+
+// usageEstimateTokenRates 是一次估算使用的基础单价（纳美元/百万 token），倍率在计算时统一套用。
+type usageEstimateTokenRates struct {
+	input      int64
+	cacheRead  int64
+	cacheWrite int64
+	output     int64
+}
+
+func calcEstimatedTokenNanousd(input UsageEstimateInput, rates usageEstimateTokenRates, multiplier billingRateMultiplier) int64 {
+	return calcNanousdByToken(clampNonNegative(input.InputTokens), applyRateMultiplier(rates.input, multiplier)) +
+		calcNanousdByToken(clampNonNegative(input.CacheReadTokens), applyRateMultiplier(rates.cacheRead, multiplier)) +
+		calcNanousdByToken(clampNonNegative(input.CacheWriteTokens), applyRateMultiplier(rates.cacheWrite, multiplier)) +
+		calcNanousdByToken(clampNonNegative(input.OutputTokens), applyRateMultiplier(rates.output, multiplier))
+}
+
+// EstimateUsageNanousd 按模型定价与用户费率估算一次调用的成本，用于在上游调用前校验预算。
+// 与账本使用同一套单价、阶梯、速度档位与权限组倍率；免费模型或未配置价格返回 0。
+func (s *Service) EstimateUsageNanousd(ctx context.Context, userID uint, input UsageEstimateInput) (int64, error) {
+	platformModelName := strings.TrimSpace(input.PlatformModelName)
+	identity, err := s.resolvePlatformModelIdentity(ctx, platformModelName)
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		return 0, err
+	}
+	pricing, err := s.getResolvedModelPricing(ctx, platformModelName)
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+		return 0, err
+	}
+	if pricing == nil || pricing.IsFree {
+		return 0, nil
+	}
+	providerProtocol := strings.TrimSpace(input.ProviderProtocol)
+	requestSpeed := normalizeUsageSpeed(input.RequestSpeed)
+	requestServiceTier := normalizeOpenAIServiceTier(input.RequestServiceTier)
+	rateMultiplier := resolveUsageRateMultiplier(
+		providerProtocol,
+		platformModelName,
+		input.UpstreamModelName,
+		isAnthropicFastMode(providerProtocol, "", requestSpeed),
+		resolveBillingServiceTier(providerProtocol, requestServiceTier),
+	)
+	snap, err := s.GetCurrentSubscriptionSnapshot(ctx, userID, time.Now())
+	if err != nil {
+		return 0, err
+	}
+	var subGroupID *uint
+	if snap != nil {
+		subGroupID = snap.PermissionGroupID
+	}
+	groupRatePercent, err := s.resolveGroupRatePercent(ctx, userID, identity.PlatformModelID, subGroupID)
+	if err != nil {
+		return 0, err
+	}
+	rateMultiplier = composeRatePercent(rateMultiplier, groupRatePercent)
+	if schedule := resolveSchedulePeriodJSON(pricing.SchedulePricingJSON, time.Now()); schedule != nil {
+		rateMultiplier = composeRatePercent(rateMultiplier, schedule.RatePercent)
+	}
+
+	switch domainbilling.NormalizePricingMode(pricing.PricingMode) {
+	case domainbilling.PricingModeCall:
+		callCount := input.CallCount
+		if callCount <= 0 {
+			callCount = 1
+		}
+		return callCount * applyRateMultiplier(pricing.CallNanousdPerCall, rateMultiplier), nil
+	case domainbilling.PricingModeDuration:
+		return clampNonNegative(input.DurationSeconds) * applyRateMultiplier(pricing.DurationNanousdPerSecond, rateMultiplier), nil
+	case domainbilling.PricingModeTiered:
+		tiers, err := parseTieredPricingTiers(pricing.TieredPricingJSON)
+		if err != nil {
+			return 0, err
+		}
+		// 阶梯与账本一致：按输入侧总量（非缓存 + 缓存读 + 缓存写）选档。
+		tier := resolveTieredPricingTier(tieredPricingInputTokens(input.InputTokens, input.CacheReadTokens, input.CacheWriteTokens), tiers).tier
+		return calcEstimatedTokenNanousd(input, usageEstimateTokenRates{
+			input:      tier.inputNanousdPerMTokens,
+			cacheRead:  tierCacheReadRate(tier),
+			cacheWrite: resolveCacheWriteNanousdPerMTokens(tierCacheWriteRate(tier), pricing.CacheWritePriceBasis, providerProtocol, input.CacheTimeout),
+			output:     tier.outputNanousdPerMTokens,
+		}, rateMultiplier), nil
+	default:
+		return calcEstimatedTokenNanousd(input, usageEstimateTokenRates{
+			input:      pricing.InputNanousdPerMTokens,
+			cacheRead:  pricing.CacheReadNanousdPerMTokens,
+			cacheWrite: resolveCacheWriteNanousdPerMTokens(pricing.CacheWriteNanousdPerMTokens, pricing.CacheWritePriceBasis, providerProtocol, input.CacheTimeout),
+			output:     pricing.OutputNanousdPerMTokens,
+		}, rateMultiplier), nil
+	}
+}
+
+// EnsureUsageAuthorizationBudget 在请求形状确定后把预算预留抬高到不低于 requiredNanousd。
+// 授权时的预留只是管理端配置的风险预算，这里用真实请求形状的预估成本补足，让余额不足的请求
+// 在产生任何上游费用之前被拒绝。没有预留（self 模式、免费模型）或预留已足够时无操作。
+// 结算按数据库中的预留行进行，授权快照只用于定位预留，因此这里不回写内存中的金额。
+func (s *Service) EnsureUsageAuthorizationBudget(ctx context.Context, authorization *domainbilling.UsageAuthorization, requiredNanousd int64) error {
+	if authorization == nil || authorization.Reservation == nil || requiredNanousd <= 0 {
+		return nil
+	}
+	reservation := authorization.Reservation
+	if requiredNanousd <= reservation.BalanceNanousd+reservation.PeriodCreditNanousd {
+		return nil
+	}
+	err := s.repo.RaiseUsageBalanceReservation(ctx, reservation.UserID, reservation.RefNo, requiredNanousd)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, repository.ErrInsufficientBalance):
+		return ErrUsageBalanceInsufficient
+	case errors.Is(err, repository.ErrConflict):
+		return ErrUsageReservationConflict
+	default:
+		return err
+	}
 }
 
 // ReleaseUsageAuthorization 在调用未产生可计费用量时释放预算。
@@ -1442,7 +1661,6 @@ func toBillingPlanView(plan domainbilling.Plan) BillingPlanView {
 		Description:         plan.Description,
 		FeatureJSON:         plan.FeatureJSON,
 		PeriodCreditNanousd: plan.PeriodCreditNanousd,
-		DiscountPercent:     plan.DiscountPercent,
 		SortOrder:           plan.SortOrder,
 		IsActive:            plan.IsActive,
 	}
@@ -1507,8 +1725,10 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 		input.CacheTimeout,
 	)
 	mode := ""
+	refNo := ""
 	if input.Authorization != nil {
 		mode = strings.TrimSpace(input.Authorization.Mode)
+		refNo = strings.TrimSpace(input.Authorization.RefNo)
 	}
 	if mode == "" {
 		mode, err = s.repo.GetBillingMode(ctx)
@@ -1531,17 +1751,29 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 		if grpErr != nil {
 			return nil, grpErr
 		}
-		rateMultiplier = composeGroupRatePercent(rateMultiplier, groupRatePercent)
+		rateMultiplier = composeRatePercent(rateMultiplier, groupRatePercent)
 	}
 	pricing, err := s.repo.GetModelPricing(ctx, platformModelName)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return nil, err
 	}
+	// 时段按账本时间命中，预留与结算在同一时刻语义下保持一致。
+	ledgerAt := input.BillingAt
+	if ledgerAt.IsZero() {
+		ledgerAt = time.Now()
+	}
+	var schedulePeriod *ResolvedSchedulePeriod
+	if mode != "self" && pricing != nil && !pricing.IsFree {
+		schedulePeriod = resolveSchedulePeriodJSON(pricing.SchedulePricingJSON, ledgerAt)
+		if schedulePeriod != nil {
+			rateMultiplier = composeRatePercent(rateMultiplier, schedulePeriod.RatePercent)
+		}
+	}
 	if mode != "self" && !input.ServiceOnly && pricing == nil {
 		// 授权后价格被删除时必须进入待核对流程，不能把已发生的上游用量静默记为 0。
 		return nil, ErrModelPricingRequired
 	}
-	if mode != "self" && !input.ServiceOnly && pricing != nil && !pricing.IsFree && normalizePricingMode(pricing.PricingMode) == domainbilling.PricingModeDuration {
+	if mode != "self" && !input.ServiceOnly && pricing != nil && !pricing.IsFree && domainbilling.NormalizePricingMode(pricing.PricingMode) == domainbilling.PricingModeDuration {
 		if !input.DurationBillable || input.DurationSeconds <= 0 {
 			// 请求开始后的模型能力或结果状态发生变化时，宁可进入待核对流程，也不能静默记成零费用。
 			return nil, ErrModelPricingRequired
@@ -1566,13 +1798,23 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 	var cacheWrite5mNanousdPerMTokens int64
 	var cacheWrite1hNanousdPerMTokens int64
 	var tieredPricingJSON string
+	var schedulePricingJSON string
+	var cacheWritePriceBasis string
 	var tieredTiers []tieredPricingTier
 	pricingMode := domainbilling.PricingModeToken
 	isFreeModel := pricing != nil && pricing.IsFree
 	if pricing != nil {
 		currency = pricing.Currency
-		pricingMode = normalizePricingMode(pricing.PricingMode)
+		cacheWritePriceBasis = pricing.CacheWritePriceBasis
+		pricingMode = domainbilling.NormalizePricingMode(pricing.PricingMode)
 		tieredPricingJSON = strings.TrimSpace(pricing.TieredPricingJSON)
+		schedulePricingJSON = strings.TrimSpace(pricing.SchedulePricingJSON)
+	}
+	schedulePeriodName := ""
+	scheduleRatePercent := 0
+	if schedulePeriod != nil {
+		schedulePeriodName = schedulePeriod.Name
+		scheduleRatePercent = schedulePeriod.RatePercent
 	}
 	if !input.ServiceOnly && mode != "self" && pricing != nil && !pricing.IsFree {
 		switch pricingMode {
@@ -1592,16 +1834,19 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 			baseCacheReadNanousdPerMTokens = pricing.CacheReadNanousdPerMTokens
 			baseCacheWriteNanousdPerMTokens = resolveCacheWriteNanousdPerMTokens(
 				pricing.CacheWriteNanousdPerMTokens,
+				pricing.CacheWritePriceBasis,
 				providerProtocol,
 				input.CacheTimeout,
 			)
 			baseCacheWrite5mNanousdPerMTokens = resolveCacheWriteNanousdPerMTokens(
 				pricing.CacheWriteNanousdPerMTokens,
+				pricing.CacheWritePriceBasis,
 				providerProtocol,
 				"5m",
 			)
 			baseCacheWrite1hNanousdPerMTokens = resolveCacheWriteNanousdPerMTokens(
 				pricing.CacheWriteNanousdPerMTokens,
+				pricing.CacheWritePriceBasis,
 				providerProtocol,
 				"1h",
 			)
@@ -1654,16 +1899,19 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 			baseCacheReadNanousdPerMTokens = tierCacheReadRate(tier)
 			baseCacheWriteNanousdPerMTokens = resolveCacheWriteNanousdPerMTokens(
 				tierCacheWriteRate(tier),
+				pricing.CacheWritePriceBasis,
 				providerProtocol,
 				input.CacheTimeout,
 			)
 			baseCacheWrite5mNanousdPerMTokens = resolveCacheWriteNanousdPerMTokens(
 				tierCacheWriteRate(tier),
+				pricing.CacheWritePriceBasis,
 				providerProtocol,
 				"5m",
 			)
 			baseCacheWrite1hNanousdPerMTokens = resolveCacheWriteNanousdPerMTokens(
 				tierCacheWriteRate(tier),
+				pricing.CacheWritePriceBasis,
 				providerProtocol,
 				"1h",
 			)
@@ -1707,15 +1955,30 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 	if err != nil {
 		nativeToolPricingOverrides = map[string]nativetool.PricingOverride{}
 	}
-	nativeToolItems, nativeToolBilledNanousd := buildNativeToolServiceItems(input, mode, isFreeModel, nativeToolBillingEnabled, nativeToolPricingOverrides, nativeToolDefinitions)
+	nativeToolItems, nativeToolBilledNanousd := buildNativeToolServiceItems(nativeToolServiceItemsInput{
+		Usage:            input,
+		BillingMode:      mode,
+		FreeModel:        isFreeModel,
+		BillingEnabled:   nativeToolBillingEnabled,
+		PricingOverrides: nativeToolPricingOverrides,
+		Definitions:      nativeToolDefinitions,
+	})
 	if len(nativeToolItems) > 0 {
 		serviceItems = append(serviceItems, nativeToolItems...)
 		serviceBilledNanousd += nativeToolBilledNanousd
 	}
+	mcpToolItems, mcpToolBilledNanousd := buildMCPToolServiceItems(input, mode)
+	if len(mcpToolItems) > 0 {
+		serviceItems = append(serviceItems, mcpToolItems...)
+		serviceBilledNanousd += mcpToolBilledNanousd
+	}
 	billedNanousd := inputBilledNanousd + cacheReadBilledNanousd + cacheWriteBilledNanousd + outputBilledNanousd + callBilledNanousd + durationBilledNanousd + serviceBilledNanousd
 	cacheWriteNanousdPerMTokens = resolveSnapshotRateFromBilled(cacheWriteTokens, cacheWriteBilledNanousd, cacheWriteNanousdPerMTokens)
+	// 免费模型仅豁免模型本身费用；MCP 等服务项费用仍需结算。
+	// 结算层会对免费标记整单清零，因此只有整单为 0 才落免费标记。
+	ledgerIsFreeModel := isFreeModel && billedNanousd <= 0
 
-	snapshot := map[string]interface{}{
+	snapshot := map[string]any{
 		"platform_model_name":                      platformModelName,
 		"routed_binding_code":                      strings.TrimSpace(input.RoutedBindingCode),
 		"model_vendor":                             strings.TrimSpace(identity.ModelVendor),
@@ -1724,6 +1987,8 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 		"upstream_name":                            strings.TrimSpace(input.UpstreamName),
 		"upstream_model_name":                      strings.TrimSpace(input.UpstreamModelName),
 		"cache_timeout":                            billingCacheTimeoutSnapshot(providerProtocol, input.CacheTimeout),
+		"cache_write_5m_multiplier":                cacheWritePriceMultiplier(cacheWritePriceBasis, providerProtocol, "5m"),
+		"cache_write_1h_multiplier":                cacheWritePriceMultiplier(cacheWritePriceBasis, providerProtocol, "1h"),
 		"request_speed":                            requestSpeed,
 		"usage_speed":                              usageSpeed,
 		"billing_speed":                            billingSpeed,
@@ -1735,7 +2000,8 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 		"billing_mode":                             mode,
 		"pricing_mode":                             pricingMode,
 		"duration_billable":                        input.DurationBillable,
-		"is_free_model":                            isFreeModel,
+		"service_only":                             input.ServiceOnly,
+		"is_free_model":                            ledgerIsFreeModel,
 		"currency":                                 currency,
 		"input_nanousd_per_m_tokens":               inputNanousdPerMTokens,
 		"cache_read_nanousd_per_m_tokens":          cacheReadNanousdPerMTokens,
@@ -1758,6 +2024,9 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 		"tiered_pricing_json":                      tieredPricingJSON,
 		"tiered_from_tokens":                       tieredFromTokens,
 		"tiered_up_to_tokens":                      tieredUpToTokens,
+		"schedule_pricing_json":                    schedulePricingJSON,
+		"schedule_period_name":                     schedulePeriodName,
+		"schedule_rate_percent":                    scheduleRatePercent,
 		"input_billed_nanousd":                     inputBilledNanousd,
 		"cache_read_billed_nanousd":                cacheReadBilledNanousd,
 		"cache_write_billed_nanousd":               cacheWriteBilledNanousd,
@@ -1771,6 +2040,8 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 		"native_tool_billing_enabled":              nativeToolBillingEnabled,
 		"native_tool_pricing_source":               nativeToolPricingSourceForSnapshot(nativeToolPricingJSON, nativeToolDefinitions),
 		"native_tool_billed_nanousd":               nativeToolBilledNanousd,
+		"mcp_tool_usage":                           mcpToolUsageSnapshots(input.MCPToolUsage),
+		"mcp_tool_billed_nanousd":                  mcpToolBilledNanousd,
 		"base_service_billed_nanousd":              serviceBilledNanousd,
 		"service_items":                            usageServiceItemSnapshots(serviceItems),
 	}
@@ -1785,27 +2056,28 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 	if usageSource := strings.TrimSpace(input.UsageSource); usageSource != "" {
 		snapshot["usage_source"] = usageSource
 	}
+	if billedReason := strings.TrimSpace(input.BilledReason); billedReason != "" {
+		snapshot["billed_reason"] = billedReason
+	}
 	snapshotJSON := "{}"
 	if raw, marshalErr := json.Marshal(snapshot); marshalErr == nil {
 		snapshotJSON = string(raw)
 	}
 
-	billingAt := input.BillingAt
-	if billingAt.IsZero() {
-		billingAt = time.Now()
-	}
+	billingAt := ledgerAt
 	usageDateYear, usageDateMonth, usageDateDay := billingAt.Date()
 	usageDate := time.Date(usageDateYear, usageDateMonth, usageDateDay, 0, 0, 0, 0, billingAt.Location())
 
 	ledger := &domainbilling.UsageLedger{
 		UserID:              input.UserID,
+		RefNo:               refNo,
 		ConversationID:      input.ConversationID,
 		ProviderProtocol:    providerProtocol,
 		UpstreamName:        strings.TrimSpace(input.UpstreamName),
 		PlatformModelName:   platformModelName,
 		RoutedBindingCode:   strings.TrimSpace(input.RoutedBindingCode),
 		UpstreamModelName:   strings.TrimSpace(input.UpstreamModelName),
-		IsFreeModel:         isFreeModel,
+		IsFreeModel:         ledgerIsFreeModel,
 		BillingAt:           billingAt,
 		UsageDate:           usageDate,
 		InputTokens:         input.InputTokens,
@@ -1839,7 +2111,7 @@ func monthBounds(now time.Time) (time.Time, time.Time) {
 
 // ListModelPricing 分页查询模型单价，并补充平台模型身份。
 func (s *Service) ListModelPricing(ctx context.Context, query string, page int, pageSize int) ([]ModelPricingView, int64, error) {
-	offset, limit := normalizePage(page, pageSize)
+	offset, limit := pagination.Offset(page, pageSize)
 	if s.modelPricingCatalog == nil {
 		items, total, err := s.repo.ListModelPricing(ctx, query, offset, limit)
 		if err != nil {
@@ -1914,20 +2186,25 @@ func clonePublicModelPricingMap(input map[string]PublicModelPricing) map[string]
 		if len(value.Tiers) > 0 {
 			value.Tiers = append([]PublicModelPricingTier(nil), value.Tiers...)
 		}
+		if len(value.SchedulePeriods) > 0 {
+			value.SchedulePeriods = append([]PublicSchedulePeriod(nil), value.SchedulePeriods...)
+		}
 		result[key] = value
 	}
 	return result
 }
 
 func toPublicModelPricing(item domainbilling.ModelPricing) PublicModelPricing {
-	mode := normalizePricingMode(item.PricingMode)
+	mode := domainbilling.NormalizePricingMode(item.PricingMode)
 	result := PublicModelPricing{
-		Currency:                firstNonEmpty(item.Currency, "USD"),
+		Currency:                textutil.FirstNonEmpty(item.Currency, "USD"),
 		IsFree:                  item.IsFree,
 		Mode:                    mode,
 		InputUSDPerMTokens:      nanousdToUSD(item.InputNanousdPerMTokens),
 		CacheReadUSDPerMTokens:  nanousdToUSD(item.CacheReadNanousdPerMTokens),
 		CacheWriteUSDPerMTokens: nanousdToUSD(item.CacheWriteNanousdPerMTokens),
+		CacheWrite5mMultiplier:  cacheWritePriceMultiplier(item.CacheWritePriceBasis, "anthropic_messages", "5m"),
+		CacheWrite1hMultiplier:  cacheWritePriceMultiplier(item.CacheWritePriceBasis, "anthropic_messages", "1h"),
 		OutputUSDPerMTokens:     nanousdToUSD(item.OutputNanousdPerMTokens),
 		CallUSDPerCall:          nanousdToUSD(item.CallNanousdPerCall),
 		DurationUSDPerSecond:    nanousdToUSD(item.DurationNanousdPerSecond),
@@ -1937,6 +2214,20 @@ func toPublicModelPricing(item domainbilling.ModelPricing) PublicModelPricing {
 		if err == nil {
 			result.Tiers = toPublicModelPricingTiers(tiers)
 		}
+	}
+	if periods, err := parseSchedulePeriods(item.SchedulePricingJSON); err == nil && len(periods) > 0 {
+		result.SchedulePeriods = make([]PublicSchedulePeriod, 0, len(periods))
+		for _, period := range periods {
+			result.SchedulePeriods = append(result.SchedulePeriods, PublicSchedulePeriod{
+				Name:        period.Name,
+				Weekdays:    append([]int(nil), period.Weekdays...),
+				Start:       period.Start,
+				End:         period.End,
+				RatePercent: period.RatePercent,
+			})
+		}
+		_, offset := time.Now().Zone()
+		result.ScheduleUTCOffsetMinutes = offset / 60
 	}
 	return result
 }
@@ -1974,6 +2265,11 @@ func nanousdToUSD(value int64) float64 {
 
 // UpsertModelPricing 保存模型单价。
 func (s *Service) UpsertModelPricing(ctx context.Context, input ModelPricingInput) (*ModelPricingView, error) {
+	switch input.CacheWritePriceBasis {
+	case "", domainbilling.CacheWritePriceBasisDirect, domainbilling.CacheWritePriceBasisAnthropic5m:
+	default:
+		return nil, ErrInvalidModelPricing
+	}
 	platformModelName := strings.TrimSpace(input.PlatformModelName)
 	if platformModelName == "" {
 		return nil, ErrInvalidModelPricing
@@ -1984,7 +2280,7 @@ func (s *Service) UpsertModelPricing(ctx context.Context, input ModelPricingInpu
 		}
 		return nil, err
 	}
-	pricingMode := normalizePricingMode(input.PricingMode)
+	pricingMode := domainbilling.NormalizePricingMode(input.PricingMode)
 	if pricingMode == domainbilling.PricingModeDuration {
 		if s.modelPricingCatalog == nil {
 			return nil, ErrInvalidModelPricing
@@ -2021,6 +2317,10 @@ func (s *Service) UpsertModelPricing(ctx context.Context, input ModelPricingInpu
 		cacheWriteNanousdPerMTokens = clampNonNegative(input.CacheWriteNanousdPerMTokens)
 		outputNanousdPerMTokens = clampNonNegative(input.OutputNanousdPerMTokens)
 	}
+	schedulePricingJSON, err := normalizeSchedulePricingJSON(input.SchedulePricingJSON)
+	if err != nil {
+		return nil, ErrInvalidModelPricing
+	}
 	item, err := s.repo.UpsertModelPricing(ctx, &domainbilling.ModelPricing{
 		PlatformModelName:           platformModelName,
 		Currency:                    "USD",
@@ -2029,10 +2329,12 @@ func (s *Service) UpsertModelPricing(ctx context.Context, input ModelPricingInpu
 		InputNanousdPerMTokens:      inputNanousdPerMTokens,
 		CacheReadNanousdPerMTokens:  cacheReadNanousdPerMTokens,
 		CacheWriteNanousdPerMTokens: cacheWriteNanousdPerMTokens,
+		CacheWritePriceBasis:        input.CacheWritePriceBasis,
 		OutputNanousdPerMTokens:     outputNanousdPerMTokens,
 		CallNanousdPerCall:          callNanousdPerCall,
 		DurationNanousdPerSecond:    durationNanousdPerSecond,
 		TieredPricingJSON:           tieredPricingJSON,
+		SchedulePricingJSON:         schedulePricingJSON,
 	})
 	if err != nil {
 		if errors.Is(err, repository.ErrInvalidInput) || errors.Is(err, repository.ErrModelNotFound) {
@@ -2065,10 +2367,10 @@ func (s *Service) buildUsageServiceItems(ctx context.Context, inputs []ServiceUs
 	return results, total, nil
 }
 
-func usageServiceItemSnapshots(items []domainbilling.UsageServiceItem) []map[string]interface{} {
-	results := make([]map[string]interface{}, 0, len(items))
+func usageServiceItemSnapshots(items []domainbilling.UsageServiceItem) []map[string]any {
+	results := make([]map[string]any, 0, len(items))
 	for _, item := range items {
-		results = append(results, map[string]interface{}{
+		results = append(results, map[string]any{
 			"service_code":                        item.ServiceCode,
 			"service_name":                        item.ServiceName,
 			"platform_model_name":                 item.PlatformModelName,
@@ -2082,6 +2384,8 @@ func usageServiceItemSnapshots(items []domainbilling.UsageServiceItem) []map[str
 			"billing_service_tier":                item.BillingServiceTier,
 			"fast_mode":                           item.FastMode,
 			"rate_multiplier":                     item.RateMultiplier,
+			"schedule_period_name":                item.SchedulePeriodName,
+			"schedule_rate_percent":               item.ScheduleRatePercent,
 			"pricing_mode":                        item.PricingMode,
 			"input_tokens":                        item.InputTokens,
 			"cache_read_tokens":                   item.CacheReadTokens,
@@ -2171,7 +2475,7 @@ func (s *Service) buildUsageServiceItem(ctx context.Context, input ServiceUsageI
 		if err != nil {
 			return item, err
 		}
-		rateMultiplier = composeGroupRatePercent(rateMultiplier, groupRatePercent)
+		rateMultiplier = composeRatePercent(rateMultiplier, groupRatePercent)
 		item.RateMultiplier = billingRateMultiplierValue(rateMultiplier)
 	}
 	var pricing *domainbilling.ModelPricing
@@ -2194,7 +2498,13 @@ func (s *Service) buildUsageServiceItem(ctx context.Context, input ServiceUsageI
 	if pricing.IsFree {
 		return item, nil
 	}
-	item.PricingMode = normalizePricingMode(pricing.PricingMode)
+	if schedule := resolveSchedulePeriodJSON(pricing.SchedulePricingJSON, time.Now()); schedule != nil {
+		rateMultiplier = composeRatePercent(rateMultiplier, schedule.RatePercent)
+		item.RateMultiplier = billingRateMultiplierValue(rateMultiplier)
+		item.SchedulePeriodName = schedule.Name
+		item.ScheduleRatePercent = schedule.RatePercent
+	}
+	item.PricingMode = domainbilling.NormalizePricingMode(pricing.PricingMode)
 	switch item.PricingMode {
 	case domainbilling.PricingModeCall:
 		item.CallNanousdPerCall = applyRateMultiplier(pricing.CallNanousdPerCall, rateMultiplier)
@@ -2216,16 +2526,19 @@ func (s *Service) buildUsageServiceItem(ctx context.Context, input ServiceUsageI
 		baseCacheReadNanousdPerMTokens := tierCacheReadRate(tier)
 		baseCacheWriteNanousdPerMTokens := resolveCacheWriteNanousdPerMTokens(
 			tierCacheWriteRate(tier),
+			pricing.CacheWritePriceBasis,
 			input.ProviderProtocol,
 			input.CacheTimeout,
 		)
 		baseCacheWrite5mNanousdPerMTokens := resolveCacheWriteNanousdPerMTokens(
 			tierCacheWriteRate(tier),
+			pricing.CacheWritePriceBasis,
 			input.ProviderProtocol,
 			"5m",
 		)
 		baseCacheWrite1hNanousdPerMTokens := resolveCacheWriteNanousdPerMTokens(
 			tierCacheWriteRate(tier),
+			pricing.CacheWritePriceBasis,
 			input.ProviderProtocol,
 			"1h",
 		)
@@ -2248,16 +2561,19 @@ func (s *Service) buildUsageServiceItem(ctx context.Context, input ServiceUsageI
 		baseCacheReadNanousdPerMTokens := pricing.CacheReadNanousdPerMTokens
 		baseCacheWriteNanousdPerMTokens := resolveCacheWriteNanousdPerMTokens(
 			pricing.CacheWriteNanousdPerMTokens,
+			pricing.CacheWritePriceBasis,
 			input.ProviderProtocol,
 			input.CacheTimeout,
 		)
 		baseCacheWrite5mNanousdPerMTokens := resolveCacheWriteNanousdPerMTokens(
 			pricing.CacheWriteNanousdPerMTokens,
+			pricing.CacheWritePriceBasis,
 			input.ProviderProtocol,
 			"5m",
 		)
 		baseCacheWrite1hNanousdPerMTokens := resolveCacheWriteNanousdPerMTokens(
 			pricing.CacheWriteNanousdPerMTokens,
+			pricing.CacheWritePriceBasis,
 			input.ProviderProtocol,
 			"1h",
 		)
@@ -2287,7 +2603,7 @@ func (s *Service) buildUsageServiceItem(ctx context.Context, input ServiceUsageI
 
 // ListUsage 分页查询账本。
 func (s *Service) ListUsage(ctx context.Context, userID uint, page int, pageSize int, filter UsageListFilter) ([]domainbilling.UsageLedger, int64, error) {
-	offset, limit := normalizePage(page, pageSize)
+	offset, limit := pagination.Offset(page, pageSize)
 	return s.repo.ListUsageByUser(ctx, userID, repository.UsageListFilter{
 		Query:  filter.Query,
 		Status: filter.Status,
@@ -2297,7 +2613,7 @@ func (s *Service) ListUsage(ctx context.Context, userID uint, page int, pageSize
 
 // ListUsageLogs 分页查询管理员调用日志。
 func (s *Service) ListUsageLogs(ctx context.Context, page int, pageSize int, filter UsageLogListFilter) ([]domainbilling.UsageLedger, int64, error) {
-	offset, limit := normalizePage(page, pageSize)
+	offset, limit := pagination.Offset(page, pageSize)
 	return s.repo.ListUsageLogs(ctx, repository.UsageLogListFilter{
 		Query:             filter.Query,
 		PlatformModelName: filter.PlatformModelName,
@@ -2415,7 +2731,7 @@ func fillUsageStatisticsTrend(
 
 // ListPaymentOrders 分页查询管理员支付订单记录。
 func (s *Service) ListPaymentOrders(ctx context.Context, page int, pageSize int, filter PaymentOrderListFilter) ([]domainbilling.PaymentOrder, int64, error) {
-	offset, limit := normalizePage(page, pageSize)
+	offset, limit := pagination.Offset(page, pageSize)
 	return s.repo.ListPaymentOrders(ctx, repository.PaymentOrderListFilter{
 		Query:       filter.Query,
 		OrderType:   filter.OrderType,
@@ -2426,23 +2742,6 @@ func (s *Service) ListPaymentOrders(ctx context.Context, page int, pageSize int,
 		CreatedTo:   filter.CreatedTo,
 		Sort:        filter.Sort,
 	}, offset, limit)
-}
-
-func normalizePage(page int, pageSize int) (int, int) {
-	if page <= 0 {
-		page = 1
-	}
-	if pageSize <= 0 {
-		pageSize = defaultPageSize
-	}
-	if pageSize > maxPageSize {
-		pageSize = maxPageSize
-	}
-	offset := (page - 1) * pageSize
-	if offset < 0 {
-		offset = 0
-	}
-	return offset, pageSize
 }
 
 // ListMonthlyUsage 查询用户月度用量聚合。
@@ -2639,6 +2938,12 @@ func (s *Service) GetBillingOverview(ctx context.Context, userID uint, now time.
 			return nil, accountErr
 		}
 		overview.Account = toBillingAccountView(account)
+		// 按量计费模式返回账户累计消费(不限时间的计费流水合计),供订阅页「累计花费」卡片展示。
+		totalSpentNanousd, totalErr := s.repo.SumTotalBilledNanousd(ctx, userID)
+		if totalErr != nil {
+			return nil, totalErr
+		}
+		overview.TotalSpentNanousd = totalSpentNanousd
 		return overview, nil
 	}
 	if mode != "period" {
@@ -2668,7 +2973,6 @@ func (s *Service) GetBillingOverview(ctx context.Context, userID uint, now time.
 		Description:         plan.Description,
 		FeatureJSON:         plan.FeatureJSON,
 		PeriodCreditNanousd: plan.PeriodCreditNanousd,
-		DiscountPercent:     plan.DiscountPercent,
 		SortOrder:           plan.SortOrder,
 		IsActive:            plan.IsActive,
 	}
@@ -2711,7 +3015,7 @@ func (s *Service) GetBillingAccount(ctx context.Context, userID uint) (*domainbi
 // SetBillingAccountBalance 管理员设置用户按量余额。
 func (s *Service) SetBillingAccountBalance(ctx context.Context, input BillingAccountBalanceInput) (*domainbilling.BillingAccount, error) {
 	if input.UserID == 0 || input.BalanceUSD < 0 || math.IsNaN(input.BalanceUSD) || math.IsInf(input.BalanceUSD, 0) {
-		return nil, repository.ErrInvalidInput
+		return nil, ErrInvalidBillingAccountBalance
 	}
 	mode, err := s.repo.GetBillingMode(ctx)
 	if err != nil {
@@ -2779,12 +3083,22 @@ func resolveSnapshotRateFromBilled(tokens int64, billedNanousd int64, fallbackRa
 	return (billedNanousd*1000000 + tokens/2) / tokens
 }
 
-func resolveCacheWriteNanousdPerMTokens(configuredRate int64, providerProtocol string, cacheTimeout string) int64 {
-	if strings.TrimSpace(providerProtocol) != "anthropic_messages" {
+func cacheWritePriceMultiplier(priceBasis, providerProtocol, cacheTimeout string) float64 {
+	return nanousdToUSD(resolveCacheWriteNanousdPerMTokens(1_000_000_000, priceBasis, providerProtocol, cacheTimeout))
+}
+
+func resolveCacheWriteNanousdPerMTokens(configuredRate int64, priceBasis string, providerProtocol string, cacheTimeout string) int64 {
+	if priceBasis == domainbilling.CacheWritePriceBasisDirect || strings.TrimSpace(providerProtocol) != "anthropic_messages" {
 		return configuredRate
 	}
 	if configuredRate <= 0 {
 		return 0
+	}
+	if priceBasis == domainbilling.CacheWritePriceBasisAnthropic5m {
+		if normalizeAnthropicCacheTimeout(cacheTimeout) == "1h" {
+			return configuredRate * 8 / 5
+		}
+		return configuredRate
 	}
 	switch normalizeAnthropicCacheTimeout(cacheTimeout) {
 	case "1h":
@@ -3021,26 +3335,6 @@ func parseTieredPricingTiers(raw string) ([]tieredPricingTier, error) {
 	return config.Tiers, nil
 }
 
-func normalizePricingMode(value string) string {
-	switch strings.TrimSpace(value) {
-	case domainbilling.PricingModeCall:
-		return domainbilling.PricingModeCall
-	case domainbilling.PricingModeDuration:
-		return domainbilling.PricingModeDuration
-	case domainbilling.PricingModeTiered:
-		return domainbilling.PricingModeTiered
-	default:
-		return domainbilling.PricingModeToken
-	}
-}
-
-func centsToNanousd(value int64) int64 {
-	if value <= 0 {
-		return 0
-	}
-	return value * 10000000
-}
-
 func usdToNanousd(value float64) int64 {
 	if value <= 0 {
 		return 0
@@ -3157,8 +3451,18 @@ func paginateModelPricing(items []domainbilling.ModelPricing, offset int, limit 
 }
 
 // buildNativeToolServiceItems 将原生 server-side tool 调用转换为账单服务项。
-func buildNativeToolServiceItems(input UsagePricingInput, billingMode string, isFreeModel bool, enabled bool, pricingOverrides map[string]nativetool.PricingOverride, definitions []nativetool.Definition) ([]domainbilling.UsageServiceItem, int64) {
-	if billingMode == "self" || isFreeModel || !enabled || len(input.ServerSideToolUsage) == 0 {
+type nativeToolServiceItemsInput struct {
+	Usage            UsagePricingInput
+	BillingMode      string
+	FreeModel        bool
+	BillingEnabled   bool
+	PricingOverrides map[string]nativetool.PricingOverride
+	Definitions      []nativetool.Definition
+}
+
+func buildNativeToolServiceItems(request nativeToolServiceItemsInput) ([]domainbilling.UsageServiceItem, int64) {
+	input := request.Usage
+	if request.BillingMode == "self" || request.FreeModel || !request.BillingEnabled || len(input.ServerSideToolUsage) == 0 {
 		return []domainbilling.UsageServiceItem{}, 0
 	}
 	counts := normalizeUsageCountMap(input.ServerSideToolUsage)
@@ -3168,7 +3472,7 @@ func buildNativeToolServiceItems(input UsagePricingInput, billingMode string, is
 	results := make([]domainbilling.UsageServiceItem, 0, len(counts))
 	var total int64
 	for toolName, count := range counts {
-		price, ok := nativeToolDefaultCallPrice(input, toolName, pricingOverrides, definitions)
+		price, ok := nativeToolDefaultCallPrice(input, toolName, request.PricingOverrides, request.Definitions)
 		if !ok || price.NanousdPerCall <= 0 || count <= 0 {
 			continue
 		}
@@ -3213,6 +3517,81 @@ func nativeToolServiceCode(provider string, toolName string) string {
 		tool = "unknown"
 	}
 	return "native_tool." + provider + "." + tool
+}
+
+// buildMCPToolServiceItems 将应用侧 MCP 工具调用转换为账单服务项。
+// 仅 self 模式与价格为 0 时不计费；MCP 调用是独立于模型的外部上游成本，
+// 因此免费模型不豁免（与原生工具计费不同）。价格取调用时的工具配置快照。
+func buildMCPToolServiceItems(input UsagePricingInput, billingMode string) ([]domainbilling.UsageServiceItem, int64) {
+	if billingMode == "self" || len(input.MCPToolUsage) == 0 {
+		return []domainbilling.UsageServiceItem{}, 0
+	}
+	results := make([]domainbilling.UsageServiceItem, 0, len(input.MCPToolUsage))
+	var total int64
+	for _, usage := range input.MCPToolUsage {
+		if usage.CallCount <= 0 || usage.PriceNanousd <= 0 {
+			continue
+		}
+		billed := usage.CallCount * usage.PriceNanousd
+		results = append(results, domainbilling.UsageServiceItem{
+			ServiceCode:        mcpToolServiceCode(usage.ServerName, usage.ToolName),
+			ServiceName:        mcpToolServiceName(usage.ServerName, usage.ToolName),
+			PlatformModelName:  strings.TrimSpace(input.PlatformModelName),
+			ProviderProtocol:   strings.TrimSpace(input.ProviderProtocol),
+			RateMultiplier:     1,
+			PricingMode:        domainbilling.PricingModeCall,
+			CallCount:          usage.CallCount,
+			CallNanousdPerCall: usage.PriceNanousd,
+			CallBilledNanousd:  billed,
+			BilledNanousd:      billed,
+		})
+		total += billed
+	}
+	return results, total
+}
+
+// mcpToolServiceCode 生成 MCP 工具服务项编码，供账单明细和快照稳定引用。
+func mcpToolServiceCode(serverName string, toolName string) string {
+	server := strings.TrimSpace(serverName)
+	tool := strings.TrimSpace(toolName)
+	if server == "" {
+		server = "unknown"
+	}
+	if tool == "" {
+		tool = "unknown"
+	}
+	return "mcp_tool." + server + "." + tool
+}
+
+func mcpToolServiceName(serverName string, toolName string) string {
+	server := strings.TrimSpace(serverName)
+	tool := strings.TrimSpace(toolName)
+	switch {
+	case server == "":
+		return tool
+	case tool == "":
+		return server
+	default:
+		return server + " / " + tool
+	}
+}
+
+// mcpToolUsageSnapshots 无论是否计费都完整落快照，保证 self 模式下也有成本可见性。
+func mcpToolUsageSnapshots(items []MCPToolUsageInput) []map[string]any {
+	results := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		if item.CallCount <= 0 {
+			continue
+		}
+		results = append(results, map[string]any{
+			"server_id":     item.ServerID,
+			"server_name":   strings.TrimSpace(item.ServerName),
+			"tool_name":     strings.TrimSpace(item.ToolName),
+			"call_count":    item.CallCount,
+			"price_nanousd": item.PriceNanousd,
+		})
+	}
+	return results
 }
 
 func normalizeCurrency(value string) string {
@@ -3294,36 +3673,6 @@ func normalizeUsageCountMap(items map[string]int64) map[string]int64 {
 		return map[string]int64{}
 	}
 	return result
-}
-
-func clampPercent(value int) int {
-	if value < 0 {
-		return 0
-	}
-	if value > 100 {
-		return 100
-	}
-	return value
-}
-
-func normalizeInterval(value string) string {
-	switch strings.TrimSpace(value) {
-	case domainbilling.IntervalYear:
-		return domainbilling.IntervalYear
-	case domainbilling.IntervalLifetime:
-		return domainbilling.IntervalLifetime
-	default:
-		return domainbilling.IntervalMonth
-	}
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
 }
 
 func generateOrderNo() (string, error) {

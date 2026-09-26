@@ -38,14 +38,14 @@ func (r *Repo) ListSkills(ctx context.Context, filter repository.SkillListFilter
 	query = applySkillFilter(query, filter)
 
 	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, translateError(err)
+		return nil, 0, dberror.Translate(err)
 	}
 	if err := query.
 		Order(skillOrderClause(filter)).
 		Offset(offset).
 		Limit(limit).
 		Find(&items).Error; err != nil {
-		return nil, 0, translateError(err)
+		return nil, 0, dberror.Translate(err)
 	}
 
 	results := make([]domainskill.Skill, 0, len(items))
@@ -62,7 +62,7 @@ func (r *Repo) GetSkill(ctx context.Context, id uint) (*domainskill.Skill, error
 	}
 	var record model.Skill
 	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&record).Error; err != nil {
-		return nil, translateError(err)
+		return nil, dberror.Translate(err)
 	}
 	result := toDomain(record)
 	return &result, nil
@@ -97,12 +97,12 @@ func (r *Repo) CreateSkill(ctx context.Context, item *domainskill.Skill) (*domai
 				Where("scope = ? AND owner_user_id = ?", record.Scope, record.OwnerUserID).
 				Select("COALESCE(MAX(sort_order), 0)").
 				Scan(&maxSortOrder).Error; err != nil {
-				return translateError(err)
+				return dberror.Translate(err)
 			}
 			record.SortOrder = maxSortOrder + 1
 		}
 		if err := tx.Create(&record).Error; err != nil {
-			return translateError(err)
+			return dberror.Translate(err)
 		}
 		result = toDomain(record)
 		return nil
@@ -124,14 +124,14 @@ func (r *Repo) PatchSkill(ctx context.Context, id uint, patch repository.SkillPa
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("id = ?", id).
 			First(&record).Error; err != nil {
-			return translateError(err)
+			return dberror.Translate(err)
 		}
 		if patch.ExpectedPackageStorageVersion != nil &&
 			strings.TrimSpace(record.PackageStorageVersion) != strings.TrimSpace(*patch.ExpectedPackageStorageVersion) {
 			return repository.ErrConflict
 		}
 
-		updates := map[string]interface{}{}
+		updates := map[string]any{}
 		if patch.Title != nil {
 			updates["title"] = strings.TrimSpace(*patch.Title)
 		}
@@ -167,11 +167,11 @@ func (r *Repo) PatchSkill(ctx context.Context, id uint, patch repository.SkillPa
 		}
 		if len(updates) > 0 {
 			if err := tx.Model(&record).Updates(updates).Error; err != nil {
-				return translateError(err)
+				return dberror.Translate(err)
 			}
 		}
 		if err := tx.Where("id = ?", id).First(&record).Error; err != nil {
-			return translateError(err)
+			return dberror.Translate(err)
 		}
 		result = toDomain(record)
 		return nil
@@ -208,7 +208,11 @@ func (r *Repo) DeleteSkill(ctx context.Context, id uint) (*domainskill.Skill, er
 		deleted = toDomain(record)
 		return nil
 	}); err != nil {
+<<<<<<< HEAD
 		return nil, translateError(err)
+=======
+		return dberror.Translate(err)
+>>>>>>> upstream/dev
 	}
 	return &deleted, nil
 }
@@ -288,6 +292,7 @@ func toDomain(item model.Skill) domainskill.Skill {
 		UpdatedAt:             item.UpdatedAt,
 	}
 }
+<<<<<<< HEAD
 
 func translateError(err error) error {
 	if err == nil {
@@ -339,3 +344,5 @@ func decodePackageFiles(raw string) []domainskill.PackageFile {
 	}
 	return files
 }
+=======
+>>>>>>> upstream/dev
