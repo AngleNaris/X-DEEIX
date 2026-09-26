@@ -8,7 +8,7 @@ import (
 
 	appskill "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/skill"
 	domainskill "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/skill"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 )
 
@@ -102,6 +102,19 @@ func skillPromptTriggers(skills []domainskill.Skill) []string {
 		}
 	}
 	return triggers
+}
+
+func recordSkillPromptTrace(traceRecorder *messageTraceRecorder, prompt *skillPrompts) {
+	if traceRecorder == nil || prompt == nil {
+		return
+	}
+	skillTitles := skillPromptTitles(prompt.Skills)
+	traceRecorder.appendProcessSection(
+		fmt.Sprintf("已提供 %d 个 Skill 上下文", len(prompt.Skills)),
+		formatTraceStep("Skill", fmt.Sprintf("本轮已加载 Skill：%s。包含 SKILL.md 内容，相关时使用。", strings.Join(skillTitles, "、"))),
+		&tracePayload{SkillCount: len(prompt.Skills), SkillIDs: skillPromptIDs(prompt.Skills), SkillTitles: skillTitles, SkillTriggers: skillPromptTriggers(prompt.Skills), Stages: []traceStage{{Kind: "skill_context", Status: messageTraceStatusStreaming}}},
+		messageTraceStatusStreaming,
+	)
 }
 
 func renderSkillPrompts(prompt *skillPrompts, customPrompt string) string {

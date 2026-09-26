@@ -40,10 +40,13 @@ type UpsertModelPricingRequest struct {
 	InputUSDPerMTokens      *float64 `json:"inputUSDPerMTokens" binding:"required,gte=0"`
 	CacheReadUSDPerMTokens  *float64 `json:"cacheReadUSDPerMTokens" binding:"required,gte=0"`
 	CacheWriteUSDPerMTokens *float64 `json:"cacheWriteUSDPerMTokens" binding:"required,gte=0"`
+	CacheWritePriceBasis    string   `json:"cacheWritePriceBasis,omitempty" binding:"omitempty,oneof=direct anthropic_5m" enums:"direct,anthropic_5m"`
 	OutputUSDPerMTokens     *float64 `json:"outputUSDPerMTokens" binding:"required,gte=0"`
 	CallUSDPerCall          *float64 `json:"callUSDPerCall" binding:"required,gte=0"`
 	DurationUSDPerSecond    *float64 `json:"durationUSDPerSecond" binding:"required,gte=0"`
 	TieredPricingJSON       string   `json:"tieredPricingJSON,omitempty" binding:"max=20000"`
+	// SchedulePricingJSON 是时段倍率配置 {"periods":[{"name","weekdays","start","end","ratePercent"}]}，空表示不启用。
+	SchedulePricingJSON string `json:"schedulePricingJSON,omitempty" binding:"max=20000"`
 }
 
 // BillingConfigRequest 保存计费全局配置。
@@ -109,7 +112,6 @@ type UpdateBillingPlanRequest struct {
 	Name              string   `json:"name" binding:"required,min=1,max=64"`
 	Description       *string  `json:"description" binding:"required,max=255"`
 	PeriodCreditUSD   *float64 `json:"periodCreditUSD" binding:"required,gte=0"`
-	DiscountPercent   *int     `json:"discountPercent" binding:"required,gte=0,lte=100"`
 	Currency          string   `json:"currency,omitempty" binding:"omitempty,max=16"`
 	AmountUSD         *float64 `json:"amountUSD" binding:"required,gte=0"`
 	BillingInterval   string   `json:"billingInterval" binding:"required,oneof=month year lifetime"`
@@ -180,7 +182,6 @@ type BillingPlanResponse struct {
 	FeatureJSON         string                 `json:"featureJSON"`
 	PeriodCreditUSD     float64                `json:"periodCreditUSD"`
 	PeriodCreditNanousd int64                  `json:"periodCreditNanousd"`
-	DiscountPercent     int                    `json:"discountPercent"`
 	SortOrder           int                    `json:"sortOrder"`
 	IsActive            bool                   `json:"isActive"`
 	PermissionGroupID   *uint                  `json:"permissionGroupID" extensions:"x-nullable,!x-omitempty"`
@@ -360,6 +361,8 @@ type BillingOverviewResponse struct {
 	PeriodRemainingUSD       float64                           `json:"periodRemainingUSD"`
 	PeriodRemainingNanousd   int64                             `json:"periodRemainingNanousd"`
 	Account                  *BillingAccountResponse           `json:"account" extensions:"x-nullable,!x-omitempty"`
+	TotalSpentUSD            float64                           `json:"totalSpentUSD"`
+	TotalSpentNanousd        int64                             `json:"totalSpentNanousd"`
 	SubscriptionEntitlements []SubscriptionEntitlementResponse `json:"subscriptionEntitlements"`
 }
 
@@ -469,10 +472,12 @@ type ModelPricingResponse struct {
 	InputUSDPerMTokens          float64   `json:"inputUSDPerMTokens"`
 	CacheReadUSDPerMTokens      float64   `json:"cacheReadUSDPerMTokens"`
 	CacheWriteUSDPerMTokens     float64   `json:"cacheWriteUSDPerMTokens"`
+	CacheWritePriceBasis        string    `json:"cacheWritePriceBasis,omitempty" enums:"direct,anthropic_5m"`
 	OutputUSDPerMTokens         float64   `json:"outputUSDPerMTokens"`
 	CallUSDPerCall              float64   `json:"callUSDPerCall"`
 	DurationUSDPerSecond        float64   `json:"durationUSDPerSecond"`
 	TieredPricingJSON           string    `json:"tieredPricingJSON"`
+	SchedulePricingJSON         string    `json:"schedulePricingJSON"`
 	InputNanousdPerMTokens      int64     `json:"inputNanousdPerMTokens"`
 	CacheReadNanousdPerMTokens  int64     `json:"cacheReadNanousdPerMTokens"`
 	CacheWriteNanousdPerMTokens int64     `json:"cacheWriteNanousdPerMTokens"`
@@ -490,14 +495,28 @@ type ModelPricingDataResponse struct {
 
 // OpenRouterOfficialPricingItemResponse OpenRouter 官方模型定价项。
 type OpenRouterOfficialPricingItemResponse struct {
-	ID            string                                       `json:"id"`
-	CanonicalSlug string                                       `json:"canonicalSlug"`
-	Name          string                                       `json:"name"`
-	Pricing       OpenRouterOfficialPricingUnitPricingResponse `json:"pricing"`
+	ID                  string                                       `json:"id"`
+	CanonicalSlug       string                                       `json:"canonicalSlug"`
+	Name                string                                       `json:"name"`
+	ContextLength       int                                          `json:"contextLength"`
+	MaxCompletionTokens int                                          `json:"maxCompletionTokens"`
+	Pricing             OpenRouterOfficialPricingUnitPricingResponse `json:"pricing"`
 }
 
 // OpenRouterOfficialPricingUnitPricingResponse OpenRouter 官方模型价格字段。
 type OpenRouterOfficialPricingUnitPricingResponse struct {
+	Prompt               string                                      `json:"prompt"`
+	Completion           string                                      `json:"completion"`
+	InputCacheRead       string                                      `json:"inputCacheRead"`
+	InputCacheWrite      string                                      `json:"inputCacheWrite"`
+	CacheWritePriceBasis string                                      `json:"cacheWritePriceBasis" enums:"direct,anthropic_5m"`
+	Overrides            []OpenRouterOfficialPricingOverrideResponse `json:"overrides,omitempty"`
+	UnsupportedFields    []string                                    `json:"unsupportedFields,omitempty"`
+}
+
+// OpenRouterOfficialPricingOverrideResponse OpenRouter 官方模型输入 token 阶梯覆盖。
+type OpenRouterOfficialPricingOverrideResponse struct {
+	MinPromptTokens int64  `json:"minPromptTokens"`
 	Prompt          string `json:"prompt"`
 	Completion      string `json:"completion"`
 	InputCacheRead  string `json:"inputCacheRead"`
@@ -681,11 +700,11 @@ type RedemptionApplyResponseDoc struct {
 
 // ErrorDoc 错误响应。
 type ErrorDoc struct {
-	ErrorMsg  string      `json:"errorMsg"`
-	ErrorCode string      `json:"errorCode,omitempty"`
-	Details   interface{} `json:"details,omitempty"`
-	RequestID string      `json:"requestId,omitempty"`
-	Data      interface{} `json:"data"`
+	ErrorMsg  string `json:"errorMsg"`
+	ErrorCode string `json:"errorCode,omitempty"`
+	Details   any    `json:"details,omitempty"`
+	RequestID string `json:"requestId,omitempty"`
+	Data      any    `json:"data"`
 }
 
 // ── mapping 函数 ─────────────────────────────────────────────────────────────
@@ -713,7 +732,6 @@ func toPlanListResponse(views []appbilling.BillingPlanView) []BillingPlanRespons
 			FeatureJSON:         v.FeatureJSON,
 			PeriodCreditUSD:     nanousdToUSD(v.PeriodCreditNanousd),
 			PeriodCreditNanousd: v.PeriodCreditNanousd,
-			DiscountPercent:     v.DiscountPercent,
 			SortOrder:           v.SortOrder,
 			IsActive:            v.IsActive,
 			PermissionGroupID:   v.PermissionGroupID,
@@ -865,6 +883,8 @@ func toBillingOverviewResponse(item *appbilling.BillingOverview) BillingOverview
 		PeriodRemainingUSD:       nanousdToUSD(item.PeriodRemainingNanousd),
 		PeriodRemainingNanousd:   item.PeriodRemainingNanousd,
 		Account:                  toBillingAccountViewResponse(item.Account),
+		TotalSpentUSD:            nanousdToUSD(item.TotalSpentNanousd),
+		TotalSpentNanousd:        item.TotalSpentNanousd,
 		SubscriptionEntitlements: toSubscriptionEntitlementResponses(item.SubscriptionEntitlements),
 	}
 }
@@ -990,7 +1010,7 @@ func usagePricingSnapshotIdentity(value string) usagePricingSnapshotIdentityResu
 	if strings.TrimSpace(value) == "" {
 		return usagePricingSnapshotIdentityResult{}
 	}
-	var payload map[string]interface{}
+	var payload map[string]any
 	if err := json.Unmarshal([]byte(value), &payload); err != nil {
 		return usagePricingSnapshotIdentityResult{}
 	}
@@ -1000,7 +1020,7 @@ func usagePricingSnapshotIdentity(value string) usagePricingSnapshotIdentityResu
 	}
 }
 
-func stringSnapshotField(payload map[string]interface{}, key string) string {
+func stringSnapshotField(payload map[string]any, key string) string {
 	value, ok := payload[key]
 	if !ok {
 		return ""
@@ -1016,7 +1036,7 @@ func sanitizeUsagePricingSnapshotJSON(value string) string {
 	if strings.TrimSpace(value) == "" {
 		return "{}"
 	}
-	var payload map[string]interface{}
+	var payload map[string]any
 	if err := json.Unmarshal([]byte(value), &payload); err != nil {
 		return "{}"
 	}
@@ -1028,18 +1048,18 @@ func sanitizeUsagePricingSnapshotJSON(value string) string {
 	return string(result)
 }
 
-func deleteUpstreamNameSnapshotFields(payload map[string]interface{}, parentKey string) {
+func deleteUpstreamNameSnapshotFields(payload map[string]any, parentKey string) {
 	for key, value := range payload {
 		if isUpstreamNameSnapshotField(key, parentKey) {
 			delete(payload, key)
 			continue
 		}
 		switch child := value.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			deleteUpstreamNameSnapshotFields(child, key)
-		case []interface{}:
+		case []any:
 			for _, item := range child {
-				if itemMap, ok := item.(map[string]interface{}); ok {
+				if itemMap, ok := item.(map[string]any); ok {
 					deleteUpstreamNameSnapshotFields(itemMap, key)
 				}
 			}
@@ -1129,10 +1149,12 @@ func toModelPricingResponse(item appbilling.ModelPricingView) ModelPricingRespon
 		InputUSDPerMTokens:          nanousdToUSD(item.InputNanousdPerMTokens),
 		CacheReadUSDPerMTokens:      nanousdToUSD(item.CacheReadNanousdPerMTokens),
 		CacheWriteUSDPerMTokens:     nanousdToUSD(item.CacheWriteNanousdPerMTokens),
+		CacheWritePriceBasis:        item.CacheWritePriceBasis,
 		OutputUSDPerMTokens:         nanousdToUSD(item.OutputNanousdPerMTokens),
 		CallUSDPerCall:              nanousdToUSD(item.CallNanousdPerCall),
 		DurationUSDPerSecond:        nanousdToUSD(item.DurationNanousdPerSecond),
 		TieredPricingJSON:           item.TieredPricingJSON,
+		SchedulePricingJSON:         item.SchedulePricingJSON,
 		InputNanousdPerMTokens:      item.InputNanousdPerMTokens,
 		CacheReadNanousdPerMTokens:  item.CacheReadNanousdPerMTokens,
 		CacheWriteNanousdPerMTokens: item.CacheWriteNanousdPerMTokens,
@@ -1153,10 +1175,12 @@ func modelPricingInputFromRequest(req UpsertModelPricingRequest) appbilling.Mode
 		InputNanousdPerMTokens:      usdToNanousd(*req.InputUSDPerMTokens),
 		CacheReadNanousdPerMTokens:  usdToNanousd(*req.CacheReadUSDPerMTokens),
 		CacheWriteNanousdPerMTokens: usdToNanousd(*req.CacheWriteUSDPerMTokens),
+		CacheWritePriceBasis:        req.CacheWritePriceBasis,
 		OutputNanousdPerMTokens:     usdToNanousd(*req.OutputUSDPerMTokens),
 		CallNanousdPerCall:          usdToNanousd(*req.CallUSDPerCall),
 		DurationNanousdPerSecond:    usdToNanousd(*req.DurationUSDPerSecond),
 		TieredPricingJSON:           req.TieredPricingJSON,
+		SchedulePricingJSON:         req.SchedulePricingJSON,
 	}
 }
 
@@ -1165,7 +1189,6 @@ func planUpdateInputFromRequest(req UpdateBillingPlanRequest) appbilling.PlanUpd
 		Name:                req.Name,
 		Description:         *req.Description,
 		PeriodCreditNanousd: usdToNanousd(*req.PeriodCreditUSD),
-		DiscountPercent:     *req.DiscountPercent,
 		Currency:            req.Currency,
 		AmountCents:         usdToCents(*req.AmountUSD),
 		BillingInterval:     req.BillingInterval,

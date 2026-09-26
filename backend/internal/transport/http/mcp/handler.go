@@ -33,7 +33,7 @@ func NewHandler(service *appmcp.Service) *Handler {
 func (h *Handler) ListServers(c *gin.Context) {
 	items, err := h.service.ListServers(c.Request.Context())
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "list mcp servers failed")
+		response.InternalError(c)
 		return
 	}
 	results := make([]ServerResponse, 0, len(items))
@@ -55,7 +55,7 @@ func (h *Handler) ListServers(c *gin.Context) {
 func (h *Handler) ListAvailableTools(c *gin.Context) {
 	items, err := h.service.ListAvailableTools(c.Request.Context())
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "list mcp tools failed")
+		response.InternalError(c)
 		return
 	}
 	results := make([]ToolResponse, 0, len(items))
@@ -112,7 +112,7 @@ func (h *Handler) CreateServer(c *gin.Context) {
 // @Failure 500 {object} ErrorDoc
 // @Router /admin/mcp/servers/{id} [patch]
 func (h *Handler) UpdateServer(c *gin.Context) {
-	serverID, ok := parseIDParam(c, "id", "mcp server")
+	serverID, ok := parseIDParam(c, "id", errInvalidMCPServerID)
 	if !ok {
 		return
 	}
@@ -148,12 +148,12 @@ func (h *Handler) UpdateServer(c *gin.Context) {
 // @Failure 500 {object} ErrorDoc
 // @Router /admin/mcp/servers/{id} [delete]
 func (h *Handler) DeleteServer(c *gin.Context) {
-	serverID, ok := parseIDParam(c, "id", "mcp server")
+	serverID, ok := parseIDParam(c, "id", errInvalidMCPServerID)
 	if !ok {
 		return
 	}
 	if err := h.service.DeleteServer(c.Request.Context(), serverID); err != nil {
-		response.Error(c, http.StatusInternalServerError, "delete mcp server failed")
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, DeleteServerResponse{Deleted: true})
@@ -172,7 +172,7 @@ func (h *Handler) DeleteServer(c *gin.Context) {
 // @Failure 500 {object} ErrorDoc
 // @Router /admin/mcp/servers/{id}/sync [post]
 func (h *Handler) SyncServerTools(c *gin.Context) {
-	serverID, ok := parseIDParam(c, "id", "mcp server")
+	serverID, ok := parseIDParam(c, "id", errInvalidMCPServerID)
 	if !ok {
 		return
 	}
@@ -180,7 +180,7 @@ func (h *Handler) SyncServerTools(c *gin.Context) {
 	if raw, exists := c.GetQuery("overwrite_customized_metadata"); exists {
 		parsed, err := strconv.ParseBool(raw)
 		if err != nil {
-			response.Error(c, http.StatusBadRequest, "invalid overwrite_customized_metadata")
+			response.ErrorFrom(c, http.StatusBadRequest, errInvalidOverwriteCustomizedMetadata)
 			return
 		}
 		overwriteCustomizedMetadata = parsed
@@ -213,13 +213,13 @@ func (h *Handler) SyncServerTools(c *gin.Context) {
 // @Failure 500 {object} ErrorDoc
 // @Router /admin/mcp/servers/{id}/tools [get]
 func (h *Handler) ListServerTools(c *gin.Context) {
-	serverID, ok := parseIDParam(c, "id", "mcp server")
+	serverID, ok := parseIDParam(c, "id", errInvalidMCPServerID)
 	if !ok {
 		return
 	}
 	items, err := h.service.ListTools(c.Request.Context(), serverID, false)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "list mcp tools failed")
+		response.InternalError(c)
 		return
 	}
 	results := make([]ToolResponse, 0, len(items))
@@ -243,7 +243,7 @@ func (h *Handler) ListServerTools(c *gin.Context) {
 // @Failure 500 {object} ErrorDoc
 // @Router /admin/mcp/tools/{id} [patch]
 func (h *Handler) UpdateTool(c *gin.Context) {
-	toolID, ok := parseIDParam(c, "id", "mcp tool")
+	toolID, ok := parseIDParam(c, "id", errInvalidMCPToolID)
 	if !ok {
 		return
 	}
@@ -259,6 +259,7 @@ func (h *Handler) UpdateTool(c *gin.Context) {
 		AttachmentArgument:       req.AttachmentArgument,
 		AttachmentEncoding:       req.AttachmentEncoding,
 		AttachmentPromptArgument: req.AttachmentPromptArgument,
+		PriceNanousd:             req.PriceNanousd,
 		Status:                   req.Status,
 	})
 	if err != nil {
@@ -282,7 +283,7 @@ func (h *Handler) UpdateTool(c *gin.Context) {
 // @Failure 500 {object} ErrorDoc
 // @Router /admin/mcp/servers/{id}/tools/status [patch]
 func (h *Handler) UpdateServerToolsStatus(c *gin.Context) {
-	serverID, ok := parseIDParam(c, "id", "mcp server")
+	serverID, ok := parseIDParam(c, "id", errInvalidMCPServerID)
 	if !ok {
 		return
 	}
@@ -347,11 +348,11 @@ func (h *Handler) ReorderServers(c *gin.Context) {
 	response.Success(c, ServerToolOrderListResponse{Results: results})
 }
 
-func parseIDParam(c *gin.Context, key string, resource string) (uint, bool) {
+func parseIDParam(c *gin.Context, key string, invalid error) (uint, bool) {
 	raw := c.Param(key)
 	parsed, err := strconv.ParseUint(raw, 10, strconv.IntSize)
 	if err != nil || parsed == 0 {
-		response.Error(c, http.StatusBadRequest, "invalid "+resource+" id")
+		response.ErrorFrom(c, http.StatusBadRequest, invalid)
 		return 0, false
 	}
 	return uint(parsed), true
@@ -368,10 +369,14 @@ func writeServiceError(c *gin.Context, err error) {
 		errors.Is(err, appmcp.ErrInvalidToolName),
 		errors.Is(err, appmcp.ErrInvalidToolDesc),
 		errors.Is(err, appmcp.ErrInvalidToolAttachmentConfig),
-		errors.Is(err, appmcp.ErrInvalidToolSelection):
+		errors.Is(err, appmcp.ErrInvalidToolSelection),
+		errors.Is(err, appmcp.ErrInvalidToolPrice),
+		errors.Is(err, appmcp.ErrServerLimitExceeded):
 		response.ErrorFrom(c, http.StatusBadRequest, err)
-	default:
+	case errors.Is(err, appmcp.ErrMCPClientUnavailable):
 		response.ErrorFrom(c, http.StatusInternalServerError, err)
+	default:
+		response.InternalError(c)
 	}
 }
 
@@ -407,6 +412,7 @@ func toToolResponse(item domainmcp.Tool) ToolResponse {
 		AttachmentArgument:       item.AttachmentArgument,
 		AttachmentEncoding:       item.AttachmentEncoding,
 		AttachmentPromptArgument: item.AttachmentPromptArgument,
+		PriceNanousd:             item.PriceNanousd,
 		Status:                   item.Status,
 		SortOrder:                item.SortOrder,
 		CreatedAt:                item.CreatedAt,

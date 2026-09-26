@@ -16,6 +16,8 @@ import (
 	domainbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/billing"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/secretbox"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/pagination"
 )
 
 const (
@@ -49,6 +51,17 @@ type RedemptionCodeListInput struct {
 	Query        string
 	Page         int
 	PageSize     int
+}
+
+// RedemptionListFilter 描述管理员兑换记录筛选和排序条件。
+type RedemptionListFilter struct {
+	CodeID      uint
+	UserID      uint
+	RewardType  string
+	Query       string
+	CreatedFrom *time.Time
+	CreatedTo   *time.Time
+	Sort        string
 }
 
 // RedemptionCodeUpdateInput 定义管理员更新兑换码管理字段的入参。
@@ -106,9 +119,66 @@ type BatchDeleteData struct {
 	Results       []BatchDeleteResultView
 }
 
+// RedemptionRecordView 表示管理员兑换记录视图，带兑换码与余额流水上下文。
+// 应用层视图避免 transport 直接依赖仓储契约。
+type RedemptionRecordView struct {
+	Redemption      domainbilling.Redemption
+	CodeHint        string
+	CodeDescription string
+	CodeStatus      string
+	PlanName        string
+	// DurationDays 来自兑换时的快照，订阅类兑换表示套餐时长（天）。
+	DurationDays int
+	// BalanceAmountNanousd / BalanceAfterNanousd 来自余额流水；订阅类兑换无流水时为 nil。
+	BalanceAmountNanousd *int64
+	BalanceAfterNanousd  *int64
+}
+
+// redemptionSnapshotDurationDays 从兑换快照 JSON 解析套餐时长，解析失败按 0 处理。
+func redemptionSnapshotDurationDays(snapshotJSON string) int {
+	var payload struct {
+		DurationDays int `json:"duration_days"`
+	}
+	if err := json.Unmarshal([]byte(snapshotJSON), &payload); err != nil {
+		return 0
+	}
+	return payload.DurationDays
+}
+
+// ListRedemptions 查询管理员兑换记录列表。
+func (s *Service) ListRedemptions(ctx context.Context, page int, pageSize int, filter RedemptionListFilter) ([]RedemptionRecordView, int64, error) {
+	offset, limit := pagination.Offset(page, pageSize)
+	records, total, err := s.repo.ListRedemptions(ctx, repository.RedemptionListFilter{
+		CodeID:      filter.CodeID,
+		UserID:      filter.UserID,
+		RewardType:  strings.TrimSpace(filter.RewardType),
+		Query:       strings.TrimSpace(filter.Query),
+		CreatedFrom: filter.CreatedFrom,
+		CreatedTo:   filter.CreatedTo,
+		Sort:        strings.TrimSpace(filter.Sort),
+	}, offset, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	views := make([]RedemptionRecordView, 0, len(records))
+	for _, record := range records {
+		views = append(views, RedemptionRecordView{
+			Redemption:           record.Redemption,
+			CodeHint:             record.CodeHint,
+			CodeDescription:      record.CodeDescription,
+			CodeStatus:           record.CodeStatus,
+			PlanName:             record.PlanName,
+			DurationDays:         redemptionSnapshotDurationDays(record.Redemption.SnapshotJSON),
+			BalanceAmountNanousd: record.BalanceAmountNanousd,
+			BalanceAfterNanousd:  record.BalanceAfterNanousd,
+		})
+	}
+	return views, total, nil
+}
+
 // ListRedemptionCodes 查询管理员兑换码列表。
 func (s *Service) ListRedemptionCodes(ctx context.Context, input RedemptionCodeListInput) ([]RedemptionCodeView, int64, error) {
-	page, pageSize := normalizePage(input.Page, input.PageSize)
+	offset, limit := pagination.Offset(input.Page, input.PageSize)
 	mode := strings.TrimSpace(input.Mode)
 	status := strings.TrimSpace(input.Status)
 	availability := strings.TrimSpace(input.Availability)
@@ -144,7 +214,7 @@ func (s *Service) ListRedemptionCodes(ctx context.Context, input RedemptionCodeL
 		Status:       status,
 		Availability: availability,
 		Query:        query,
-	}, (page-1)*pageSize, pageSize)
+	}, offset, limit)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -299,7 +369,7 @@ func (s *Service) BatchDeleteRedemptionCodes(ctx context.Context, ids []uint) *B
 			result.Results = append(result.Results, BatchDeleteResultView{ID: id, Status: BatchDeleteStatusNotFound})
 		default:
 			result.FailedCount++
-			result.Results = append(result.Results, BatchDeleteResultView{ID: id, Status: BatchDeleteStatusFailed, Error: err.Error()})
+			result.Results = append(result.Results, BatchDeleteResultView{ID: id, Status: BatchDeleteStatusFailed, Error: apperr.MessageOr(err, "batch delete failed")})
 		}
 	}
 	return result
@@ -584,12 +654,4 @@ func mapRedemptionRepositoryError(err error) error {
 	default:
 		return err
 	}
-}
-
-func marshalRedemptionSnapshot(value map[string]interface{}) string {
-	raw, err := json.Marshal(value)
-	if err != nil {
-		return "{}"
-	}
-	return string(raw)
 }

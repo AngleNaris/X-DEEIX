@@ -13,6 +13,7 @@ import (
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/buildinfo"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/lifecycle"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	adminhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/admin"
 	agentgrouphttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/agentgroup"
@@ -34,11 +35,10 @@ import (
 	promptpresethttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/promptpreset"
 	settingshttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/settings"
 	skillhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/skill"
+	uicomponenthttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/uicomponent"
 	userhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/user"
 	usersettingshttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/usersettings"
 	"github.com/gin-gonic/gin"
-	swaggerFiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.uber.org/zap"
 )
@@ -71,6 +71,7 @@ type Modules struct {
 	Announcement      *announcementhttp.Module
 	PromptPreset      *promptpresethttp.Module
 	Skill             *skillhttp.Module
+	UIComponent       *uicomponenthttp.Module
 	KnowledgeBase     *knowledgebasehttp.Module
 	Settings          *settingshttp.Module
 	User              *userhttp.Module
@@ -81,6 +82,8 @@ type Modules struct {
 	DynamicPrompt     *dynamicprompthttp.Module
 	Credentials       *credentialshttp.Module
 	StartupLog        func(*zap.Logger)
+	// Shutdown 是进程关停排空信号；排空期间就绪探针返回 503，引导负载均衡摘除流量。
+	Shutdown *lifecycle.Shutdown
 }
 
 // NewEngine 创建并注册 API 路由。
@@ -89,26 +92,33 @@ func NewEngine(cfg *config.Runtime, log *zap.Logger, modules Modules, hc HealthC
 	if snapshot.Env == "prod" {
 		gin.SetMode(gin.ReleaseMode)
 	}
+	if snapshot.LocalMode {
+		// stdout 是 sidecar 与父进程的握手通道，框架自身的输出一律走 stderr。
+		gin.DefaultWriter = os.Stderr
+		gin.DefaultErrorWriter = os.Stderr
+	}
 
 	engine := gin.New()
 	engine.MaxMultipartMemory = 8 << 20
 	if err := engine.SetTrustedProxies(snapshot.TrustedProxyList()); err != nil {
 		return nil, fmt.Errorf("set trusted proxies: %w", err)
 	}
-	if err := middleware.ConfigureTrustedProxyHeaders(snapshot.TrustedProxyList()); err != nil {
+	trustedProxyHeaders, err := middleware.TrustedProxyHeaders(snapshot.TrustedProxyList())
+	if err != nil {
 		return nil, fmt.Errorf("configure trusted proxy headers: %w", err)
 	}
-	engine.Use(gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
+	engine.Use(gin.CustomRecovery(func(c *gin.Context, recovered any) {
 		if log != nil {
 			log.Error("http_panic_recovered", zap.Any("error", recovered), zap.ByteString("stack", debug.Stack()))
 		}
-		response.ErrorWithCode(c, http.StatusInternalServerError, response.CodeInternal, "internal server error")
+		response.ErrorWithCode(c, http.StatusInternalServerError, response.CodeInternal)
 		c.Abort()
 	}))
 	engine.Use(otelgin.Middleware(snapshot.AppName, otelgin.WithFilter(func(req *http.Request) bool {
 		return req.URL.Path != "/healthz"
 	})))
 	engine.Use(middleware.RequestID())
+	engine.Use(trustedProxyHeaders)
 	engine.Use(middleware.AccessLog(log))
 	engine.Use(middleware.SecurityHeaders())
 	engine.Use(middleware.CORS(snapshot.CORSAllowOrigin))
@@ -117,9 +127,9 @@ func NewEngine(cfg *config.Runtime, log *zap.Logger, modules Modules, hc HealthC
 		info := buildinfo.Snapshot()
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "version": info.Version})
 	})
-	engine.GET("/readyz", readyzHandler(hc))
+	engine.GET("/readyz", readyzHandler(hc, modules.Shutdown))
 	if swaggerEnabled(snapshot.Env) {
-		engine.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+		mountSwagger(engine)
 	}
 
 	api := engine.Group("/api/v1")
@@ -133,6 +143,9 @@ func NewEngine(cfg *config.Runtime, log *zap.Logger, modules Modules, hc HealthC
 		publicAuth.Use(middleware.PublicAuthRateLimit(limiter, cfg))
 		if modules.Auth != nil {
 			modules.Auth.RegisterPublicRoutes(publicAuth)
+			if snapshot.LocalMode {
+				modules.Auth.RegisterLocalRoutes(publicAuth)
+			}
 		}
 		if modules.User != nil {
 			modules.User.RegisterPublicRoutes(publicAuth)
@@ -187,6 +200,9 @@ func NewEngine(cfg *config.Runtime, log *zap.Logger, modules Modules, hc HealthC
 	}
 	if modules.Skill != nil {
 		modules.Skill.RegisterRoutes(authRequired)
+	}
+	if modules.UIComponent != nil {
+		modules.UIComponent.RegisterRoutes(authRequired)
 	}
 	if modules.KnowledgeBase != nil {
 		modules.KnowledgeBase.RegisterRoutes(authRequired)
@@ -248,6 +264,9 @@ func NewEngine(cfg *config.Runtime, log *zap.Logger, modules Modules, hc HealthC
 		if modules.Skill != nil {
 			modules.Skill.RegisterAdminRoutes(adminGroup)
 		}
+		if modules.UIComponent != nil {
+			modules.UIComponent.RegisterAdminRoutes(adminGroup)
+		}
 		if modules.KnowledgeBase != nil {
 			modules.KnowledgeBase.RegisterAdminRoutes(adminGroup)
 		}
@@ -293,7 +312,7 @@ func registerFrontendStatic(engine *gin.Engine, distDir string, log *zap.Logger)
 	engine.NoRoute(func(c *gin.Context) {
 		requestPath := cleanFrontendPath(c.Request.URL.Path)
 		if isBackendOnlyPath(requestPath) {
-			response.ErrorWithCode(c, http.StatusNotFound, response.CodeResourceNotFound, "not found")
+			response.ErrorWithCode(c, http.StatusNotFound, response.CodeResourceNotFound)
 			return
 		}
 
@@ -316,7 +335,7 @@ func registerFrontendStatic(engine *gin.Engine, distDir string, log *zap.Logger)
 			return
 		}
 
-		response.ErrorWithCode(c, http.StatusNotFound, response.CodeResourceNotFound, "not found")
+		response.ErrorWithCode(c, http.StatusNotFound, response.CodeResourceNotFound)
 	})
 }
 
@@ -413,8 +432,13 @@ func isNextExportDataAsset(requestPath string) bool {
 	return strings.HasPrefix(fileName, "__next.") && strings.EqualFold(path.Ext(fileName), ".txt")
 }
 
-func readyzHandler(hc HealthChecker) gin.HandlerFunc {
+func readyzHandler(hc HealthChecker, shutdown *lifecycle.Shutdown) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// 排空期间立即返回未就绪，让负载均衡停止派发新流量；存量请求继续处理。
+		if shutdown.Draining() {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "draining"})
+			return
+		}
 		ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
 		defer cancel()
 

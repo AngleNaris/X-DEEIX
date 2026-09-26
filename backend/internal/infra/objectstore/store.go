@@ -2,12 +2,10 @@ package objectstore
 
 import (
 	"context"
-	"errors"
-	"io"
 	"strings"
-	"time"
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
+	portobjectstore "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/objectstore"
 )
 
 const (
@@ -15,34 +13,33 @@ const (
 	BackendS3    = "s3"
 )
 
+// 数据契约定义在 ports/objectstore，此处保留同名引用供实现使用。
 var (
-	ErrInvalidKey = errors.New("invalid object key")
-	ErrNotFound   = errors.New("object not found")
+	ErrInvalidKey = portobjectstore.ErrInvalidKey
+	ErrNotFound   = portobjectstore.ErrNotFound
 )
 
-type PutOptions struct {
-	SizeBytes   int64
-	ContentType string
-}
+type (
+	PutOptions = portobjectstore.PutOptions
+	ObjectInfo = portobjectstore.ObjectInfo
+	Store      = portobjectstore.Store
+)
 
-type ObjectInfo struct {
-	Key         string
-	SizeBytes   int64
-	ContentType string
-	ModTime     time.Time
-}
-
-type Store interface {
-	Put(ctx context.Context, key string, body io.Reader, opts PutOptions) (ObjectInfo, error)
-	Open(ctx context.Context, key string) (io.ReadCloser, ObjectInfo, error)
-	Delete(ctx context.Context, key string) error
-	Materialize(ctx context.Context, key string) (string, func(), error)
+// S3Config lives outside s3.go so it exists in -tags nos3 builds.
+type S3Config struct {
+	Endpoint        string
+	Region          string
+	Bucket          string
+	Prefix          string
+	AccessKeyID     string
+	SecretAccessKey string
+	ForcePathStyle  bool
 }
 
 func New(ctx context.Context, cfg config.Config) (Store, error) {
 	switch normalizeBackend(cfg.StorageBackend) {
 	case BackendS3:
-		return NewS3(ctx, S3Config{
+		return newS3(ctx, S3Config{
 			Endpoint:        cfg.StorageS3Endpoint,
 			Region:          cfg.StorageS3Region,
 			Bucket:          cfg.StorageS3Bucket,

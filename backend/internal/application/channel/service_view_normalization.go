@@ -2,14 +2,13 @@ package channel
 
 import (
 	"encoding/json"
-	"errors"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
 
 	domainchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/channel"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/google/uuid"
 )
@@ -68,7 +67,12 @@ func displayProtocolDefaultsJSON(raw string) string {
 	return string(normalized)
 }
 
-func toModelView(item repository.ChannelModelListRow) ModelView {
+func (s *Service) toModelView(item repository.ChannelModelListRow) ModelView {
+	fallbackContextWindow := 0
+	if s != nil && s.cfg != nil {
+		fallbackContextWindow = s.cfg.Snapshot().ContextWindowFallbackTokens
+	}
+	resolvedCaps := domainchannel.ResolveModelCapsFromCapabilitiesWithFallback(item.PlatformModelName, item.CapabilitiesJSON, fallbackContextWindow)
 	return ModelView{
 		ID:                 item.ID,
 		PlatformModelName:  item.PlatformModelName,
@@ -81,6 +85,7 @@ func toModelView(item repository.ChannelModelListRow) ModelView {
 		KindsJSON:          item.KindsJSON,
 		Icon:               item.Icon,
 		CapabilitiesJSON:   item.CapabilitiesJSON,
+		ContextWindow:      resolvedCaps.ContextWindow,
 		SystemPrompt:       item.SystemPrompt,
 		AccessScope:        normalizeModelAccessScopeValue(item.AccessScope),
 		Status:             item.Status,
@@ -131,7 +136,7 @@ func toUpstreamModelView(item repository.ChannelUpstreamModelListRow) UpstreamMo
 }
 
 func toModelUpstreamSourceView(item repository.ChannelModelSourceRow) ModelUpstreamSourceView {
-	vendor := normalizeUpstreamModelVendor(item.UpstreamModelVendor, item.UpstreamModelName, item.UpstreamName, item.BaseURL)
+	vendor := normalizeModelVendor(item.UpstreamModelVendor, item.UpstreamModelName, item.UpstreamName, item.BaseURL)
 	return ModelUpstreamSourceView{
 		ID:                     item.ID,
 		UpstreamID:             item.UpstreamID,
@@ -162,24 +167,6 @@ func toModelUpstreamSourceView(item repository.ChannelModelSourceRow) ModelUpstr
 // ---------------------------------------------------------------------------
 // 规范化辅助
 // ---------------------------------------------------------------------------
-
-func normalizePage(page int, pageSize int) (int, int) {
-	if page <= 0 {
-		page = 1
-	}
-	if pageSize <= 0 {
-		pageSize = 20
-	}
-	const maxPageSize = 1000
-	if pageSize > maxPageSize {
-		pageSize = maxPageSize
-	}
-	offset := (page - 1) * pageSize
-	if offset < 0 {
-		offset = 0
-	}
-	return offset, pageSize
-}
 
 func normalizeStatus(raw string) string {
 	v := strings.TrimSpace(raw)
@@ -399,16 +386,6 @@ func normalizeModelVendor(raw string, candidates ...string) string {
 	return "unknown"
 }
 
-func normalizeUpstreamModelVendor(raw string, candidates ...string) string {
-	if canonical := canonicalVendorKey(raw); canonical != "" {
-		return canonical
-	}
-	if detected := detectModelVendor(candidates...); detected != "" {
-		return detected
-	}
-	return "unknown"
-}
-
 // reasoningContentPassbackVendors 列出 Chat Completions 协议下要求回传 reasoning_content 的厂商。
 // 这些厂商的思考模型都要求历史 assistant 消息原样携带 reasoning_content：
 // DeepSeek 与小米 MiMo 在历史含工具调用时缺失该字段会直接返回 400；Moonshot 同样返回 400；
@@ -430,7 +407,7 @@ var reasoningContentPassbackVendors = map[string]bool{
 // reasoningPassbackVendorRequestOptions 列出「仅回传字段无效、必须同时下发」的厂商私有请求入参。
 // 阿里百炼默认忽略 messages 里的历史 reasoning_content，须显式传 preserve_thinking=true
 // 才会把历史推理拼接进下一轮输入；不传则只是白白付出推理 token 且不报错。
-var reasoningPassbackVendorRequestOptions = map[string]map[string]interface{}{
+var reasoningPassbackVendorRequestOptions = map[string]map[string]any{
 	"alibaba": {"preserve_thinking": true},
 }
 
@@ -448,7 +425,7 @@ func reasoningContentPassbackRequired(protocol string, candidates ...string) boo
 // reasoningPassbackRequestOptions 返回本路由回传生效时需附加的厂商私有请求入参副本。
 // 仅在原生 Chat Completions 协议下生效：OpenRouter 有自己的 reasoning 字段与参数校验，
 // 转发厂商私有顶层入参会被判为未知参数。返回副本避免调用方污染包级变量。
-func reasoningPassbackRequestOptions(protocol string, candidates ...string) map[string]interface{} {
+func reasoningPassbackRequestOptions(protocol string, candidates ...string) map[string]any {
 	if llm.NormalizeAdapter(protocol) != llm.AdapterOpenAIChatCompletions {
 		return nil
 	}
@@ -461,7 +438,7 @@ func reasoningPassbackRequestOptions(protocol string, candidates ...string) map[
 	if len(required) == 0 {
 		return nil
 	}
-	options := make(map[string]interface{}, len(required))
+	options := make(map[string]any, len(required))
 	for key, value := range required {
 		options[key] = value
 	}
@@ -717,18 +694,6 @@ func generateBindingCode() string {
 	return "upm_" + strings.ReplaceAll(uuid.NewString(), "-", "")
 }
 
-// defaultUpstreamProtocol 返回默认的上游通信协议。
-func defaultUpstreamProtocol() string {
-	return llm.AdapterOpenAIChatCompletions
-}
-
-func formatOptionalTime(t *time.Time) string {
-	if t == nil || t.IsZero() {
-		return ""
-	}
-	return t.Format(time.RFC3339)
-}
-
 // ---------------------------------------------------------------------------
 // JSON 与字符串工具
 // ---------------------------------------------------------------------------
@@ -741,19 +706,8 @@ func validateOptionalJSON(raw string) error {
 	return nil
 }
 
-func isDuplicateKeyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, repository.ErrDuplicate) {
-		return true
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "duplicate key") || strings.Contains(msg, "unique constraint")
-}
-
 func mergeHeaderJSON(upstreamHeaders string, routeHeaders string) string {
-	merged := make(map[string]interface{})
+	merged := make(map[string]any)
 	mergeIntoJSONMap(strings.TrimSpace(upstreamHeaders), merged)
 	mergeIntoJSONMap(strings.TrimSpace(routeHeaders), merged)
 	if len(merged) == 0 {
@@ -766,11 +720,11 @@ func mergeHeaderJSON(upstreamHeaders string, routeHeaders string) string {
 	return string(payload)
 }
 
-func mergeIntoJSONMap(raw string, target map[string]interface{}) {
+func mergeIntoJSONMap(raw string, target map[string]any) {
 	if target == nil || strings.TrimSpace(raw) == "" {
 		return
 	}
-	parsed := make(map[string]interface{})
+	parsed := make(map[string]any)
 	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
 		return
 	}
@@ -791,12 +745,4 @@ func mergeIntoJSONMap(raw string, target map[string]interface{}) {
 		}
 		target[key] = parsed[rawKey]
 	}
-}
-
-func truncateMessage(message string, limit int) string {
-	v := strings.TrimSpace(message)
-	if limit <= 0 || len([]rune(v)) <= limit {
-		return v
-	}
-	return string([]rune(v)[:limit])
 }

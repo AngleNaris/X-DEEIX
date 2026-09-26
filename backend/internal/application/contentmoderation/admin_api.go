@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
 	"strings"
 	"time"
 
@@ -102,8 +103,8 @@ func (s *Service) ListEvents(ctx context.Context, actorRole string, input EventL
 	if pageSize < 1 {
 		pageSize = 20
 	}
-	if pageSize > 100 {
-		pageSize = 100
+	if pageSize > 1000 {
+		pageSize = 1000
 	}
 	return s.repo.ListEvents(ctx, domaincm.EventListFilter{
 		Query:     query,
@@ -195,7 +196,7 @@ func (s *Service) OpenEventImage(
 	if err != nil {
 		return nil, "", err
 	}
-	return plain, firstNonEmpty(meta.MimeType, "image/png"), nil
+	return plain, textutil.FirstNonEmpty(meta.MimeType, "image/png"), nil
 }
 
 // CategoryCatalog returns category lists for the admin UI.

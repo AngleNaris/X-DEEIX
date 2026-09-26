@@ -12,6 +12,9 @@ import (
 	"gorm.io/gorm/clause"
 )
 
+// maxMCPServers MCP 服务数量上限；列表接口为全量加载，需要写入侧兜底有界。
+const maxMCPServers = 100
+
 type Repo struct {
 	db *gorm.DB
 }
@@ -23,6 +26,13 @@ func NewRepo(db *gorm.DB) *Repo {
 func (r *Repo) CreateServer(ctx context.Context, input repository.CreateMCPServerInput) (*domainmcp.Server, error) {
 	var result domainmcp.Server
 	if err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var count int64
+		if err := tx.Model(&model.MCPServer{}).Count(&count).Error; err != nil {
+			return err
+		}
+		if count >= maxMCPServers {
+			return repository.ErrMCPServerLimitExceeded
+		}
 		var maxSortOrder int
 		if err := tx.Model(&model.MCPServer{}).
 			Select("COALESCE(MAX(sort_order), 0)").
@@ -50,7 +60,7 @@ func (r *Repo) CreateServer(ctx context.Context, input repository.CreateMCPServe
 }
 
 func (r *Repo) UpdateServer(ctx context.Context, serverID uint, input repository.UpdateMCPServerInput) (*domainmcp.Server, error) {
-	updates := map[string]interface{}{}
+	updates := map[string]any{}
 	if input.Name != nil {
 		updates["name"] = *input.Name
 	}
@@ -219,13 +229,13 @@ func (r *Repo) ReplaceServerTools(ctx context.Context, serverID uint, tools []do
 			displayNameColumn := targetColumn("display_name")
 			descriptionColumn := targetColumn("description")
 			legacyMetadataDiffers := "(" + displayNameColumn + ` <> excluded."display_name" OR ` + descriptionColumn + ` <> excluded."description")`
-			metadataAssignments := map[string]interface{}{
+			metadataAssignments := map[string]any{
 				"display_name":        gorm.Expr("CASE WHEN COALESCE(" + metadataCustomizedColumn + ", TRUE) THEN " + displayNameColumn + ` ELSE excluded."display_name" END`),
 				"description":         gorm.Expr("CASE WHEN COALESCE(" + metadataCustomizedColumn + ", TRUE) THEN " + descriptionColumn + ` ELSE excluded."description" END`),
 				"metadata_customized": gorm.Expr("CASE WHEN " + metadataCustomizedColumn + " IS NULL THEN " + legacyMetadataDiffers + " ELSE " + metadataCustomizedColumn + " END"),
 			}
 			if overwriteCustomizedMetadata {
-				metadataAssignments = map[string]interface{}{
+				metadataAssignments = map[string]any{
 					"display_name":        gorm.Expr(`excluded."display_name"`),
 					"description":         gorm.Expr(`excluded."description"`),
 					"metadata_customized": false,
@@ -262,7 +272,7 @@ func (r *Repo) ReplaceServerTools(ctx context.Context, serverID uint, tools []do
 		if err := deleteQuery.Delete(&model.MCPTool{}).Error; err != nil {
 			return err
 		}
-		return tx.Model(&model.MCPServer{}).Where("id = ?", serverID).Updates(map[string]interface{}{
+		return tx.Model(&model.MCPServer{}).Where("id = ?", serverID).Updates(map[string]any{
 			"tool_count":     len(tools),
 			"last_synced_at": &now,
 			"last_error":     "",
@@ -324,7 +334,7 @@ func (r *Repo) UpdateTool(ctx context.Context, toolID uint, input repository.Upd
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row, "id = ?", toolID).Error; err != nil {
 			return err
 		}
-		updates := map[string]interface{}{}
+		updates := map[string]any{}
 		metadataChanged := false
 		if input.DisplayName != nil && *input.DisplayName != row.DisplayName {
 			updates["display_name"] = *input.DisplayName
@@ -348,6 +358,9 @@ func (r *Repo) UpdateTool(ctx context.Context, toolID uint, input repository.Upd
 		}
 		if metadataChanged {
 			updates["metadata_customized"] = true
+		}
+		if input.PriceNanousd != nil && *input.PriceNanousd != row.PriceNanousd {
+			updates["price_nanousd"] = *input.PriceNanousd
 		}
 		if input.Status != nil && *input.Status != row.Status {
 			updates["status"] = *input.Status
@@ -505,6 +518,7 @@ func toDomainTool(row model.MCPTool) domainmcp.Tool {
 		AttachmentArgument:       row.AttachmentArgument,
 		AttachmentEncoding:       row.AttachmentEncoding,
 		AttachmentPromptArgument: row.AttachmentPromptArgument,
+		PriceNanousd:             row.PriceNanousd,
 		Status:                   row.Status,
 		SortOrder:                row.SortOrder,
 		CreatedAt:                row.CreatedAt,

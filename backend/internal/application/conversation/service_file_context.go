@@ -7,10 +7,11 @@ import (
 	"fmt"
 	"strings"
 
+	domainchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/channel"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	domainknowledgebase "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/knowledgebase"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/tokenestimate"
 )
 
 const (
@@ -375,8 +376,8 @@ func shouldUseRAGForAttachment(item AttachmentInput, fileMode string, cfg config
 			return true
 		}
 		if cfg.ContextTokenBudgetEnabled {
-			budget := llm.EffectiveContextBudgetFromCapabilities(capabilityModelName, capabilitiesJSON)
-			fileTokens := int(estimateTokens(item.ExtractedText))
+			budget := domainchannel.EffectiveContextBudgetFromCapabilitiesWithFallback(capabilityModelName, capabilitiesJSON, cfg.ContextWindowFallbackTokens)
+			fileTokens := int(tokenestimate.Estimate(item.ExtractedText))
 			return budget > 0 && fileTokens > budget*2/5
 		}
 		return false
@@ -386,7 +387,7 @@ func shouldUseRAGForAttachment(item AttachmentInput, fileMode string, cfg config
 func canRetrieveAttachment(item AttachmentInput, ragAvailable bool) bool {
 	return ragAvailable &&
 		strings.TrimSpace(item.FileID) != "" &&
-		!item.RagOptOut &&
+		!item.RAGOptOut &&
 		strings.EqualFold(strings.TrimSpace(item.EmbedStatus), "ready")
 }
 
@@ -414,6 +415,10 @@ func (s *Service) resolveKnowledgeBaseRAGFiles(
 	if len(publicIDs) == 0 {
 		return nil, nil
 	}
+	if !s.cfg.Snapshot().KnowledgeBaseEnabled {
+		// 知识库功能已被后台关闭：静默忽略引用，保证存量会话仍可正常发送。
+		return nil, nil
+	}
 	if !ragAvailable || s.knowledgeBaseResolver == nil || s.ragSvc == nil {
 		return nil, ErrKnowledgeBaseUnavailable
 	}
@@ -432,7 +437,7 @@ func (s *Service) resolveKnowledgeBaseRAGFiles(
 	ready := make([]model.FileObject, 0, len(files))
 	seen := make(map[uint]struct{}, len(files))
 	for _, file := range files {
-		if file.ID == 0 || !file.ProcessingReady || file.RagOptOut || !strings.EqualFold(strings.TrimSpace(file.EmbedStatus), "ready") || file.ChunkCount <= 0 {
+		if file.ID == 0 || !file.ProcessingReady || file.RAGOptOut || !strings.EqualFold(strings.TrimSpace(file.EmbedStatus), "ready") || file.ChunkCount <= 0 {
 			continue
 		}
 		if _, exists := seen[file.ID]; exists {
@@ -504,16 +509,7 @@ func appendRAGFallbackSkippedTrace(traceRecorder *messageTraceRecorder, skipped 
 			"内容检索",
 			fmt.Sprintf("%s，文件超出预算或没有可用提取文本，暂未纳入%s。", ragFallbackReasonLabel(reason), traceNameScope(names)),
 		),
-		map[string]interface{}{
-			"reason":     strings.TrimSpace(reason),
-			"file_names": names,
-			processTracePayloadStage: map[string]interface{}{
-				"kind":       processTraceKindRetrieval,
-				"status":     processTraceStatusSkipped,
-				"reason":     strings.TrimSpace(reason),
-				"file_count": len(names),
-			},
-		},
+		&tracePayload{Reason: strings.TrimSpace(reason), FileNames: names, Stages: []traceStage{{Kind: processTraceKindRetrieval, Status: processTraceStatusSkipped, FileCount: len(names)}}},
 		messageTraceStatusStreaming,
 	)
 }

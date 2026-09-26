@@ -2,11 +2,15 @@ package objectstorage
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/objectstore"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/objectstore"
 )
+
+// ErrProviderNotConfigured 表示对象存储 provider 尚未由组合根注入。
+var ErrProviderNotConfigured = errors.New("object storage provider not configured")
 
 // Provider 为应用服务提供对象存储能力，隔离具体存储实现的创建方式。
 type Provider interface {
@@ -39,11 +43,8 @@ type runtimeStorageKey struct {
 	s3ForcePathStyle  bool
 }
 
-// NewRuntimeProvider 创建对象存储 provider。
+// NewRuntimeProvider 创建对象存储 provider。factory 必须由组合根显式注入。
 func NewRuntimeProvider(cfg *config.Runtime, factory Factory) *RuntimeProvider {
-	if factory == nil {
-		factory = objectstore.New
-	}
 	return &RuntimeProvider{cfg: cfg, factory: factory}
 }
 
@@ -56,6 +57,9 @@ func (p *RuntimeProvider) Open(ctx context.Context) (objectstore.Store, error) {
 	defer p.mu.Unlock()
 	if p.cachePresent && p.cachedKey == key {
 		return p.cachedStore, nil
+	}
+	if p.factory == nil {
+		return nil, ErrProviderNotConfigured
 	}
 	store, err := p.factory(ctx, cfg)
 	if err != nil {

@@ -16,7 +16,6 @@ type BillingRepository interface {
 	ListPlansByIDs(ctx context.Context, planIDs []uint) ([]domainbilling.Plan, error)
 	GetActivePlanByCode(ctx context.Context, code string) (*domainbilling.Plan, error)
 	UpdatePlanWithDefaultPrice(ctx context.Context, plan *domainbilling.Plan, price *domainbilling.Price) error
-	ListCurrentSubscriptionsByUserIDs(ctx context.Context, userIDs []uint, now time.Time) ([]domainbilling.Subscription, error)
 	ListSubscriptionEntitlementsByUserIDs(ctx context.Context, userIDs []uint, now time.Time) ([]domainbilling.Subscription, error)
 	ReplaceSubscription(ctx context.Context, item *domainbilling.Subscription) error
 	CreatePaymentOrder(ctx context.Context, item *domainbilling.PaymentOrder) (*domainbilling.PaymentOrder, error)
@@ -27,6 +26,9 @@ type BillingRepository interface {
 	AddUsageAndSettleBalance(ctx context.Context, usage *domainbilling.UsageLedger, reservation *domainbilling.UsageBalanceReservation) error
 	AddPeriodUsageAndSettleOverage(ctx context.Context, usage *domainbilling.UsageLedger, periodStart time.Time, periodEnd time.Time, periodCreditNanousd int64, reservation *domainbilling.UsageBalanceReservation) error
 	ReserveUsageBalance(ctx context.Context, input domainbilling.UsageBalanceReservationRequest) (*domainbilling.UsageBalanceReservation, error)
+	// RaiseUsageBalanceReservation 把有效预留抬高到不低于 requiredNanousd；预留已足够时保持原值，
+	// 可用预算不足返回 ErrInsufficientBalance。
+	RaiseUsageBalanceReservation(ctx context.Context, userID uint, refNo string, requiredNanousd int64) error
 	RenewUsageBalanceReservation(ctx context.Context, userID uint, refNo string) error
 	ReleaseUsageBalanceReservation(ctx context.Context, userID uint, refNo string) error
 	MarkUsageReservationReconciliationRequired(ctx context.Context, userID uint, refNo string, failureCode string) error
@@ -40,6 +42,7 @@ type BillingRepository interface {
 	PatchRedemptionCode(ctx context.Context, id uint, patch RedemptionCodePatch) (*domainbilling.RedemptionCode, error)
 	DeleteRedemptionCode(ctx context.Context, id uint) error
 	RedeemCode(ctx context.Context, input RedemptionApplyInput) (*RedemptionApplyResult, error)
+	ListRedemptions(ctx context.Context, filter RedemptionListFilter, offset int, limit int) ([]RedemptionRecord, int64, error)
 	GetBillingMode(ctx context.Context) (string, error)
 	GetBillingPrepaidAmountNanousd(ctx context.Context) (int64, error)
 	GetNativeToolBillingEnabled(ctx context.Context) (bool, error)
@@ -54,6 +57,7 @@ type BillingRepository interface {
 	ListMonthlyUsageByUser(ctx context.Context, userID uint, limit int) ([]domainbilling.UsageMonthlySummary, error)
 	ListDailyUsageByUser(ctx context.Context, userID uint, startDate time.Time, endDate time.Time) ([]domainbilling.UsageDailySummary, error)
 	SumBillableNanousd(ctx context.Context, userID uint, startAt time.Time, endAt time.Time) (int64, error)
+	SumTotalBilledNanousd(ctx context.Context, userID uint) (int64, error)
 }
 
 // RedemptionCodeListFilter 描述管理员兑换码列表筛选条件。
@@ -74,6 +78,30 @@ type RedemptionCodePatch struct {
 	ExpiresAtSet      bool
 	ExpiresAt         *time.Time
 	Description       *string
+}
+
+// RedemptionListFilter 描述管理员兑换记录列表筛选条件。
+type RedemptionListFilter struct {
+	CodeID      uint
+	UserID      uint
+	RewardType  string
+	Query       string
+	CreatedFrom *time.Time
+	CreatedTo   *time.Time
+	Sort        string
+}
+
+// RedemptionRecord 表示带兑换码与余额流水上下文的兑换记录。
+// 兑换码删除为状态软删，历史记录始终可联表查询。
+type RedemptionRecord struct {
+	Redemption      domainbilling.Redemption
+	CodeHint        string
+	CodeDescription string
+	CodeStatus      string
+	PlanName        string
+	// BalanceAmountNanousd / BalanceAfterNanousd 来自余额流水；订阅类兑换无流水时为 nil。
+	BalanceAmountNanousd *int64
+	BalanceAfterNanousd  *int64
 }
 
 // RedemptionApplyInput 描述一次兑换需要在事务中完成的写入参数。

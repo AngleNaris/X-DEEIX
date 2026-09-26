@@ -23,7 +23,7 @@ func TestExportUserConversationDataRejectsWrongUser(t *testing.T) {
 	svc := &Service{}
 	conv := &model.Conversation{ID: 1, UserID: 42}
 
-	_, err := svc.ExportUserConversationData(nil, 99, conv)
+	_, err := svc.ExportUserConversationData(context.TODO(), 99, conv)
 	if !errors.Is(err, ErrConversationNotFound) {
 		t.Fatalf("expected ErrConversationNotFound, got %v", err)
 	}
@@ -55,7 +55,7 @@ func TestCollectExportMessageRunIDsDeduplicates(t *testing.T) {
 		{RunID: ""},
 		{RunID: "run_3"},
 	}
-	runIDs := collectExportMessageRunIDs(messages)
+	runIDs := model.CollectMessageRunIDs(messages)
 	if len(runIDs) != 3 {
 		t.Fatalf("expected 3 unique run IDs, got %d: %v", len(runIDs), runIDs)
 	}
@@ -72,7 +72,7 @@ func TestCollectExportMessageRunIDsSkipsEmpty(t *testing.T) {
 		{RunID: ""},
 		{RunID: "  "},
 	}
-	runIDs := collectExportMessageRunIDs(messages)
+	runIDs := model.CollectMessageRunIDs(messages)
 	if len(runIDs) != 0 {
 		t.Fatalf("expected 0 run IDs for empty inputs, got %d", len(runIDs))
 	}

@@ -7,7 +7,7 @@ import (
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
 func TestBuildFailedMediaBillingResultPreservesUpstreamUsage(t *testing.T) {
@@ -96,7 +96,7 @@ func TestBuildFailedMediaBillingResultKeepsCanceledStatus(t *testing.T) {
 	if result == nil || result.AssistantMessage.Status != "canceled" {
 		t.Fatalf("canceled media billing result = %+v", result)
 	}
-	if result.AssistantMessage.ErrorCode != "generation_canceled" {
+	if result.AssistantMessage.ErrorCode != "conversation_run.canceled" {
 		t.Fatalf("unexpected canceled error code: %+v", result.AssistantMessage)
 	}
 }

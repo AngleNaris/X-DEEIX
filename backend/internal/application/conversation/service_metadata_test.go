@@ -9,6 +9,7 @@ import (
 
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/tokenestimate"
 )
 
 type initialFallbackTitleRepositoryStub struct {
@@ -37,7 +38,7 @@ func TestBuildConversationMetadataMessagesTruncatesToBudget(t *testing.T) {
 
 	got := buildConversationMetadataMessages(userMsg)
 
-	if tokens := estimateTokens(got); tokens > conversationMetadataMessageMaxTokens {
+	if tokens := tokenestimate.Estimate(got); tokens > conversationMetadataMessageMaxTokens {
 		t.Fatalf("metadata messages exceeded budget: got %d, want <= %d", tokens, conversationMetadataMessageMaxTokens)
 	}
 	if !strings.HasPrefix(got, "user:\n") {

@@ -3,18 +3,20 @@ package knowledgebase
 import (
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 
 	appconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/conversation"
+	appembedding "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/embedding"
 	appknowledgebase "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/knowledgebase"
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	domainknowledgebase "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/knowledgebase"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/pagination"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/filecontent"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/queryparam"
 	"github.com/gin-gonic/gin"
 )
 
@@ -31,11 +33,23 @@ func NewHandler(service *appknowledgebase.Service, cfg *config.Runtime) *Handler
 
 const multipartUploadOverheadBytes = 1 << 20
 
+// requireKnowledgeBaseEnabled 在知识库功能被后台关闭时拒绝用户侧请求。
+func (h *Handler) requireKnowledgeBaseEnabled(c *gin.Context) {
+	if h.cfg.Snapshot().KnowledgeBaseEnabled {
+		c.Next()
+		return
+	}
+	response.ErrorWithCode(c, http.StatusForbidden, "knowledge_base.disabled")
+	c.Abort()
+}
+
 // ListVisible godoc
 // @Summary 查询当前用户可用知识库
 // @Tags knowledge-bases
 // @Security BearerAuth
 // @Param q query string false "搜索关键词"
+// @Param sort query string false "排序方式(default/name/created/updated/files)"
+// @Param id query []string false "知识库ID"
 // @Param page query int false "页码"
 // @Param page_size query int false "每页数量"
 // @Success 200 {object} KnowledgeBasePageResponseDoc
@@ -50,6 +64,8 @@ func (h *Handler) ListVisible(c *gin.Context) {
 // @Tags knowledge-bases
 // @Security BearerAuth
 // @Param q query string false "搜索关键词"
+// @Param sort query string false "排序方式(default/name/created/updated/files)"
+// @Param id query []string false "知识库ID"
 // @Param enabled query bool false "可用状态"
 // @Param page query int false "页码"
 // @Param page_size query int false "每页数量"
@@ -57,7 +73,7 @@ func (h *Handler) ListVisible(c *gin.Context) {
 // @Router /knowledge-bases/mine [get]
 func (h *Handler) ListMine(c *gin.Context) {
 	input := listInput(c)
-	input.Enabled = boolQuery(c, "enabled")
+	input.Enabled = queryparam.OptionalBool(strings.TrimSpace(c.Query("enabled")))
 	items, total, err := h.service.ListMine(c.Request.Context(), middleware.MustUserID(c), input)
 	writeList(c, items, total, err)
 }
@@ -140,9 +156,42 @@ func (h *Handler) DeleteMine(c *gin.Context) {
 // @Success 200 {object} KnowledgeBaseFilePageResponseDoc
 // @Router /knowledge-bases/{id}/files [get]
 func (h *Handler) ListVisibleFiles(c *gin.Context) {
-	page, pageSize := pageParams(c)
+	page, pageSize := pagination.Parse(c.Query("page"), c.Query("page_size"))
 	items, total, err := h.service.ListVisibleFiles(c.Request.Context(), middleware.MustUserID(c), c.Param("id"), page, pageSize)
-	writeFileList(c, items, total, err)
+	h.writeFileList(c, items, total, err)
+}
+
+// GetVisibleFileProcessingStatuses godoc
+// @Summary 批量查询知识库文件处理状态
+// @Tags knowledge-bases
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path string true "知识库ID"
+// @Param request body GetKnowledgeBaseFileProcessingStatusesRequest true "文件ID，最多100个"
+// @Success 200 {array} KnowledgeBaseFileProcessingStatusResponse
+// @Failure 400 {object} ErrorDoc
+// @Failure 404 {object} ErrorDoc
+// @Failure 500 {object} ErrorDoc
+// @Router /knowledge-bases/{id}/files/processing/statuses [post]
+func (h *Handler) GetVisibleFileProcessingStatuses(c *gin.Context) {
+	h.getFileProcessingStatuses(c, false)
+}
+
+// GetVisibleFileProcessingSnapshot godoc
+// @Summary 查询当前用户可见知识库处理快照
+// @Tags knowledge-bases
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "知识库公开ID"
+// @Param request body GetKnowledgeBaseFileProcessingSnapshotRequest true "当前页处理中或待确认的文件ID，最多100个，可为空"
+// @Success 200 {object} KnowledgeBaseFileProcessingSnapshotResponse
+// @Failure 400 {object} ErrorDoc
+// @Failure 404 {object} ErrorDoc
+// @Router /knowledge-bases/{id}/files/processing/snapshot [post]
+func (h *Handler) GetVisibleFileProcessingSnapshot(c *gin.Context) {
+	h.getFileProcessingSnapshot(c, false)
 }
 
 // ListAvailableMineFiles godoc
@@ -166,7 +215,7 @@ func (h *Handler) ListAvailableMineFiles(c *gin.Context) {
 		c.Param("id"),
 		listInput(c),
 	)
-	writeFileList(c, items, total, err)
+	h.writeFileList(c, items, total, err)
 }
 
 // GetVisibleFileContent godoc
@@ -225,6 +274,8 @@ func (h *Handler) RemoveMineFile(c *gin.Context) {
 // @Tags admin-knowledge-bases
 // @Security BearerAuth
 // @Param q query string false "搜索关键词"
+// @Param sort query string false "排序方式(default/name/created/updated/files)"
+// @Param id query []string false "知识库ID"
 // @Param enabled query bool false "可用状态"
 // @Param page query int false "页码"
 // @Param page_size query int false "每页数量"
@@ -232,7 +283,7 @@ func (h *Handler) RemoveMineFile(c *gin.Context) {
 // @Router /admin/knowledge-bases [get]
 func (h *Handler) ListAdmin(c *gin.Context) {
 	input := listInput(c)
-	input.Enabled = boolQuery(c, "enabled")
+	input.Enabled = queryparam.OptionalBool(strings.TrimSpace(c.Query("enabled")))
 	items, total, err := h.service.ListAdminBuiltin(c.Request.Context(), input)
 	writeList(c, items, total, err)
 }
@@ -255,7 +306,7 @@ func (h *Handler) ListPlatformFiles(c *gin.Context) {
 		middleware.MustUserID(c),
 		listInput(c),
 	)
-	writeFileList(c, items, total, err)
+	h.writeFileList(c, items, total, err)
 }
 
 // UploadAdminFile godoc
@@ -275,12 +326,12 @@ func (h *Handler) UploadAdminFile(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, h.maxUploadRequestBytes())
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "file is required")
+		response.ErrorFrom(c, http.StatusBadRequest, errFileRequired)
 		return
 	}
 	fileReader, err := fileHeader.Open()
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid file stream")
+		response.ErrorFrom(c, http.StatusBadRequest, errInvalidFileStream)
 		return
 	}
 	defer fileReader.Close() //nolint:errcheck
@@ -293,10 +344,55 @@ func (h *Handler) UploadAdminFile(c *gin.Context) {
 		h.writeUploadError(c, err)
 		return
 	}
-	h.audit(c, "knowledge_base.upload_builtin_file", result.File.FileID, map[string]interface{}{
+	h.audit(c, "knowledge_base.upload_builtin_file", result.File.FileID, map[string]any{
 		"file_name": result.File.FileName, "size_bytes": result.File.SizeBytes,
 	})
-	response.Success(c, KnowledgeBaseFileDataResponse{File: toKnowledgeBaseFileResponse(result.File)})
+	capability := h.service.ResolveFileVectorizationCapabilities(
+		c.Request.Context(),
+		[]domainconversation.FileObject{result.File},
+	)[result.File.FileID]
+	response.Success(c, KnowledgeBaseFileDataResponse{File: toKnowledgeBaseFileResponse(result.File, capability)})
+}
+
+// SubmitAdminFileEmbeddings godoc
+// @Summary 批量提交平台资料向量化
+// @Description 为管理员选中的平台资料提交向量化任务，最多100个；重复提交会幂等跳过
+// @Tags admin-knowledge-bases
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param request body SubmitPlatformFileEmbeddingsRequest true "平台资料ID，最多100个"
+// @Success 200 {object} KnowledgeBaseFileEmbeddingSubmissionResponseDoc
+// @Failure 400 {object} ErrorDoc
+// @Failure 500 {object} ErrorDoc
+// @Failure 503 {object} ErrorDoc
+// @Router /admin/knowledge-bases/files/embeddings [post]
+func (h *Handler) SubmitAdminFileEmbeddings(c *gin.Context) {
+	var req SubmitPlatformFileEmbeddingsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.InvalidRequestBody(c, err)
+		return
+	}
+	result, err := h.service.SubmitPlatformFileEmbeddings(c.Request.Context(), middleware.MustUserID(c), req.FileIDs)
+	if err != nil {
+		switch {
+		case errors.Is(err, appembedding.ErrTooManyTargetedFiles):
+			response.ErrorWithCode(c, http.StatusBadRequest, "embedding.too_many_files")
+		case errors.Is(err, appembedding.ErrEmbeddingServiceNotConfigured):
+			response.ErrorWithCode(c, http.StatusServiceUnavailable, "embedding.service_not_configured")
+		case errors.Is(err, appembedding.ErrEmbeddingServiceUnavailable):
+			response.ErrorWithCode(c, http.StatusServiceUnavailable, "embedding.service_unavailable")
+		default:
+			writeError(c, err)
+		}
+		return
+	}
+	h.audit(c, "knowledge_base.submit_platform_file_embeddings", "", map[string]any{
+		"requested_file_ids": req.FileIDs,
+		"submitted_file_ids": result.SubmittedFileIDs,
+		"skipped_count":      len(result.Skipped),
+	})
+	response.Success(c, toKnowledgeBaseFileEmbeddingSubmissionResponse(result))
 }
 
 // DeleteAdminFile godoc
@@ -322,7 +418,7 @@ func (h *Handler) DeleteAdminFile(c *gin.Context) {
 		writeError(c, err)
 		return
 	}
-	h.audit(c, "knowledge_base.delete_platform_file", fileID, map[string]interface{}{"deleted": true})
+	h.audit(c, "knowledge_base.delete_platform_file", fileID, map[string]any{"deleted": true})
 	response.Success(c, PlatformFileDeleteDataResponse{Deleted: true})
 }
 
@@ -364,15 +460,15 @@ func (h *Handler) maxUploadRequestBytes() int64 {
 func (h *Handler) writeUploadError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, appconversation.ErrStorageQuotaExceeded):
-		response.Error(c, http.StatusConflict, "storage quota exceeded")
+		response.ErrorFrom(c, http.StatusConflict, errStorageQuotaExceeded)
 	case errors.Is(err, appconversation.ErrDangerousMIMEType), errors.Is(err, appconversation.ErrMIMEBlocked), errors.Is(err, appconversation.ErrInvalidFileReference):
-		response.Error(c, http.StatusBadRequest, "invalid file")
+		response.ErrorFrom(c, http.StatusBadRequest, errInvalidFile)
 	case errors.Is(err, appconversation.ErrEmbeddingUnavailable):
-		response.Error(c, http.StatusBadRequest, "embedding unavailable for this file size")
+		response.ErrorFrom(c, http.StatusBadRequest, errFileEmbeddingUnavailable)
 	case errors.Is(err, appconversation.ErrFileTooLarge):
-		response.Error(c, http.StatusRequestEntityTooLarge, "file too large")
+		response.ErrorFrom(c, http.StatusRequestEntityTooLarge, err)
 	default:
-		response.Error(c, http.StatusInternalServerError, "upload file failed")
+		response.InternalError(c)
 	}
 }
 
@@ -394,7 +490,23 @@ func (h *Handler) CreateAdmin(c *gin.Context) {
 		writeError(c, err)
 		return
 	}
-	h.audit(c, "knowledge_base.create_builtin", item.PublicID, map[string]interface{}{"name": item.Name})
+	h.audit(c, "knowledge_base.create_builtin", item.PublicID, map[string]any{"name": item.Name})
+	response.Success(c, KnowledgeBaseDataResponse{KnowledgeBase: toKnowledgeBaseResponse(*item)})
+}
+
+// GetAdmin godoc
+// @Summary 查询内置知识库详情
+// @Tags admin-knowledge-bases
+// @Security BearerAuth
+// @Param id path string true "知识库ID"
+// @Success 200 {object} KnowledgeBaseResponseDoc
+// @Router /admin/knowledge-bases/{id} [get]
+func (h *Handler) GetAdmin(c *gin.Context) {
+	item, err := h.service.GetAdmin(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeError(c, err)
+		return
+	}
 	response.Success(c, KnowledgeBaseDataResponse{KnowledgeBase: toKnowledgeBaseResponse(*item)})
 }
 
@@ -437,9 +549,42 @@ func (h *Handler) DeleteAdmin(c *gin.Context) { h.delete(c, true) }
 // @Success 200 {object} KnowledgeBaseFilePageResponseDoc
 // @Router /admin/knowledge-bases/{id}/files [get]
 func (h *Handler) ListAdminFiles(c *gin.Context) {
-	page, pageSize := pageParams(c)
+	page, pageSize := pagination.Parse(c.Query("page"), c.Query("page_size"))
 	items, total, err := h.service.ListAdminFiles(c.Request.Context(), c.Param("id"), page, pageSize)
-	writeFileList(c, items, total, err)
+	h.writeFileList(c, items, total, err)
+}
+
+// GetAdminFileProcessingStatuses godoc
+// @Summary 批量查询内置知识库文件处理状态
+// @Tags admin-knowledge-bases
+// @Security BearerAuth
+// @Accept json
+// @Produce json
+// @Param id path string true "知识库ID"
+// @Param request body GetKnowledgeBaseFileProcessingStatusesRequest true "文件ID，最多100个"
+// @Success 200 {array} KnowledgeBaseFileProcessingStatusResponse
+// @Failure 400 {object} ErrorDoc
+// @Failure 404 {object} ErrorDoc
+// @Failure 500 {object} ErrorDoc
+// @Router /admin/knowledge-bases/{id}/files/processing/statuses [post]
+func (h *Handler) GetAdminFileProcessingStatuses(c *gin.Context) {
+	h.getFileProcessingStatuses(c, true)
+}
+
+// GetAdminFileProcessingSnapshot godoc
+// @Summary 查询内置知识库处理快照
+// @Tags admin-knowledge-bases
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param id path string true "知识库公开ID"
+// @Param request body GetKnowledgeBaseFileProcessingSnapshotRequest true "当前页处理中或待确认的文件ID，最多100个，可为空"
+// @Success 200 {object} KnowledgeBaseFileProcessingSnapshotResponse
+// @Failure 400 {object} ErrorDoc
+// @Failure 404 {object} ErrorDoc
+// @Router /admin/knowledge-bases/{id}/files/processing/snapshot [post]
+func (h *Handler) GetAdminFileProcessingSnapshot(c *gin.Context) {
+	h.getFileProcessingSnapshot(c, true)
 }
 
 // ListAvailableAdminFiles godoc
@@ -463,7 +608,7 @@ func (h *Handler) ListAvailableAdminFiles(c *gin.Context) {
 		c.Param("id"),
 		listInput(c),
 	)
-	writeFileList(c, items, total, err)
+	h.writeFileList(c, items, total, err)
 }
 
 // GetAdminFileContent godoc
@@ -541,7 +686,7 @@ func (h *Handler) delete(c *gin.Context, admin bool) {
 		return
 	}
 	if admin {
-		h.audit(c, "knowledge_base.delete_builtin", publicID, map[string]interface{}{
+		h.audit(c, "knowledge_base.delete_builtin", publicID, map[string]any{
 			"delete_files":       deleteFiles,
 			"deleted_file_count": result.DeletedFileCount,
 		})
@@ -566,7 +711,7 @@ func (h *Handler) addFiles(c *gin.Context, admin bool) {
 		return
 	}
 	if admin {
-		h.audit(c, "knowledge_base.add_files_builtin", c.Param("id"), map[string]interface{}{"count": len(req.FileIDs)})
+		h.audit(c, "knowledge_base.add_files_builtin", c.Param("id"), map[string]any{"count": len(req.FileIDs)})
 	}
 	response.Success(c, KnowledgeBaseFileMutationDataResponse{Updated: true})
 }
@@ -583,9 +728,69 @@ func (h *Handler) removeFile(c *gin.Context, admin bool) {
 		return
 	}
 	if admin {
-		h.audit(c, "knowledge_base.remove_file_builtin", c.Param("id"), map[string]interface{}{"file_id": c.Param("file_id")})
+		h.audit(c, "knowledge_base.remove_file_builtin", c.Param("id"), map[string]any{"file_id": c.Param("file_id")})
 	}
 	response.Success(c, KnowledgeBaseFileMutationDataResponse{Updated: true})
+}
+
+func (h *Handler) getFileProcessingStatuses(c *gin.Context, admin bool) {
+	var req GetKnowledgeBaseFileProcessingStatusesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.InvalidRequestBody(c, err)
+		return
+	}
+
+	var files []domainconversation.FileObject
+	var err error
+	if admin {
+		files, err = h.service.GetAdminFileProcessingStatuses(c.Request.Context(), c.Param("id"), req.FileIDs)
+	} else {
+		files, err = h.service.GetVisibleFileProcessingStatuses(
+			c.Request.Context(),
+			middleware.MustUserID(c),
+			c.Param("id"),
+			req.FileIDs,
+		)
+	}
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	capabilities := h.service.ResolveFileVectorizationCapabilities(c.Request.Context(), files)
+	response.Success(c, toKnowledgeBaseFileProcessingStatusResponses(files, capabilities))
+}
+
+func (h *Handler) getFileProcessingSnapshot(c *gin.Context, admin bool) {
+	var req GetKnowledgeBaseFileProcessingSnapshotRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.InvalidRequestBody(c, err)
+		return
+	}
+
+	var item *domainknowledgebase.KnowledgeBase
+	var files []domainconversation.FileObject
+	var err error
+	if admin {
+		item, files, err = h.service.GetAdminFileProcessingSnapshot(c.Request.Context(), c.Param("id"), req.FileIDs)
+	} else {
+		item, files, err = h.service.GetVisibleFileProcessingSnapshot(
+			c.Request.Context(),
+			middleware.MustUserID(c),
+			c.Param("id"),
+			req.FileIDs,
+		)
+	}
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	response.Success(c, KnowledgeBaseFileProcessingSnapshotResponse{
+		KnowledgeBase: toKnowledgeBaseResponse(*item),
+		Statuses: toKnowledgeBaseFileProcessingStatusResponses(
+			files,
+			h.service.ResolveFileVectorizationCapabilities(c.Request.Context(), files),
+		),
+	})
 }
 
 func writeList(c *gin.Context, items []domainknowledgebase.KnowledgeBase, total int64, err error) {
@@ -596,12 +801,13 @@ func writeList(c *gin.Context, items []domainknowledgebase.KnowledgeBase, total 
 	response.SuccessPage(c, total, toKnowledgeBaseResponses(items))
 }
 
-func writeFileList(c *gin.Context, items []domainconversation.FileObject, total int64, err error) {
+func (h *Handler) writeFileList(c *gin.Context, items []domainconversation.FileObject, total int64, err error) {
 	if err != nil {
 		writeError(c, err)
 		return
 	}
-	response.SuccessPage(c, total, toKnowledgeBaseFileResponses(items))
+	capabilities := h.service.ResolveFileVectorizationCapabilities(c.Request.Context(), items)
+	response.SuccessPage(c, total, toKnowledgeBaseFileResponses(items, capabilities))
 }
 
 func writeInput(req WriteKnowledgeBaseRequest) appknowledgebase.WriteInput {
@@ -613,48 +819,30 @@ func writeInput(req WriteKnowledgeBaseRequest) appknowledgebase.WriteInput {
 }
 
 func listInput(c *gin.Context) appknowledgebase.ListInput {
-	page, pageSize := pageParams(c)
-	return appknowledgebase.ListInput{Query: c.Query("q"), Page: page, PageSize: pageSize}
-}
-
-func pageParams(c *gin.Context) (int, int) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	return page, pageSize
-}
-
-func boolQuery(c *gin.Context, key string) *bool {
-	raw := strings.TrimSpace(c.Query(key))
-	if raw == "" {
-		return nil
-	}
-	value, err := strconv.ParseBool(raw)
-	if err != nil {
-		return nil
-	}
-	return &value
+	page, pageSize := pagination.Parse(c.Query("page"), c.Query("page_size"))
+	return appknowledgebase.ListInput{Query: c.Query("q"), Sort: c.Query("sort"), IDs: c.QueryArray("id"), Page: page, PageSize: pageSize}
 }
 
 func writeError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, appknowledgebase.ErrInvalidKnowledgeBase):
-		response.ErrorWithCode(c, http.StatusBadRequest, "knowledge_base.invalid", "invalid knowledge base request")
+		response.ErrorWithCode(c, http.StatusBadRequest, "knowledge_base.invalid")
 	case errors.Is(err, appknowledgebase.ErrKnowledgeBaseNotFound), errors.Is(err, appknowledgebase.ErrKnowledgeBaseFileNotFound):
-		response.ErrorWithCode(c, http.StatusNotFound, "knowledge_base.not_found", "knowledge base not found")
+		response.ErrorWithCode(c, http.StatusNotFound, "knowledge_base.not_found")
 	case errors.Is(err, appconversation.ErrFileNotFound):
-		response.ErrorWithCode(c, http.StatusNotFound, "file.not_found", "file not found")
+		response.ErrorWithCode(c, http.StatusNotFound, "file.not_found")
 	case errors.Is(err, appknowledgebase.ErrKnowledgeBaseConflict):
-		response.ErrorWithCode(c, http.StatusConflict, "knowledge_base.conflict", "knowledge base conflict")
+		response.ErrorWithCode(c, http.StatusConflict, "knowledge_base.conflict")
 	case errors.Is(err, appknowledgebase.ErrPlatformFileInUse):
-		response.ErrorWithCode(c, http.StatusConflict, "knowledge_base.platform_file_in_use", "platform file is in use")
+		response.ErrorWithCode(c, http.StatusConflict, "knowledge_base.platform_file_in_use")
 	case errors.Is(err, appknowledgebase.ErrKnowledgeBaseFileCleanupUnavailable):
-		response.ErrorWithCode(c, http.StatusServiceUnavailable, "knowledge_base.file_cleanup_unavailable", "platform file cleanup unavailable")
+		response.ErrorWithCode(c, http.StatusServiceUnavailable, "knowledge_base.file_cleanup_unavailable")
 	default:
-		response.ErrorWithCode(c, http.StatusInternalServerError, "knowledge_base.internal", "knowledge base operation failed")
+		response.ErrorWithCode(c, http.StatusInternalServerError, "knowledge_base.internal")
 	}
 }
 
-func (h *Handler) audit(c *gin.Context, action string, resourceID string, detail interface{}) {
+func (h *Handler) audit(c *gin.Context, action string, resourceID string, detail any) {
 	h.service.RecordAudit(c.Request.Context(), appknowledgebase.AuditInput{
 		UserID: middleware.MustUserID(c), RequestID: middleware.MustRequestID(c), Action: action, ResourceID: resourceID,
 		ClientIP: c.ClientIP(), UserAgent: c.Request.UserAgent(), Detail: detail,

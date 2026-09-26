@@ -17,6 +17,8 @@ var (
 	ErrConflict = errors.New("resource conflict")
 	// ErrInvalidInput 表示输入数据非法。
 	ErrInvalidInput = errors.New("invalid input")
+	// ErrRefreshTokenReuse 表示检测到已轮换的刷新令牌在宽限期外被再次使用；会话已被整体吊销。
+	ErrRefreshTokenReuse = errors.New("refresh token reuse detected")
 	// ErrInsufficientBalance 表示余额不足，无法完成扣费。
 	ErrInsufficientBalance = errors.New("insufficient balance")
 	// ErrUsageReservationLimitExceeded 表示用户活跃付费调用数量达到上限。
@@ -29,6 +31,27 @@ var (
 	ErrRedemptionUserLimitExceeded = errors.New("redemption user limit exceeded")
 	// ErrLastSuperAdminRoleChange 表示操作会移除最后一个超级管理员。
 	ErrLastSuperAdminRoleChange = errors.New("last superadmin role change not allowed")
+	// ErrFileProcessingQueueFull 表示文件处理队列已达容量上限，暂时无法接收新任务。
+	ErrFileProcessingQueueFull = errors.New("file processing queue full")
+	// ErrUserMemoryLimitExceeded 表示用户长期记忆条目数量达到上限，无法再新增。
+	ErrUserMemoryLimitExceeded = errors.New("user memory limit exceeded")
+	// ErrMCPServerLimitExceeded 表示 MCP 服务数量达到上限，无法再新增。
+	ErrMCPServerLimitExceeded = errors.New("mcp server limit exceeded")
+	// ErrConversationProjectLimitExceeded 表示单用户会话项目数量达到上限，无法再新增。
+	ErrConversationProjectLimitExceeded = errors.New("conversation project limit exceeded")
+	// ErrFileNotFound 文件对象不存在或无权限。
+	ErrFileNotFound = errors.New("file not found")
+	// ErrStorageQuotaExceeded 用户存储配额超限。
+	ErrStorageQuotaExceeded = errors.New("storage quota exceeded")
+	// ErrConversationShareSchemaOutdated 会话分享存储结构未更新。
+	ErrConversationShareSchemaOutdated = errors.New("conversation share schema outdated")
+
+	// ErrMessageDeleteStateInvalid 消息仍在生成中，不允许删除。
+	ErrMessageDeleteStateInvalid = errors.New("message delete state invalid")
+	// ErrMessageDeleteRootInvalid 会话第一条消息不允许删除，否则历史将以助手消息开头。
+	ErrMessageDeleteRootInvalid = errors.New("message delete root invalid")
+	// ErrMessageParentDeleted 父消息已被删除，无法再挂在其下创建新消息。
+	ErrMessageParentDeleted = errors.New("message parent deleted")
 
 	// 上游与模型仓储语义错误。
 	ErrUpstreamNotFound           = errors.New("upstream not found")

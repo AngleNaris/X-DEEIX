@@ -89,7 +89,7 @@ func (s *Service) SetModelProtocols(ctx context.Context, modelID uint, input Set
 		if txErr != nil {
 			return txErr
 		}
-		result := toModelView(*row)
+		result := s.toModelView(*row)
 		views := []ModelView{result}
 		if txErr = s.normalizeModelAvailabilityWithRepo(ctx, txRepo, views); txErr != nil {
 			return txErr
@@ -99,7 +99,7 @@ func (s *Service) SetModelProtocols(ctx context.Context, modelID uint, input Set
 	})
 	if err != nil {
 		switch {
-		case isDuplicateKeyError(err):
+		case errors.Is(err, repository.ErrDuplicate):
 			return nil, ErrUpstreamModelConflict
 		case errors.Is(err, repository.ErrConflict):
 			return nil, ErrUpstreamModelBindingChanged

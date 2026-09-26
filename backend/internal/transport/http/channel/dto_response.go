@@ -100,6 +100,7 @@ type ModelResponse struct {
 	KindsJSON          string `json:"kindsJSON"`
 	Icon               string `json:"icon"`
 	CapabilitiesJSON   string `json:"capabilitiesJSON"`
+	ContextWindow      int    `json:"contextWindow"`
 	SystemPrompt       string `json:"systemPrompt"`
 	AccessScope        string `json:"accessScope"`
 	Status             string `json:"status"`
@@ -131,6 +132,7 @@ func toModelResponse(v appchannel.ModelView) ModelResponse {
 		KindsJSON:          v.KindsJSON,
 		Icon:               v.Icon,
 		CapabilitiesJSON:   v.CapabilitiesJSON,
+		ContextWindow:      v.ContextWindow,
 		SystemPrompt:       v.SystemPrompt,
 		AccessScope:        v.AccessScope,
 		Status:             v.Status,
@@ -289,20 +291,6 @@ type UpstreamHealthResponse struct {
 	LastSuccessAt string `json:"lastSuccessAt"`
 }
 
-func toUpstreamHealthResponse(v appchannel.UpstreamHealthView) UpstreamHealthResponse {
-	return UpstreamHealthResponse{
-		UpstreamID:    v.UpstreamID,
-		UpstreamName:  v.UpstreamName,
-		Status:        v.Status,
-		FailureCount:  v.FailureCount,
-		CircuitOpen:   v.CircuitOpen,
-		CircuitUntil:  v.CircuitUntil,
-		LastError:     v.LastError,
-		LastFailureAt: v.LastFailureAt,
-		LastSuccessAt: v.LastSuccessAt,
-	}
-}
-
 // ModelProbeResponse 模型连通性测试响应 DTO。
 type ModelProbeResponse struct {
 	Success            bool                     `json:"success"`
@@ -425,8 +413,20 @@ type UpstreamRemoteModelResponse struct {
 
 // UpstreamRemoteModelsResponse 上游远程模型预览列表响应 DTO。
 type UpstreamRemoteModelsResponse struct {
-	Total int                           `json:"total"`
-	Items []UpstreamRemoteModelResponse `json:"items"`
+	Total      int                           `json:"total"`
+	Items      []UpstreamRemoteModelResponse `json:"items"`
+	SnapshotID string                        `json:"snapshotID"`
+	SyncPlan   UpstreamModelSyncPlanResponse `json:"syncPlan"`
+}
+
+// UpstreamModelSyncPlanResponse 描述确认同步后将应用的目录变化。
+type UpstreamModelSyncPlanResponse struct {
+	AddedModels       []string `json:"addedModels"`
+	UpdatedModels     []string `json:"updatedModels"`
+	ReactivatedModels []string `json:"reactivatedModels"`
+	InactivatedModels []string `json:"inactivatedModels"`
+	UnchangedModels   []string `json:"unchangedModels"`
+	ProtectedModels   []string `json:"protectedModels"`
 }
 
 func toUpstreamRemoteModelsResponse(d appchannel.UpstreamRemoteModelsData) UpstreamRemoteModelsResponse {
@@ -445,7 +445,19 @@ func toUpstreamRemoteModelsResponse(d appchannel.UpstreamRemoteModelsData) Upstr
 			AlreadyBound:               item.AlreadyBound,
 		})
 	}
-	return UpstreamRemoteModelsResponse{Total: d.Total, Items: items}
+	return UpstreamRemoteModelsResponse{
+		Total:      d.Total,
+		Items:      items,
+		SnapshotID: d.SnapshotID,
+		SyncPlan: UpstreamModelSyncPlanResponse{
+			AddedModels:       stringList(d.SyncPlan.AddedModels),
+			UpdatedModels:     stringList(d.SyncPlan.UpdatedModels),
+			ReactivatedModels: stringList(d.SyncPlan.ReactivatedModels),
+			InactivatedModels: stringList(d.SyncPlan.InactivatedModels),
+			UnchangedModels:   stringList(d.SyncPlan.UnchangedModels),
+			ProtectedModels:   stringList(d.SyncPlan.ProtectedModels),
+		},
+	}
 }
 
 func stringList(items []string) []string {
@@ -463,16 +475,24 @@ type UpstreamSyncModelResponse struct {
 	KindsJSON         string `json:"kindsJSON"`
 	Status            string `json:"status"`
 	Created           bool   `json:"created"`
+	Updated           bool   `json:"updated"`
+	Reactivated       bool   `json:"reactivated"`
+	Protected         bool   `json:"protected"`
 }
 
 // SyncUpstreamModelsResponse 同步上游模型响应 DTO。
 type SyncUpstreamModelsResponse struct {
-	TotalUpstream          int                         `json:"totalUpstream"`
-	CreatedUpstreamModels  int                         `json:"createdUpstreamModels"`
-	ExistingUpstreamModels int                         `json:"existingUpstreamModels"`
-	SkippedUpstreamModels  int                         `json:"skippedUpstreamModels"`
-	InactivatedModels      int64                       `json:"inactivatedModels"`
-	SyncedModels           []UpstreamSyncModelResponse `json:"syncedModels"`
+	SnapshotID              string                      `json:"snapshotID"`
+	TotalUpstream           int                         `json:"totalUpstream"`
+	CreatedUpstreamModels   int                         `json:"createdUpstreamModels"`
+	UpdatedUpstreamModels   int                         `json:"updatedUpstreamModels"`
+	UnchangedUpstreamModels int                         `json:"unchangedUpstreamModels"`
+	ProtectedUpstreamModels int                         `json:"protectedUpstreamModels"`
+	ExistingUpstreamModels  int                         `json:"existingUpstreamModels"`
+	SkippedUpstreamModels   int                         `json:"skippedUpstreamModels"`
+	InactivatedModels       int64                       `json:"inactivatedModels"`
+	ReactivatedModels       int                         `json:"reactivatedModels"`
+	SyncedModels            []UpstreamSyncModelResponse `json:"syncedModels"`
 }
 
 func toSyncUpstreamModelsResponse(d appchannel.SyncUpstreamModelsData) SyncUpstreamModelsResponse {
@@ -485,15 +505,23 @@ func toSyncUpstreamModelsResponse(d appchannel.SyncUpstreamModelsData) SyncUpstr
 			KindsJSON:         m.KindsJSON,
 			Status:            m.Status,
 			Created:           m.Created,
+			Updated:           m.Updated,
+			Reactivated:       m.Reactivated,
+			Protected:         m.Protected,
 		})
 	}
 	return SyncUpstreamModelsResponse{
-		TotalUpstream:          d.TotalUpstream,
-		CreatedUpstreamModels:  d.CreatedUpstreamModels,
-		ExistingUpstreamModels: d.ExistingUpstreamModels,
-		SkippedUpstreamModels:  d.SkippedUpstreamModels,
-		InactivatedModels:      d.InactivatedModels,
-		SyncedModels:           models,
+		SnapshotID:              d.SnapshotID,
+		TotalUpstream:           d.TotalUpstream,
+		CreatedUpstreamModels:   d.CreatedUpstreamModels,
+		UpdatedUpstreamModels:   d.UpdatedUpstreamModels,
+		UnchangedUpstreamModels: d.UnchangedUpstreamModels,
+		ProtectedUpstreamModels: d.ProtectedUpstreamModels,
+		ExistingUpstreamModels:  d.ExistingUpstreamModels,
+		SkippedUpstreamModels:   d.SkippedUpstreamModels,
+		InactivatedModels:       d.InactivatedModels,
+		ReactivatedModels:       d.ReactivatedModels,
+		SyncedModels:            models,
 	}
 }
 
@@ -633,10 +661,24 @@ type PublicModelPricingResponse struct {
 	InputUSDPerMTokens      float64                          `json:"inputUSDPerMTokens"`
 	CacheReadUSDPerMTokens  float64                          `json:"cacheReadUSDPerMTokens"`
 	CacheWriteUSDPerMTokens float64                          `json:"cacheWriteUSDPerMTokens"`
+	CacheWrite5mMultiplier  float64                          `json:"cacheWrite5mMultiplier"`
+	CacheWrite1hMultiplier  float64                          `json:"cacheWrite1hMultiplier"`
 	OutputUSDPerMTokens     float64                          `json:"outputUSDPerMTokens"`
 	CallUSDPerCall          float64                          `json:"callUSDPerCall"`
 	DurationUSDPerSecond    float64                          `json:"durationUSDPerSecond"`
 	Tiers                   []PublicModelPricingTierResponse `json:"tiers"`
+	// 时段倍率按服务器本地时区定义；客户端用 scheduleUTCOffsetMinutes 判断当前命中的时段。
+	SchedulePeriods          []PublicSchedulePeriodResponse `json:"schedulePeriods"`
+	ScheduleUTCOffsetMinutes int                            `json:"scheduleUTCOffsetMinutes"`
+}
+
+// PublicSchedulePeriodResponse 面向前端的时段倍率 DTO。
+type PublicSchedulePeriodResponse struct {
+	Name        string `json:"name"`
+	Weekdays    []int  `json:"weekdays"`
+	Start       string `json:"start"`
+	End         string `json:"end"`
+	RatePercent int    `json:"ratePercent"`
 }
 
 // PublicModelPricingTierResponse 面向前端的模型阶梯价格 DTO。
@@ -833,6 +875,16 @@ func toPublicModelPricingResponse(v *appbilling.PublicModelPricing) *PublicModel
 			OutputUSDPerMTokens:     tier.OutputUSDPerMTokens,
 		})
 	}
+	periods := make([]PublicSchedulePeriodResponse, 0, len(v.SchedulePeriods))
+	for _, period := range v.SchedulePeriods {
+		periods = append(periods, PublicSchedulePeriodResponse{
+			Name:        period.Name,
+			Weekdays:    period.Weekdays,
+			Start:       period.Start,
+			End:         period.End,
+			RatePercent: period.RatePercent,
+		})
+	}
 	return &PublicModelPricingResponse{
 		Currency:                v.Currency,
 		IsFree:                  v.IsFree,
@@ -840,18 +892,23 @@ func toPublicModelPricingResponse(v *appbilling.PublicModelPricing) *PublicModel
 		InputUSDPerMTokens:      v.InputUSDPerMTokens,
 		CacheReadUSDPerMTokens:  v.CacheReadUSDPerMTokens,
 		CacheWriteUSDPerMTokens: v.CacheWriteUSDPerMTokens,
+		CacheWrite5mMultiplier:  v.CacheWrite5mMultiplier,
+		CacheWrite1hMultiplier:  v.CacheWrite1hMultiplier,
 		OutputUSDPerMTokens:     v.OutputUSDPerMTokens,
 		CallUSDPerCall:          v.CallUSDPerCall,
 		DurationUSDPerSecond:    v.DurationUSDPerSecond,
 		Tiers:                   tiers,
+
+		SchedulePeriods:          periods,
+		ScheduleUTCOffsetMinutes: v.ScheduleUTCOffsetMinutes,
 	}
 }
 
 // ErrorDoc 错误响应文档。
 type ErrorDoc struct {
-	ErrorMsg  string      `json:"errorMsg"`
-	ErrorCode string      `json:"errorCode,omitempty"`
-	Details   interface{} `json:"details,omitempty"`
-	RequestID string      `json:"requestId,omitempty"`
-	Data      interface{} `json:"data"`
+	ErrorMsg  string `json:"errorMsg"`
+	ErrorCode string `json:"errorCode,omitempty"`
+	Details   any    `json:"details,omitempty"`
+	RequestID string `json:"requestId,omitempty"`
+	Data      any    `json:"data"`
 }
