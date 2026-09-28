@@ -15,7 +15,7 @@ import (
 	apprag "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/rag"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	domainmemory "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/memory"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	platformtracing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/observability/tracing"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"github.com/google/uuid"
@@ -78,7 +78,6 @@ func (s *Service) StreamMessage(
 	onDelta func(string) error,
 ) (result *SendMessageResult, retErr error) {
 	input.Cancelable = true
-	ctx = context.WithoutCancel(ctx)
 	return s.sendMessageInternal(ctx, input, onDelta, true)
 }
 
@@ -172,31 +171,29 @@ func buildRAGFallbackProcessTracePayload(
 	reason string,
 	hasFullTextFallback bool,
 	err error,
-) map[string]interface{} {
-	stage := map[string]interface{}{
-		"kind":            processTraceKindRetrieval,
-		"status":          processTraceRetrievalStatus(reason),
-		"fallback":        processTraceFallbackMode(hasFullTextFallback),
-		"file_count":      len(fileObjs),
-		"candidate_count": result.CandidateCount,
-		"filtered_count":  result.FilteredCount,
-		"max_score":       result.MaxScore,
+) *tracePayload {
+	stage := &traceStage{
+		Kind:           processTraceKindRetrieval,
+		Status:         processTraceRetrievalStatus(reason),
+		Fallback:       processTraceFallbackMode(hasFullTextFallback),
+		FileCount:      len(fileObjs),
+		CandidateCount: result.CandidateCount,
+		FilteredCount:  result.FilteredCount,
+		MaxScore:       result.MaxScore,
+		Reason:         strings.TrimSpace(firstNonEmptyString(reason, result.Reason)),
 	}
-	if normalizedReason := strings.TrimSpace(firstNonEmptyString(reason, result.Reason)); normalizedReason != "" {
-		stage["reason"] = normalizedReason
-	}
-	payload := map[string]interface{}{
-		"query_chars":            len([]rune(strings.TrimSpace(query))),
-		"file_names":             ragFileObjectNames(fileObjs),
-		"status":                 strings.TrimSpace(reason),
-		"reason":                 strings.TrimSpace(result.Reason),
-		"candidate_count":        result.CandidateCount,
-		"filtered_count":         result.FilteredCount,
-		"max_score":              result.MaxScore,
-		processTracePayloadStage: stage,
+	payload := &tracePayload{
+		QueryChars:     len([]rune(strings.TrimSpace(query))),
+		FileNames:      ragFileObjectNames(fileObjs),
+		Status:         strings.TrimSpace(reason),
+		Reason:         strings.TrimSpace(result.Reason),
+		CandidateCount: result.CandidateCount,
+		FilteredCount:  result.FilteredCount,
+		MaxScore:       result.MaxScore,
+		TraceStage:     stage,
 	}
 	if err != nil {
-		payload["error"] = err.Error()
+		payload.Error = ragFallbackErrorMessage(result.Status, err)
 	}
 	return payload
 }
@@ -255,7 +252,10 @@ func (s *Service) sendMessageInternal(
 	if input.Cancelable {
 		cancelCtx, cancel := context.WithCancel(ctx)
 		ctx = cancelCtx
-		s.generationStreams.register(ctx, runID, input.UserID, cancel)
+		if err = s.generationStreams.register(ctx, runID, input.UserID, conversation.PublicID, cancel); err != nil {
+			retErr = err
+			return nil, err
+		}
 	}
 
 	currentPlatformModelName := strings.TrimSpace(conversation.Model)
@@ -279,6 +279,7 @@ func (s *Service) sendMessageInternal(
 	var resolvedRoute *channel.ResolvedRoute
 	var filteredOptions map[string]interface{}
 	var totalServerSideToolUsage map[string]int64
+	var totalMCPToolUsage []MCPToolUsageItem
 	var responsesBackgroundRouteConfig llm.RouteConfig
 	var responsesBackgroundRecovery openAIResponsesBackgroundRecoveryState
 	responsesBackgroundUsageRecovered := false
@@ -286,39 +287,47 @@ func (s *Service) sendMessageInternal(
 	upstreamCallStarted := false
 	runState := newMessageSendRunState(s, input, conversation, startedAt, runID)
 	run := runState.run
+	if err := s.claimConversationRun(ctx, run); err != nil {
+		retErr = err
+		return nil, err
+	}
 	runState.reuseUserMessage = reuseUserMessage
 	runState.bind(&userMessage, &assistantMessage, &traceRecorder, &result, ctx)
 	defer func() {
 		if retErr != nil {
 			retainedOutput := false
 			if errors.Is(retErr, ErrMessageGenerationCanceled) || llm.RequestWasAccepted(retErr) {
-				if usage, ok := s.recoverOpenAIResponsesBackgroundUsage(responsesBackgroundRouteConfig, responsesBackgroundRecovery); ok {
+				if usage, ok := s.recoverOpenAIResponsesBackgroundUsage(ctx, responsesBackgroundRouteConfig, responsesBackgroundRecovery); ok {
 					responsesBackgroundUsageRecovered = true
 					if delta := diffLLMUsage(usage, responsesBackgroundRecovery.ObservedUsage); delta != (llm.Usage{}) {
 						usageAccumulator.addObservedUsage(delta)
 					}
 				}
 			}
+			estimatedOutputTokens, estimatedReasoningTokens := usageAccumulator.interruptedOutputTokens()
 			if retained := s.persistInterruptedMessageGeneration(ctx, persistInterruptedMessageGenerationInput{
-				SendInput:              input,
-				UserMessage:            userMessage,
-				AssistantMessage:       assistantMessage,
-				AssistantText:          streamedText.String(),
-				AssistantReasoningText: traceRecorder.upstreamThinkContent(),
-				EstimatedInputTokens:   usageAccumulator.interruptedInputTokens(),
-				UpstreamCallStarted:    upstreamCallStarted,
-				Usage:                  usageAccumulator.usage(),
-				UsageRecovered:         responsesBackgroundUsageRecovered,
-				AssistantLatency:       time.Since(startedAt).Milliseconds(),
-				Error:                  retErr,
-				ToolCallRows:           toolCallRows,
-				PersistedToolCallKeys:  persistedToolCallKeys,
-				TraceRecorder:          traceRecorder,
-				Route:                  resolvedRoute,
-				EffectiveOptions:       filteredOptions,
-				ServerSideToolUsage:    totalServerSideToolUsage,
-				StartedAt:              startedAt,
-				ReuseUserMessage:       reuseUserMessage,
+				EstimatedOutputTokens:    estimatedOutputTokens,
+				EstimatedReasoningTokens: estimatedReasoningTokens,
+				SendInput:                input,
+				UserMessage:              userMessage,
+				AssistantMessage:         assistantMessage,
+				AssistantText:            streamedText.String(),
+				AssistantReasoningText:   traceRecorder.upstreamThinkContent(),
+				EstimatedInputTokens:     usageAccumulator.interruptedInputTokens(),
+				UpstreamCallStarted:      upstreamCallStarted,
+				Usage:                    usageAccumulator.usage(),
+				UsageRecovered:           responsesBackgroundUsageRecovered,
+				AssistantLatency:         time.Since(startedAt).Milliseconds(),
+				Error:                    retErr,
+				ToolCallRows:             toolCallRows,
+				PersistedToolCallKeys:    persistedToolCallKeys,
+				TraceRecorder:            traceRecorder,
+				Route:                    resolvedRoute,
+				EffectiveOptions:         filteredOptions,
+				ServerSideToolUsage:      totalServerSideToolUsage,
+				MCPToolUsage:             totalMCPToolUsage,
+				StartedAt:                startedAt,
+				ReuseUserMessage:         reuseUserMessage,
 			}); retained != nil {
 				result = retained
 				retainedOutput = true
@@ -572,6 +581,7 @@ func (s *Service) sendMessageInternal(
 			TraceRecorder:          traceRecorder,
 			AllowInactiveProcessor: !supportsVision,
 		})
+		totalMCPToolUsage = mergeMCPToolUsage(totalMCPToolUsage, imageProcessing.MCPToolUsage)
 		toolCallRows = append(toolCallRows, imageProcessing.Rows...)
 		mergeToolCallPersistenceKeys(&persistedToolCallKeys, imageProcessing.PersistedToolCallKeys)
 		if err != nil {
@@ -832,15 +842,15 @@ func (s *Service) sendMessageInternal(
 		traceRecorder.appendProcessSection(
 			fmt.Sprintf("已提供 %d 个 Skill 上下文", len(skillPrompts.Skills)),
 			formatTraceStep("Skill", fmt.Sprintf("本轮已加载 Skill：%s。包含 SKILL.md 内容，相关时使用。", strings.Join(skillTitles, "、"))),
-			map[string]interface{}{
-				processTracePayloadStage: map[string]interface{}{
-					"kind":   "skill_context",
-					"status": messageTraceStatusStreaming,
+			&tracePayload{
+				TraceStage: &traceStage{
+					Kind:   "skill_context",
+					Status: messageTraceStatusStreaming,
 				},
-				"skill_count":    len(skillPrompts.Skills),
-				"skill_ids":      skillPromptIDs(skillPrompts.Skills),
-				"skill_titles":   skillTitles,
-				"skill_triggers": skillPromptTriggers(skillPrompts.Skills),
+				SkillCount:    len(skillPrompts.Skills),
+				SkillIDs:      skillPromptIDs(skillPrompts.Skills),
+				SkillTitles:   skillTitles,
+				SkillTriggers: skillPromptTriggers(skillPrompts.Skills),
 			},
 			messageTraceStatusStreaming,
 		)
@@ -1040,7 +1050,7 @@ func (s *Service) sendMessageInternal(
 			return nil
 		}
 		callPromptShape := summarizePromptShape(callPromptMode, currentInput.Messages, currentInput.Messages, currentInput.PreviousResponseID)
-		usageAccumulator.beginCall(currentInput)
+		usageAccumulator.beginCall(estimateGenerateInputTokens(currentInput))
 		if currentInput.ResponsesBackground {
 			responsesBackgroundRecovery = openAIResponsesBackgroundRecoveryState{Enabled: true}
 		} else {
@@ -1562,6 +1572,7 @@ func (s *Service) sendMessageInternal(
 				toolSpan.SetStatus(codes.Error, "tool execution failed")
 			}
 			toolSpan.End()
+			totalMCPToolUsage = mergeMCPToolUsage(totalMCPToolUsage, toolResult.MCPToolUsage)
 			toolCallRows = append(toolCallRows, toolResult.Rows...)
 			mergeToolCallPersistenceKeys(&persistedToolCallKeys, toolResult.PersistedToolCallKeys)
 			remainingToolCalls = max(remainingToolCalls-countBudgetedToolCalls(toolResult.Rows), 0)
@@ -1616,6 +1627,7 @@ func (s *Service) sendMessageInternal(
 						TraceRecorder:     traceRecorder,
 						ToolCallLimit:     &attachmentToolCallLimit,
 					})
+					totalMCPToolUsage = mergeMCPToolUsage(totalMCPToolUsage, activatedProcessing.MCPToolUsage)
 					if processingErr != nil {
 						retErr = processingErr
 						return nil, processingErr
@@ -1790,13 +1802,13 @@ func (s *Service) sendMessageInternal(
 				traceRecorder.appendProcessSection(
 					fmt.Sprintf("已读取 %d 个技能包文件", len(loadedPaths)),
 					formatTraceStep("Skill 文件", fmt.Sprintf("根据 <read_file> 请求补充注入 %d 个文件内容：%s。", len(loadedPaths), strings.Join(loadedPaths, "、"))),
-					map[string]interface{}{
-						processTracePayloadStage: map[string]interface{}{
-							"kind":   "skill_context",
-							"status": messageTraceStatusStreaming,
+					&tracePayload{
+						TraceStage: &traceStage{
+							Kind:   "skill_context",
+							Status: messageTraceStatusStreaming,
 						},
-						"skill_file_read":  len(loadedPaths),
-						"skill_file_paths": loadedPaths,
+						SkillFileRead:  len(loadedPaths),
+						SkillFilePaths: loadedPaths,
 					},
 					messageTraceStatusStreaming,
 				)
@@ -1894,14 +1906,14 @@ func (s *Service) sendMessageInternal(
 					traceRecorder.appendProcessSection(
 						"工具预算已耗尽且模型仍想继续调用工具，自动开启新一轮",
 						formatTraceStep("阶段合并", "模型连续在禁用工具轮输出工具调用语法，系统按继续意图开启新窗口。"),
-						map[string]interface{}{
-							processTracePayloadStage: map[string]interface{}{
-								"kind":   "stage_merge",
-								"status": messageTraceStatusCompleted,
+						&tracePayload{
+							TraceStage: &traceStage{
+								Kind:   "stage_merge",
+								Status: messageTraceStatusCompleted,
 							},
-							"stage_merge_round":    toolStageMerges,
-							"stripped_tool_intent": true,
-							"auto_continue_window": true,
+							StageMergeRound:    toolStageMerges,
+							StrippedToolIntent: true,
+							AutoContinueWindow: true,
 						},
 						messageTraceStatusCompleted,
 					)
@@ -1919,12 +1931,12 @@ func (s *Service) sendMessageInternal(
 				traceRecorder.appendProcessSection(
 					fmt.Sprintf("阶段性总结（第 %d 轮）：工具预算已耗尽，模型整理进展后开启新一轮", toolStageMerges),
 					formatTraceStep("阶段合并", mergeText),
-					map[string]interface{}{
-						processTracePayloadStage: map[string]interface{}{
-							"kind":   "stage_merge",
-							"status": messageTraceStatusCompleted,
+					&tracePayload{
+						TraceStage: &traceStage{
+							Kind:   "stage_merge",
+							Status: messageTraceStatusCompleted,
 						},
-						"stage_merge_round": toolStageMerges,
+						StageMergeRound: toolStageMerges,
 					},
 					messageTraceStatusCompleted,
 				)
@@ -2116,7 +2128,13 @@ func (s *Service) sendMessageInternal(
 			traceRecorder.attachToMessage(assistantMessage)
 		}
 	} else {
-		compactPlatformModelName := s.resolveTextTaskModel(ctx, compactCfg.CompactTaskModel, conversation.Model, input.UserID, input.ConversationID, strings.TrimSpace(input.RequestID))
+		compactPlatformModelName := s.resolveTextTaskModel(ctx, textTaskRouteInput{
+			ConfiguredModel:   compactCfg.CompactTaskModel,
+			ConversationModel: conversation.Model,
+			UserID:            input.UserID,
+			ConversationID:    input.ConversationID,
+			RequestID:         strings.TrimSpace(input.RequestID),
+		})
 		compactInput.PlatformModelName = compactPlatformModelName
 		postBillingCompaction = &postBillingCompactionTask{
 			Async:          compactCfg.CompactAsyncEnabled,
@@ -2175,6 +2193,7 @@ func (s *Service) sendMessageInternal(
 		CacheWrite5mTokens:    totalUsage.CacheWrite5mTokens,
 		CacheWrite1hTokens:    totalUsage.CacheWrite1hTokens,
 		ServerSideToolUsage:   totalServerSideToolUsage,
+		MCPToolUsage:          totalMCPToolUsage,
 		LatencyMS:             time.Since(startedAt).Milliseconds(),
 		StartedAt:             startedAt,
 		postBillingCompaction: postBillingCompaction,
@@ -2211,3 +2230,4 @@ func messageKnowledgeSourcesFromRAGChunks(chunks []model.RAGChunk) []model.Messa
 	}
 	return sources
 }
+

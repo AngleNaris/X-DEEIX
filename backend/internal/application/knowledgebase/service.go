@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	appaudit "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/audit"
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	domainknowledgebase "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/knowledgebase"
@@ -24,6 +25,7 @@ const (
 
 // Service 封装知识库业务逻辑。
 type Service struct {
+	fileEmbedder fileEmbeddingSubmitter
 	repo         repository.KnowledgeBaseRepository
 	auditWriter  auditWriter
 	fileCleaner  fileCleaner
@@ -34,7 +36,7 @@ type Service struct {
 }
 
 type auditWriter interface {
-	Write(ctx context.Context, requestID string, actorUserID uint, action string, resource string, resourceID string, ip string, userAgent string, detail interface{})
+	Write(ctx context.Context, input appaudit.WriteInput)
 }
 
 type fileCleaner interface {
@@ -110,12 +112,16 @@ func (s *Service) RecordAudit(ctx context.Context, input AuditInput) {
 	if s.auditWriter == nil {
 		return
 	}
-	s.auditWriter.Write(ctx, strings.TrimSpace(input.RequestID), input.UserID, strings.TrimSpace(input.Action),
-		"knowledge_bases", strings.TrimSpace(input.ResourceID), strings.TrimSpace(input.ClientIP), strings.TrimSpace(input.UserAgent), input.Detail)
+	s.auditWriter.Write(ctx, appaudit.WriteInput{
+		RequestID: strings.TrimSpace(input.RequestID), ActorUserID: input.UserID, Action: strings.TrimSpace(input.Action),
+		Resource: "knowledge_bases", ResourceID: strings.TrimSpace(input.ResourceID), IP: strings.TrimSpace(input.ClientIP), UserAgent: strings.TrimSpace(input.UserAgent), Detail: input.Detail,
+	})
 }
 
 // ListInput 定义知识库列表入参。
 type ListInput struct {
+	Sort     string
+	IDs      []string
 	Query    string
 	Enabled  *bool
 	Page     int
@@ -161,7 +167,12 @@ func (s *Service) ListVisible(ctx context.Context, userID uint, input ListInput)
 		return nil, 0, ErrInvalidKnowledgeBase
 	}
 	offset, limit := normalizePage(input.Page, input.PageSize)
+	publicIDs := normalizePublicIDs(input.IDs, maxKnowledgeBasesPerRequest)
+	if len(input.IDs) > 0 && len(publicIDs) == 0 {
+		return []domainknowledgebase.KnowledgeBase{}, 0, nil
+	}
 	return s.repo.ListKnowledgeBases(ctx, repository.KnowledgeBaseListFilter{
+		Sort: strings.TrimSpace(input.Sort), PublicIDs: publicIDs,
 		Query: strings.TrimSpace(input.Query), VisibleUserID: &userID,
 	}, offset, limit)
 }
@@ -172,7 +183,12 @@ func (s *Service) ListMine(ctx context.Context, userID uint, input ListInput) ([
 		return nil, 0, ErrInvalidKnowledgeBase
 	}
 	offset, limit := normalizePage(input.Page, input.PageSize)
+	publicIDs := normalizePublicIDs(input.IDs, maxKnowledgeBasesPerRequest)
+	if len(input.IDs) > 0 && len(publicIDs) == 0 {
+		return []domainknowledgebase.KnowledgeBase{}, 0, nil
+	}
 	return s.repo.ListKnowledgeBases(ctx, repository.KnowledgeBaseListFilter{
+		Sort: strings.TrimSpace(input.Sort), PublicIDs: publicIDs,
 		Query: strings.TrimSpace(input.Query), Scope: domainknowledgebase.ScopeUser, OwnerUserID: &userID, Enabled: input.Enabled,
 	}, offset, limit)
 }
@@ -180,7 +196,12 @@ func (s *Service) ListMine(ctx context.Context, userID uint, input ListInput) ([
 // ListAdminBuiltin 查询管理员内置知识库。
 func (s *Service) ListAdminBuiltin(ctx context.Context, input ListInput) ([]domainknowledgebase.KnowledgeBase, int64, error) {
 	offset, limit := normalizePage(input.Page, input.PageSize)
+	publicIDs := normalizePublicIDs(input.IDs, maxKnowledgeBasesPerRequest)
+	if len(input.IDs) > 0 && len(publicIDs) == 0 {
+		return []domainknowledgebase.KnowledgeBase{}, 0, nil
+	}
 	return s.repo.ListKnowledgeBases(ctx, repository.KnowledgeBaseListFilter{
+		Sort: strings.TrimSpace(input.Sort), PublicIDs: publicIDs,
 		Query: strings.TrimSpace(input.Query), Scope: domainknowledgebase.ScopeBuiltin, Enabled: input.Enabled,
 	}, offset, limit)
 }

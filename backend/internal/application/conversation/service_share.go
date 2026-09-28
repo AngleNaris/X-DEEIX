@@ -206,6 +206,9 @@ func (s *Service) createConversationShare(ctx context.Context, userID uint, conv
 }
 
 func normalizeConversationSharePersistenceError(err error) error {
+	if errors.Is(err, repository.ErrConversationShareSchemaOutdated) {
+		return ErrConversationShareSchemaOutdated
+	}
 	if err == nil {
 		return nil
 	}
@@ -935,7 +938,8 @@ func isSharedTraceInternalField(key string, parentKey string) bool {
 	parent := strings.ToLower(strings.TrimSpace(parentKey))
 	if normalized == "upstreamname" || normalized == "upstreamdebug" ||
 		normalized == "authorization" || normalized == "proxyauthorization" ||
-		normalized == "cookie" || normalized == "setcookie" {
+		normalized == "cookie" || normalized == "setcookie" ||
+		normalized == "detailrunid" || normalized == "toolcallid" || normalized == "callid" {
 		return true
 	}
 	if parent == "upstream" && (normalized == "name" || normalized == "displayname") {

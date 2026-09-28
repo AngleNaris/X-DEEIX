@@ -16,7 +16,7 @@ import (
 	appstorage "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/objectstorage"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/objectstore"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/objectstore"
 	"go.uber.org/zap"
 )
 
@@ -50,23 +50,25 @@ func (s *Service) SetModerationService(svc *appcm.Service) {
 	if svc == nil {
 		return
 	}
-	svc.SetEventEmitter(func(runID string, eventType string, payload map[string]interface{}) {
+	svc.SetEventEmitter(func(ctx context.Context, runID string, eventType string, payload map[string]interface{}) {
 		if payload == nil {
 			payload = map[string]interface{}{"type": eventType}
 		} else if _, ok := payload["type"]; !ok {
 			payload["type"] = eventType
 		}
-		s.PublishMessageGenerationEvent(runID, payload)
-	})
-	svc.SetCancelRun(func(runID string) {
 		if s.generationStreams != nil {
-			s.generationStreams.cancelForced(context.Background(), normalizeRunID(runID))
+			s.generationStreams.publishCurrent(ctx, normalizeRunID(runID), payload)
 		}
 	})
-	svc.SetOnBlocked(func(runID string, _ appcm.BlockInfo) {
+	svc.SetCancelRun(func(ctx context.Context, runID string) {
+		if s.generationStreams != nil {
+			s.generationStreams.cancelForced(ctx, normalizeRunID(runID))
+		}
+	})
+	svc.SetOnBlocked(func(ctx context.Context, runID string, _ appcm.BlockInfo) {
 		// Drop retained deltas/media so reconnect cannot replay withdrawn content.
 		// The following emit of moderation_blocked re-seeds a safe terminal event.
-		s.resetGenerationStreamEvents(runID)
+		s.resetGenerationStreamEvents(ctx, runID)
 	})
 	svc.SetImageLoader(s.loadImageForModeration)
 	svc.SetObjectStore(&moderationObjectStoreAdapter{service: s})
@@ -438,12 +440,12 @@ func loadOutputImagesFromFiles(coord *appcm.RunCoordinator, files []model.FileOb
 	return out
 }
 
-func (s *Service) resetGenerationStreamEvents(runID string) {
+func (s *Service) resetGenerationStreamEvents(ctx context.Context, runID string) {
 	runID = normalizeRunID(runID)
 	if runID == "" || s == nil || s.generationStreams == nil {
 		return
 	}
-	s.generationStreams.resetEvents(context.Background(), runID)
+	s.generationStreams.resetCurrentEvents(ctx, runID)
 }
 
 type moderationObjectStoreAdapter struct {
@@ -579,3 +581,4 @@ func filterBlockedMessages(messages []model.Message) []model.Message {
 	}
 	return out
 }
+

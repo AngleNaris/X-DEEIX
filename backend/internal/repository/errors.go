@@ -41,8 +41,6 @@ var (
 	ErrConversationProjectLimitExceeded = errors.New("conversation project limit exceeded")
 	// ErrFileNotFound 文件对象不存在或无权限。
 	ErrFileNotFound = errors.New("file not found")
-	// ErrStorageQuotaExceeded 用户存储配额超限。
-	ErrStorageQuotaExceeded = errors.New("storage quota exceeded")
 	// ErrConversationShareSchemaOutdated 会话分享存储结构未更新。
 	ErrConversationShareSchemaOutdated = errors.New("conversation share schema outdated")
 

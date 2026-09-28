@@ -16,6 +16,63 @@ type UserListFilter struct {
 	IdentityProvider   string
 }
 
+// CreateUserInput 描述管理员创建普通用户时允许提交的账号与订阅信息。
+// 计费模式由后台配置决定，不由请求方传入。
+type CreateUserInput struct {
+	Username              string
+	Password              string
+	AvatarURL             string
+	DisplayName           string
+	Email                 string
+	Phone                 string
+	Timezone              string
+	Locale                string
+	SubscriptionTier      string
+	SubscriptionExpiresAt *time.Time
+}
+
+// CreateUserAuditInput 描述管理员创建用户审计日志输入。
+type CreateUserAuditInput struct {
+	RequestID     string
+	ActorUserID   uint
+	CreatedUserID uint
+	Username      string
+	IP            string
+	UserAgent     string
+}
+
+// PatchUserByAdminInput 描述管理员局部更新用户请求。
+type PatchUserByAdminInput struct {
+	RequestID    string
+	ActorUserID  uint
+	TargetUserID uint
+	Patch        PatchUserInput
+	IP           string
+	UserAgent    string
+}
+
+// UpdateUserStatusInput 描述管理员更新用户状态请求。
+type UpdateUserStatusInput struct {
+	RequestID    string
+	ActorUserID  uint
+	TargetUserID uint
+	Status       string
+	Reason       string
+	IP           string
+	UserAgent    string
+}
+
+// ResetUserPasswordByAdminInput 描述管理员重置用户密码请求。
+type ResetUserPasswordByAdminInput struct {
+	RequestID         string
+	ActorUserID       uint
+	TargetUserID      uint
+	NewPassword       string
+	MustResetPassword bool
+	IP                string
+	UserAgent         string
+}
+
 // PatchUserInput 管理员局部更新用户输入。
 type PatchUserInput struct {
 	AvatarURL             *string

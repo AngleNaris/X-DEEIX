@@ -10,13 +10,22 @@ import (
 	"sync"
 
 	domainmcp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/mcp"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/mcp"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/mcp"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/secretbox"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
 )
 
+type mcpToolCallBinding struct {
+	Config       mcp.CallConfig
+	ServerID     uint
+	ServerName   string
+	ToolName     string
+	PriceNanousd int64
+}
+
 type selectedToolRuntime struct {
+	mcpBindings          map[string]mcpToolCallBinding
 	definitions          []llm.ToolDefinition
 	nameMap              map[string]string
 	mcpConfigs           map[string]mcp.CallConfig
@@ -46,11 +55,13 @@ var mcpActivateServerInputSchema = json.RawMessage(`{
 }`)
 
 type authorizedMCPTool struct {
-	serverID   uint
-	definition llm.ToolDefinition
-	toolName   string
-	config     mcp.CallConfig
-	schema     json.RawMessage
+	serverName   string
+	priceNanousd int64
+	serverID     uint
+	definition   llm.ToolDefinition
+	toolName     string
+	config       mcp.CallConfig
+	schema       json.RawMessage
 }
 
 type authorizedMCPServer struct {
@@ -106,6 +117,8 @@ func sortedMCPServerIDs(items map[uint]struct{}) []uint {
 }
 
 type selectedAttachmentProcessor struct {
+	serverName     string
+	priceNanousd   int64
 	toolID         uint
 	serverID       uint
 	modelName      string
@@ -154,6 +167,7 @@ func (r selectedToolRuntime) withoutProjectTools() selectedToolRuntime {
 	for name := range projectNames {
 		delete(r.nameMap, name)
 		delete(r.mcpConfigs, name)
+		delete(r.mcpBindings, name)
 		delete(r.schemas, name)
 	}
 	return r
@@ -399,6 +413,8 @@ func (s *Service) resolveMCPToolRuntime(ctx context.Context, toolIDs []uint, res
 		}
 		if isAttachmentProcessor {
 			if bindErr := result.bindAttachmentProcessor(selectedAttachmentProcessor{
+				serverName:     strings.TrimSpace(server.Name),
+				priceNanousd:   tool.PriceNanousd,
 				toolID:         tool.ID,
 				serverID:       tool.ServerID,
 				modelName:      baseModelName,
@@ -431,11 +447,13 @@ func (s *Service) resolveMCPToolRuntime(ctx context.Context, toolIDs []uint, res
 			InputSchema: schema,
 		}
 		result.authorizedMCPTools[modelName] = authorizedMCPTool{
-			serverID:   tool.ServerID,
-			definition: definition,
-			toolName:   tool.Name,
-			config:     callConfig,
-			schema:     schema,
+			serverName:   strings.TrimSpace(server.Name),
+			priceNanousd: tool.PriceNanousd,
+			serverID:     tool.ServerID,
+			definition:   definition,
+			toolName:     tool.Name,
+			config:       callConfig,
+			schema:       schema,
 		}
 		result.authorizedMCPOrder = append(result.authorizedMCPOrder, modelName)
 		result.authorizedMCPServers[tool.ServerID] = authorizedMCPServer{
@@ -452,6 +470,10 @@ func (r selectedToolRuntime) visibleRuntime() selectedToolRuntime {
 	r.nameMap = make(map[string]string, len(r.platformEntries)+len(r.authorizedMCPTools)+2)
 	r.schemas = make(map[string]json.RawMessage, len(r.platformEntries)+len(r.authorizedMCPTools)+2)
 	r.mcpConfigs = make(map[string]mcp.CallConfig, len(r.authorizedMCPTools))
+	r.mcpBindings = make(map[string]mcpToolCallBinding, len(r.authorizedMCPTools)+1)
+	if p := r.attachmentProcessor; p != nil {
+		r.mcpBindings[p.modelName] = mcpToolCallBinding{Config: p.config, ServerID: p.serverID, ServerName: p.serverName, ToolName: p.toolName, PriceNanousd: p.priceNanousd}
+	}
 	for modelName, entry := range r.platformEntries {
 		executionName := strings.TrimSpace(r.platformNameMap[modelName])
 		if executionName == "" {
@@ -498,6 +520,7 @@ func (r selectedToolRuntime) visibleRuntime() selectedToolRuntime {
 		r.nameMap[modelName] = tool.toolName
 		r.schemas[modelName] = tool.schema
 		r.mcpConfigs[modelName] = tool.config
+		r.mcpBindings[modelName] = mcpToolCallBinding{Config: tool.config, ServerID: tool.serverID, ServerName: tool.serverName, ToolName: tool.toolName, PriceNanousd: tool.priceNanousd}
 	}
 	return r
 }
@@ -598,6 +621,7 @@ func (r selectedToolRuntime) withoutDefinitions() selectedToolRuntime {
 	r.definitions = nil
 	r.nameMap = nil
 	r.mcpConfigs = nil
+	r.mcpBindings = nil
 	r.schemas = nil
 	r.attachmentProcessor = nil
 	r.multimodalAnalyzer = nil
@@ -663,3 +687,4 @@ func parseMCPHeaders(raw string) map[string]string {
 	}
 	return result
 }
+

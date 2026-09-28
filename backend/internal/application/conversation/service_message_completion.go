@@ -8,7 +8,7 @@ import (
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"go.uber.org/zap"
@@ -41,25 +41,28 @@ type persistMessageGenerationInput struct {
 }
 
 type persistInterruptedMessageGenerationInput struct {
-	SendInput              SendMessageInput
-	UserMessage            *model.Message
-	AssistantMessage       *model.Message
-	AssistantText          string
-	AssistantReasoningText string
-	EstimatedInputTokens   int64
-	UpstreamCallStarted    bool
-	Usage                  llm.Usage
-	UsageRecovered         bool
-	AssistantLatency       int64
-	Error                  error
-	ToolCallRows           []model.ToolCall
-	PersistedToolCallKeys  map[string]struct{}
-	TraceRecorder          *messageTraceRecorder
-	Route                  *channel.ResolvedRoute
-	EffectiveOptions       map[string]interface{}
-	ServerSideToolUsage    map[string]int64
-	StartedAt              time.Time
-	ReuseUserMessage       bool
+	EstimatedOutputTokens    int64
+	EstimatedReasoningTokens int64
+	MCPToolUsage             []MCPToolUsageItem
+	SendInput                SendMessageInput
+	UserMessage              *model.Message
+	AssistantMessage         *model.Message
+	AssistantText            string
+	AssistantReasoningText   string
+	EstimatedInputTokens     int64
+	UpstreamCallStarted      bool
+	Usage                    llm.Usage
+	UsageRecovered           bool
+	AssistantLatency         int64
+	Error                    error
+	ToolCallRows             []model.ToolCall
+	PersistedToolCallKeys    map[string]struct{}
+	TraceRecorder            *messageTraceRecorder
+	Route                    *channel.ResolvedRoute
+	EffectiveOptions         map[string]interface{}
+	ServerSideToolUsage      map[string]int64
+	StartedAt                time.Time
+	ReuseUserMessage         bool
 }
 
 type interruptedMessageGenerationMetrics struct {
@@ -345,24 +348,22 @@ func (s *Service) persistAssistantImagePayloadIfPresent(ctx context.Context, inp
 		if input.Route != nil {
 			trustedProviderEndpoint = input.Route.BaseURL
 		}
-		normalized, err = s.normalizeAssistantGeneratedImages(
-			ctx,
-			input.SendInput.UserID,
-			input.SendInput.ConversationID,
-			input.AssistantMessage.ID,
-			successfulMessageGenerationModelName(input),
-			trustedProviderEndpoint,
-			input.GeneratedImages,
-		)
+		normalized, err = s.normalizeAssistantGeneratedImages(ctx, assistantGeneratedImagesInput{
+			UserID:                  input.SendInput.UserID,
+			ConversationID:          input.SendInput.ConversationID,
+			AssistantMessageID:      input.AssistantMessage.ID,
+			ModelName:               successfulMessageGenerationModelName(input),
+			TrustedProviderEndpoint: trustedProviderEndpoint,
+			GeneratedImages:         input.GeneratedImages,
+		})
 	} else {
-		normalized, err = s.normalizeAssistantImageContent(
-			ctx,
-			input.SendInput.UserID,
-			input.SendInput.ConversationID,
-			input.AssistantMessage.ID,
-			successfulMessageGenerationModelName(input),
-			input.AssistantText,
-		)
+		normalized, err = s.normalizeAssistantImageContent(ctx, assistantImageContentInput{
+			UserID:             input.SendInput.UserID,
+			ConversationID:     input.SendInput.ConversationID,
+			AssistantMessageID: input.AssistantMessage.ID,
+			ModelName:          successfulMessageGenerationModelName(input),
+			Content:            input.AssistantText,
+		})
 	}
 	if err != nil || normalized == nil {
 		return false, err
@@ -585,7 +586,7 @@ func shouldPersistInterruptedMessageGeneration(input persistInterruptedMessageGe
 	if input.Error == nil || input.UserMessage == nil || input.AssistantMessage == nil {
 		return false
 	}
-	hasRetainedToolTrace := len(input.ToolCallRows) > 0 || len(input.ServerSideToolUsage) > 0
+	hasRetainedToolTrace := len(input.ToolCallRows) > 0 || len(input.ServerSideToolUsage) > 0 || len(input.MCPToolUsage) > 0
 	hasObservedUsage := input.Usage.InputTokens > 0 ||
 		input.Usage.OutputTokens > 0 ||
 		input.Usage.CacheReadTokens > 0 ||
@@ -629,22 +630,10 @@ func resolveInterruptedMessageGenerationMetrics(input persistInterruptedMessageG
 }
 
 func resolveInterruptedOutputUsage(input persistInterruptedMessageGenerationInput) (int64, int64) {
-	estimatedOutputTokens := estimateTokens(input.AssistantText)
-	estimatedReasoningTokens := estimateTokens(input.AssistantReasoningText)
-	observedOutputTokens := input.Usage.OutputTokens
-	observedReasoningTokens := input.Usage.ReasoningTokens
-
-	if observedReasoningTokens > 0 {
-		return resolveObservedOrHigherEstimatedTokens(observedOutputTokens, estimatedOutputTokens),
-			resolveObservedOrHigherEstimatedTokens(observedReasoningTokens, estimatedReasoningTokens)
-	}
-	if observedOutputTokens > 0 {
-		return resolveObservedOrHigherEstimatedTokens(
-			observedOutputTokens,
-			estimatedOutputTokens+estimatedReasoningTokens,
-		), 0
-	}
-	return estimatedOutputTokens, estimatedReasoningTokens
+	// Estimates come from unobserved calls only; re-estimating the full message
+	// would overwrite authoritative usage from earlier completed calls.
+	return resolveObservedOrHigherEstimatedTokens(input.Usage.OutputTokens, input.EstimatedOutputTokens),
+		resolveObservedOrHigherEstimatedTokens(input.Usage.ReasoningTokens, input.EstimatedReasoningTokens)
 }
 
 func interruptedUsageSource(input persistInterruptedMessageGenerationInput, metrics interruptedMessageGenerationMetrics) string {
@@ -741,6 +730,7 @@ func buildInterruptedSendMessageResult(input persistInterruptedMessageGeneration
 		CacheWrite5mTokens:  input.Usage.CacheWrite5mTokens,
 		CacheWrite1hTokens:  input.Usage.CacheWrite1hTokens,
 		ServerSideToolUsage: input.ServerSideToolUsage,
+		MCPToolUsage:        input.MCPToolUsage,
 		LatencyMS:           metrics.LatencyMS,
 		StartedAt:           input.StartedAt,
 	}
@@ -832,3 +822,4 @@ func (s *Service) embedMessagePairAsync(input SendMessageInput, userMessage *mod
 		s.embedMessagePair(asyncCtx, input.ConversationID, input.UserID, userMessage, assistantMessage)
 	}()
 }
+

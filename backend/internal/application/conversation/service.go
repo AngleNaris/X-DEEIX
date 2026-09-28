@@ -11,6 +11,7 @@ import (
 	"time"
 
 	appartifact "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/artifact"
+	appaudit "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/audit"
 	appbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/billing"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
 	appcompact "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/compact"
@@ -37,9 +38,6 @@ import (
 	domainpromptpreset "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/promptpreset"
 	domainskill "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/skill"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/embedding"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/mcp"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"go.uber.org/zap"
 )
@@ -230,7 +228,7 @@ type agentGroupWriter interface {
 }
 
 type auditWriter interface {
-	Write(ctx context.Context, requestID string, actorUserID uint, action string, resource string, resourceID string, ip string, userAgent string, detail interface{})
+	Write(ctx context.Context, input appaudit.WriteInput)
 }
 
 // generatedMediaDownloader 定义会话用例所需的最小媒体下载端口，避免应用层感知 HTTP 细节。
@@ -282,15 +280,16 @@ type Service struct {
 	credentials           credentialResolver
 	dynamicPromptCache    sync.Map
 	promptPresets         promptPresetResolver
-	llmClient             *llm.Client
+	llmClient             llmGateway
 	mediaDownloader       generatedMediaDownloader
-	mcpClient             *mcp.Client
+	mcpClient             mcpToolCaller
 	uploadSvc             *appupload.Service
 	compactSvc            *appcompact.Service
 	embeddingSvc          *appembedding.Service
 	processingSvc         *appprocessing.Service
 	extractSvc            *extraction.Service
 	ragSvc                *apprag.Service
+	uiComponentResolver   uiComponentResolver
 	skillResolver         skillResolver
 	knowledgeBaseResolver knowledgeBaseResolver
 	knowledgeBaseTools    knowledgeBaseToolService
@@ -362,9 +361,11 @@ type SendMessageInput struct {
 	SkillIDs                []uint
 	KnowledgeBaseIDs        []string
 	HTMLVisualPromptEnabled bool
-	ParentMessagePublicID   string
-	SourceMessagePublicID   string
-	BranchReason            string
+	// UIComponentIDs 是本次会话勾选的交互式组件；不可见的 ID 在解析时静默忽略。
+	UIComponentIDs        []uint
+	ParentMessagePublicID string
+	SourceMessagePublicID string
+	BranchReason          string
 	Cancelable              bool
 	// OnEvent 用于向调用方推送中间事件（如 rag_search），流式场景使用。
 	OnEvent func(eventType string, payload map[string]interface{}) error
@@ -409,9 +410,13 @@ type SendMessageResult struct {
 	CacheWrite5mTokens  int64
 	CacheWrite1hTokens  int64
 	ServerSideToolUsage map[string]int64
-	LatencyMS           int64
-	DurationSeconds     int64
-	StartedAt           time.Time
+	// MCPToolUsage retains successful tool calls and their price snapshots.
+	MCPToolUsage []MCPToolUsageItem
+	// LLMCallCount counts successful upstream calls, excluding failed retries.
+	LLMCallCount    int
+	LatencyMS       int64
+	DurationSeconds int64
+	StartedAt       time.Time
 	// Moderation is set when a soft-moderation barrier ran; Blocked means withdrawn.
 	Moderation            *MessageModerationOutcome
 	postBillingCompaction *postBillingCompactionTask
@@ -433,10 +438,9 @@ func NewService(
 	cache repository.ConversationCacheRepository,
 	routeResolver routeResolver,
 	memoryRecorder memoryRecorder,
-	llmClient *llm.Client,
+	llmClient llmGateway,
 	mediaDownloader generatedMediaDownloader,
-	mcpClient *mcp.Client,
-	embedClient *embedding.Client,
+	mcpClient mcpToolCaller,
 	uploadSvc *appupload.Service,
 	compactSvc *appcompact.Service,
 	embeddingSvc *appembedding.Service,
@@ -445,7 +449,7 @@ func NewService(
 	ragSvc *apprag.Service,
 	logger *zap.Logger,
 ) *Service {
-	return NewServiceWithRuntime(config.NewRuntime(cfg), repo, cache, routeResolver, memoryRecorder, llmClient, mediaDownloader, mcpClient, embedClient, uploadSvc, compactSvc, embeddingSvc, processingSvc, extractSvc, ragSvc, logger)
+	return NewServiceWithRuntime(config.NewRuntime(cfg), repo, cache, routeResolver, memoryRecorder, llmClient, mediaDownloader, mcpClient, uploadSvc, compactSvc, embeddingSvc, processingSvc, extractSvc, ragSvc, logger)
 }
 
 // NewServiceWithRuntime 创建使用运行时配置容器的服务。
@@ -455,10 +459,9 @@ func NewServiceWithRuntime(
 	cache repository.ConversationCacheRepository,
 	routeResolver routeResolver,
 	memoryRecorder memoryRecorder,
-	llmClient *llm.Client,
+	llmClient llmGateway,
 	mediaDownloader generatedMediaDownloader,
-	mcpClient *mcp.Client,
-	embedClient *embedding.Client,
+	mcpClient mcpToolCaller,
 	uploadSvc *appupload.Service,
 	compactSvc *appcompact.Service,
 	embeddingSvc *appembedding.Service,
@@ -487,16 +490,10 @@ func NewServiceWithRuntime(
 		pendingArtifacts:  newPendingArtifactStore(),
 		imageContextCache: defaultPreparedConversationImageCache(),
 	}
-	if extractSvc == nil {
-		extractSvc = extraction.NewServiceWithRuntime(cfg)
+	if extractSvc != nil {
+		extractSvc.SetObjectStoreProvider(svc.storeProvider)
 	}
-	extractSvc.SetObjectStoreProvider(svc.storeProvider)
-	if embeddingSvc == nil {
-		embeddingSvc = appembedding.NewServiceWithRuntime(cfg, repo, extractSvc, embedClient, logger)
-	}
-	if processingSvc == nil {
-		processingSvc = appprocessing.NewServiceWithRuntime(cfg, repo, cache, extractSvc, embeddingSvc, logger, appprocessing.DefaultExtractorVersion)
-	}
+	// Embedding and processing own separate repository contracts and are injected by the composition root.
 	if uploadSvc == nil {
 		uploadSvc = appupload.NewServiceWithRuntime(cfg, repo, logger, appupload.Hooks{
 			ResolveCapability: func(ctx context.Context) appupload.FileCapability {
@@ -521,18 +518,15 @@ func NewServiceWithRuntime(
 		}, appprocessing.DefaultExtractorVersion)
 	}
 	uploadSvc.SetObjectStoreProvider(svc.storeProvider)
-	if compactSvc == nil {
-		compactSvc = appcompact.NewServiceWithRuntime(cfg, repo, logger)
-	}
-	if ragSvc == nil {
-		ragSvc = apprag.NewServiceWithRuntime(cfg, repo, cache, embedClient)
-	}
+	// Compact and RAG services likewise arrive fully assembled; do not widen ConversationRepository.
 	svc.uploadSvc = uploadSvc
 	svc.compactSvc = compactSvc
 	svc.embeddingSvc = embeddingSvc
 	svc.processingSvc = processingSvc
 	svc.extractSvc = extractSvc
-	extractSvc.SetVisionAnalyzer(svc.AnalyzeImageForExtraction)
+	if extractSvc != nil {
+		extractSvc.SetVisionAnalyzer(svc.AnalyzeImageForExtraction)
+	}
 	svc.ragSvc = ragSvc
 	// 平台工具：ask 批准存储 + write_file 延迟重建调度器（debounce，缓冲窗口读运行时设置）。
 	svc.platformApprovals = newPlatformWriteApprovalStore()
@@ -717,8 +711,15 @@ func (s *Service) ApprovePlatformWrite(ctx context.Context, approvalID string, u
 	defer record.destroyCredentialSecrets()
 	if !approve {
 		if s.auditWriter != nil {
-			s.auditWriter.Write(ctx, record.RequestID, userID, "platform_tools.reject", "platform_tools", record.ID, "", "", map[string]interface{}{
-				"tool": record.ToolName,
+			s.auditWriter.Write(ctx, appaudit.WriteInput{
+				RequestID:   record.RequestID,
+				ActorUserID: userID,
+				Action:      "platform_tools.reject",
+				Resource:    "platform_tools",
+				ResourceID:  record.ID,
+				Detail: map[string]interface{}{
+					"tool": record.ToolName,
+				},
 			})
 		}
 		summary, err := marshalApprovalSummary(record)
@@ -878,3 +879,4 @@ func (s *Service) logPlatformApprovalPersistenceFailure(record *platformWriteApp
 		zap.Error(err),
 	)
 }
+

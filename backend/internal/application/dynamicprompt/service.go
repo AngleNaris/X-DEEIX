@@ -12,16 +12,17 @@ import (
 	domaindynamicprompt "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/dynamicprompt"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/conv"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/google/uuid"
 )
 
 var (
 	// ErrPromptNotFound 动态提示词不存在。
-	ErrPromptNotFound = errors.New("dynamic prompt not found")
+	ErrPromptNotFound = apperr.New("dynamic_prompt.not_found", "dynamic prompt not found")
 	// ErrPromptNameTooLong 动态提示词名称超过字符限制。
-	ErrPromptNameTooLong = errors.New("dynamic prompt name too long")
+	ErrPromptNameTooLong = apperr.New("dynamic_prompt.name_too_long", "dynamic prompt name too long")
 	// ErrPromptContentTooLong 动态提示词内容超过字符限制。
-	ErrPromptContentTooLong = errors.New("dynamic prompt content too long")
+	ErrPromptContentTooLong = apperr.New("dynamic_prompt.content_too_long", "dynamic prompt content too long")
 )
 
 // 长度限制。

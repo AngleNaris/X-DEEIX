@@ -10,10 +10,11 @@ import (
 	"strings"
 	"time"
 
+	appaudit "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/audit"
 	appdynamicprompt "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/dynamicprompt"
 	apppromptpreset "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/promptpreset"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/skill"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/objectstore"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/objectstore"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"github.com/google/uuid"
 )
@@ -331,17 +332,14 @@ func (s *Service) recordPlatformAudit(ctx context.Context, call callCtx, action 
 	if s.auditWriter == nil {
 		return
 	}
-	s.auditWriter.Write(
-		ctx,
-		strings.TrimSpace(call.requestID),
-		call.userID,
-		action,
-		"platform_tools",
-		strings.TrimSpace(resourceID),
-		"",
-		"",
-		detail,
-	)
+	s.auditWriter.Write(ctx, appaudit.WriteInput{
+		RequestID:   strings.TrimSpace(call.requestID),
+		ActorUserID: call.userID,
+		Action:      action,
+		Resource:    "platform_tools",
+		ResourceID:  strings.TrimSpace(resourceID),
+		Detail:      detail,
+	})
 }
 
 // platformCreateSkill 创建用户自己的技能（写操作，受批准模式管控）。
@@ -628,3 +626,4 @@ func (s *Service) platformRunDynamicPrompt(ctx context.Context, call platformToo
 		"result":    result,
 	})
 }
+

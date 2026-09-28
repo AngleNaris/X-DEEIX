@@ -99,6 +99,21 @@ func (r *ocrReprocessRepo) ClaimRecoverableFilesForProcessing(context.Context, t
 	return nil, nil
 }
 
+func (r *ocrReprocessRepo) UpdateClaimedFileObjectProcessingState(_ context.Context, state *domainconversation.FileObjectProcessing, _ string) (bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.processing = *state
+	return true, nil
+}
+
+func (*ocrReprocessRepo) TryClaimFileObjectProcessing(context.Context, uint, string, bool, string, string) (bool, error) {
+	return true, nil
+}
+
+func (*ocrReprocessRepo) ResetFileObjectProcessingForRetry(context.Context, uint, string, string) (bool, error) {
+	return true, nil
+}
+
 type ocrReprocessQueue struct {
 	mu      sync.Mutex
 	enqueue int
@@ -117,12 +132,26 @@ func (q *ocrReprocessQueue) ClaimTimedOutFileProcessingMessages(context.Context,
 func (q *ocrReprocessQueue) ReadFileProcessingMessages(context.Context, string) ([]repository.FileProcessingMessage, error) {
 	return nil, nil
 }
-func (q *ocrReprocessQueue) AckFileProcessingMessage(context.Context, string) error { return nil }
-func (q *ocrReprocessQueue) DeleteFileProcessingMessage(context.Context, string) error {
+func (q *ocrReprocessQueue) EnqueueFileEmbedding(context.Context, uint, string, string, string) error {
 	return nil
 }
-func (q *ocrReprocessQueue) SendFileProcessingToDLQ(context.Context, uint, string, int, string) error {
-	return nil
+func (q *ocrReprocessQueue) ClaimTimedOutFileEmbeddingMessages(context.Context, string) ([]repository.FileProcessingMessage, error) {
+	return nil, nil
+}
+func (q *ocrReprocessQueue) ReadFileEmbeddingMessages(context.Context, string) ([]repository.FileProcessingMessage, error) {
+	return nil, nil
+}
+func (q *ocrReprocessQueue) RenewFileProcessingMessageLease(context.Context, string, repository.FileProcessingMessage) (bool, error) {
+	return true, nil
+}
+func (q *ocrReprocessQueue) SettleFileProcessingMessage(context.Context, string, repository.FileProcessingMessage) (bool, error) {
+	return true, nil
+}
+func (q *ocrReprocessQueue) RequeueFileProcessingMessage(context.Context, string, repository.FileProcessingMessage, int, string) (bool, error) {
+	return true, nil
+}
+func (q *ocrReprocessQueue) DeadLetterFileProcessingMessage(context.Context, string, repository.FileProcessingMessage, string) (bool, error) {
+	return true, nil
 }
 
 func TestEnsureImageOCRProcessingQueuesLegacyReadyImageOnce(t *testing.T) {

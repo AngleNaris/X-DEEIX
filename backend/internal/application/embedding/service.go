@@ -12,40 +12,51 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/extraction"
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	infraembedding "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/embedding"
+	portembedding "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/embedding"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/embeddingutil"
 	"go.uber.org/zap"
 )
 
-var ErrEmbeddingServiceNotConfigured = errors.New("embedding service not configured")
+var ErrEmbeddingServiceNotConfigured = apperr.New("embedding.service_not_configured", "embedding service not configured")
+var errNoExtractableText = errors.New("no extractable text in file")
+var errEmptyChunks = errors.New("embedding produced no chunks")
+
+func (s *Service) markFileEmpty(ctx context.Context, fileObj domainconversation.FileObject, signature string) error {
+	return s.updateFileObjectEmbedStatus(ctx, fileObj.UserID, fileObj.FileID, signature, domainconversation.FileSubprocessStatusEmpty, errNoExtractableText)
+}
 
 const embeddingWorkerConcurrency = 4
 
+type EmbeddingClient interface {
+	CallAPI(context.Context, portembedding.Request) ([][]float32, error)
+}
+
 // Service 封装文件 embedding 执行与状态管理能力。
 type Service struct {
-	cfg         *config.Runtime
-	repo        repository.EmbeddingRepository
-	extractSvc  *extraction.Service
-	embedClient *infraembedding.Client
-	logger      *zap.Logger
-	workSlots   chan struct{}
-	lifecycleMu sync.RWMutex
-	lifecycle   context.Context
-	reindexMu   sync.Mutex
-	reindexing  bool
+	cfg                  *config.Runtime
+	repo                 repository.EmbeddingRepository
+	extractSvc           *extraction.Service
+	embedClient          EmbeddingClient
+	logger               *zap.Logger
+	workSlots            chan struct{}
+	lifecycleMu          sync.RWMutex
+	lifecycle            context.Context
+	reindexMu            sync.Mutex
+	reindexing           bool
+	vectorStoreMu        sync.Mutex
+	vectorStoreChecked   bool
+	vectorStoreAvailable bool
 }
 
 // NewService 创建 embedding 服务。
-func NewService(cfg config.Config, repo repository.EmbeddingRepository, extractSvc *extraction.Service, embedClient *infraembedding.Client, logger *zap.Logger) *Service {
+func NewService(cfg config.Config, repo repository.EmbeddingRepository, extractSvc *extraction.Service, embedClient EmbeddingClient, logger *zap.Logger) *Service {
 	return NewServiceWithRuntime(config.NewRuntime(cfg), repo, extractSvc, embedClient, logger)
 }
 
 // NewServiceWithRuntime 创建使用运行时配置容器的 embedding 服务。
-func NewServiceWithRuntime(cfg *config.Runtime, repo repository.EmbeddingRepository, extractSvc *extraction.Service, embedClient *infraembedding.Client, logger *zap.Logger) *Service {
-	if extractSvc == nil {
-		extractSvc = extraction.NewServiceWithRuntime(cfg)
-	}
+func NewServiceWithRuntime(cfg *config.Runtime, repo repository.EmbeddingRepository, extractSvc *extraction.Service, embedClient EmbeddingClient, logger *zap.Logger) *Service {
 	return &Service{
 		cfg:         cfg,
 		repo:        repo,
@@ -99,7 +110,7 @@ func (s *Service) indexingAvailable(ctx context.Context, cfg config.Config) (boo
 	if s.repo == nil {
 		return false, "vector_store_unavailable", nil
 	}
-	available, err := s.repo.VectorStoreAvailable(ctx)
+	available, err := s.cachedVectorStoreAvailable(ctx)
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Warn("embedding vector store availability check failed", zap.Error(err))
@@ -110,6 +121,21 @@ func (s *Service) indexingAvailable(ctx context.Context, cfg config.Config) (boo
 		return false, "vector_store_unavailable", nil
 	}
 	return true, "available", nil
+}
+
+// cachedVectorStoreAvailable caches structural checks, but never transient errors.
+func (s *Service) cachedVectorStoreAvailable(ctx context.Context) (bool, error) {
+	s.vectorStoreMu.Lock()
+	defer s.vectorStoreMu.Unlock()
+	if s.vectorStoreChecked {
+		return s.vectorStoreAvailable, nil
+	}
+	available, err := s.repo.VectorStoreAvailable(ctx)
+	if err != nil {
+		return false, err
+	}
+	s.vectorStoreAvailable, s.vectorStoreChecked = available, true
+	return available, nil
 }
 
 // ShouldTrigger 判断当前文件是否应触发 embedding。
@@ -186,23 +212,25 @@ func (s *Service) ProcessFile(ctx context.Context, fileObj domainconversation.Fi
 
 	text, err := s.loadSourceText(ctx, fileObj)
 	if err != nil {
-		_ = s.updateFileObjectEmbedStatus(ctx, fileObj.UserID, fileObj.FileID, embeddingSignature, "failed", "无法提取文本")
+		if errors.Is(err, errNoExtractableText) || extraction.IsEmptyContent(err) {
+			return s.markFileEmpty(ctx, fileObj, embeddingSignature)
+		}
+		_ = s.updateFileObjectEmbedStatus(ctx, fileObj.UserID, fileObj.FileID, embeddingSignature, "failed", err)
 		return err
 	}
 	if strings.TrimSpace(text) == "" {
-		_ = s.updateFileObjectEmbedStatus(ctx, fileObj.UserID, fileObj.FileID, embeddingSignature, "failed", "无法提取文本")
-		return fmt.Errorf("no extractable text in file %s", fileObj.FileID)
+		return s.markFileEmpty(ctx, fileObj, embeddingSignature)
 	}
 
-	chunks := infraembedding.ChunkText(text, cfg.EmbedChunkSizeTokens, cfg.EmbedChunkOverlapTokens)
+	chunks := embeddingutil.ChunkText(text, cfg.EmbedChunkSizeTokens, cfg.EmbedChunkOverlapTokens)
 	if len(chunks) == 0 {
-		_ = s.updateFileObjectEmbedStatus(ctx, fileObj.UserID, fileObj.FileID, embeddingSignature, "failed", "分片结果为空")
-		return nil
+		_ = s.updateFileObjectEmbedStatus(ctx, fileObj.UserID, fileObj.FileID, embeddingSignature, "failed", errEmptyChunks)
+		return errEmptyChunks
 	}
 
 	embeddings, err := s.embedTextsWithConfig(ctx, chunks, cfg)
 	if err != nil {
-		_ = s.updateFileObjectEmbedStatus(ctx, fileObj.UserID, fileObj.FileID, embeddingSignature, "failed", truncateError(err.Error(), 255))
+		_ = s.updateFileObjectEmbedStatus(ctx, fileObj.UserID, fileObj.FileID, embeddingSignature, "failed", err)
 		return err
 	}
 
@@ -221,7 +249,7 @@ func (s *Service) ProcessFile(ctx context.Context, fileObj domainconversation.Fi
 	}
 	published, err := s.repo.ReplaceFileChunks(ctx, fileObj.ID, embeddingSignature, fileChunks, embeddings)
 	if err != nil {
-		_ = s.updateFileObjectEmbedStatus(ctx, fileObj.UserID, fileObj.FileID, embeddingSignature, "failed", err.Error())
+		_ = s.updateFileObjectEmbedStatus(ctx, fileObj.UserID, fileObj.FileID, embeddingSignature, "failed", err)
 		return err
 	}
 	if !published {
@@ -262,7 +290,7 @@ func (s *Service) embeddingConfigurationCurrent(expectedSignature string, expect
 		strings.TrimRight(strings.TrimSpace(cfg.EmbeddingHost), "/") == strings.TrimRight(strings.TrimSpace(expectedHost), "/")
 }
 
-func (s *Service) updateFileObjectEmbedStatus(ctx context.Context, userID uint, fileID string, embeddingSignature string, status string, embedErr string) error {
+func (s *Service) updateFileObjectEmbedStatus(ctx context.Context, userID uint, fileID string, embeddingSignature string, status string, embedErr error) error {
 	if s == nil || s.repo == nil {
 		return nil
 	}
@@ -272,7 +300,7 @@ func (s *Service) updateFileObjectEmbedStatus(ctx context.Context, userID uint, 
 		writeCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 	}
-	_, err := s.repo.UpdateFileObjectEmbedStatus(writeCtx, userID, fileID, embeddingSignature, status, embedErr)
+	_, err := s.repo.UpdateFileObjectEmbedStatus(writeCtx, userID, fileID, embeddingSignature, status, ErrorSummary(embedErr))
 	return err
 }
 
@@ -290,7 +318,7 @@ func (s *Service) WaitReady(ctx context.Context, userID uint, fileID string, tim
 		if fo.EmbedStatus == "ready" {
 			return true
 		}
-		if fo.EmbedStatus == "failed" {
+		if fo.EmbedStatus == "failed" || fo.EmbedStatus == domainconversation.FileSubprocessStatusEmpty {
 			return false
 		}
 		select {
@@ -305,6 +333,9 @@ func (s *Service) WaitReady(ctx context.Context, userID uint, fileID string, tim
 func (s *Service) loadSourceText(ctx context.Context, fileObj domainconversation.FileObject) (string, error) {
 	if s != nil && s.repo != nil {
 		if result, err := s.repo.GetFileObjectProcessingByObjectID(ctx, fileObj.ID); err == nil && result != nil {
+			if result.ExtractStatus == domainconversation.FileSubprocessStatusEmpty {
+				return "", errNoExtractableText
+			}
 			if path := strings.TrimSpace(result.ExtractStoragePath); path != "" && s.extractSvc != nil {
 				text, readErr := s.extractSvc.ReadExtractedText(ctx, path)
 				if readErr == nil && strings.TrimSpace(text) != "" {
@@ -377,7 +408,7 @@ func (s *Service) embedTextsWithConfig(ctx context.Context, texts []string, cfg 
 		if end > len(texts) {
 			end = len(texts)
 		}
-		batchEmbeddings, batchErr := s.embedClient.CallAPI(ctx, apiBase, apiKey, model, texts[start:end], cfg.EmbeddingOutputDimensions, cfg.EmbeddingTimeoutSeconds)
+		batchEmbeddings, batchErr := s.embedClient.CallAPI(ctx, portembedding.Request{APIBase: apiBase, APIKey: apiKey, Model: model, Texts: texts[start:end], Dimensions: cfg.EmbeddingOutputDimensions, OmitDimensions: cfg.EmbeddingDimensionsPolicy == config.EmbeddingDimensionsPolicyOmit, TimeoutSeconds: cfg.EmbeddingTimeoutSeconds})
 		if batchErr != nil {
 			return nil, batchErr
 		}
@@ -409,6 +440,7 @@ type EmbeddingIndexStatus struct {
 	StaleCount     int64
 	PendingCount   int64
 	FailedCount    int64
+	EmptyCount     int64
 	NeedsReindex   bool
 }
 
@@ -454,9 +486,22 @@ func (s *Service) GetIndexStatus(ctx context.Context) (EmbeddingIndexStatus, err
 	if status.FailedCount, err = s.repo.CountFilesByEmbedStatus(ctx, "failed"); err != nil {
 		return status, err
 	}
-	noneCount, _ := s.repo.CountFilesByEmbedStatus(ctx, "none")
-	processingCount, _ := s.repo.CountFilesByEmbedStatus(ctx, "processing")
-	status.PendingCount = noneCount + processingCount
+	if status.EmptyCount, err = s.repo.CountFilesByEmbedStatus(ctx, domainconversation.FileSubprocessStatusEmpty); err != nil {
+		return status, err
+	}
+	noneCount, err := s.repo.CountFilesByEmbedStatus(ctx, "none")
+	if err != nil {
+		return status, err
+	}
+	queuedCount, err := s.repo.CountFilesByEmbedStatus(ctx, "queued")
+	if err != nil {
+		return status, err
+	}
+	processingCount, err := s.repo.CountFilesByEmbedStatus(ctx, "processing")
+	if err != nil {
+		return status, err
+	}
+	status.PendingCount = noneCount + queuedCount + processingCount
 	status.NeedsReindex = status.StaleCount > 0
 	return status, nil
 }
@@ -481,7 +526,7 @@ func (s *Service) ReconcileIndex(ctx context.Context) (int64, error) {
 // ReindexStaleFiles 提交一次去重的后台重建任务，返回 1 表示任务已接受。
 // 只做配置/可用性检查与互斥标记，实际分页扫描在后台执行（runReindex），
 // 避免大库全量扫描撞 HTTP 超时导致任务根本不启动。
-func (s *Service) ReindexStaleFiles(ctx context.Context) (int, error) {
+func (s *Service) ReindexStaleFiles(ctx context.Context, includeEmpty bool) (int, error) {
 	if s.repo == nil {
 		return 0, nil
 	}
@@ -521,11 +566,11 @@ func (s *Service) ReindexStaleFiles(ctx context.Context) (int, error) {
 		return 0, workerCtx.Err()
 	}
 	started = true
-	go s.runReindex(workerCtx, configuredModelSignature(cfg))
+	go s.runReindex(workerCtx, configuredModelSignature(cfg), includeEmpty)
 	return 1, nil
 }
 
-func (s *Service) runReindex(ctx context.Context, expectedSignature string) {
+func (s *Service) runReindex(ctx context.Context, expectedSignature string, includeEmpty bool) {
 	defer func() {
 		s.reindexMu.Lock()
 		s.reindexing = false
@@ -557,7 +602,7 @@ func (s *Service) runReindex(ctx context.Context, expectedSignature string) {
 	var afterID uint
 scan:
 	for ctx.Err() == nil && configuredModelSignature(s.snapshot()) == expectedSignature {
-		files, err := s.repo.ListFilesForReindex(ctx, pageSize, afterID)
+		files, err := s.repo.ListFilesForReindex(ctx, pageSize, afterID, includeEmpty)
 		if err != nil {
 			if s.logger != nil {
 				s.logger.Warn("embedding_reindex_list_failed", zap.Error(err))

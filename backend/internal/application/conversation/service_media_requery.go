@@ -12,7 +12,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"go.uber.org/zap"
@@ -75,25 +75,25 @@ func (s *Service) RequeryMediaVideoRun(ctx context.Context, userID uint, runID s
 		}
 		return nil, err
 	}
- 	taskType := strings.TrimSpace(run.TaskType)
- 	adapter := llm.NormalizeAdapter(run.ProviderProtocol)
- 	switch taskType {
- 	case string(MediaVideoTaskGeneration):
- 		// 生成任务仅允许生成协议；extensions 协议走扩展任务分支，避免与 IsRouteAllowedForTask(video_generation) 背离。
- 		if adapter == llm.AdapterXAIVideoExtensions {
- 			return nil, ErrMediaRouteProtocolMismatch
- 		}
- 		if _, ok := requeryableVideoProtocols[adapter]; !ok {
- 			return nil, ErrMediaRouteProtocolMismatch
- 		}
- 	case string(MediaVideoTaskExtension):
- 		// 扩展任务仅允许 extensions 协议回查；RetrieveVideoTask 已支持该协议。
- 		if adapter != llm.AdapterXAIVideoExtensions {
- 			return nil, ErrMediaRouteProtocolMismatch
- 		}
- 	default:
- 		return nil, ErrMediaRouteProtocolMismatch
- 	}
+	taskType := strings.TrimSpace(run.TaskType)
+	adapter := llm.NormalizeAdapter(run.ProviderProtocol)
+	switch taskType {
+	case string(MediaVideoTaskGeneration):
+		// 生成任务仅允许生成协议；extensions 协议走扩展任务分支，避免与 IsRouteAllowedForTask(video_generation) 背离。
+		if adapter == llm.AdapterXAIVideoExtensions {
+			return nil, ErrMediaRouteProtocolMismatch
+		}
+		if _, ok := requeryableVideoProtocols[adapter]; !ok {
+			return nil, ErrMediaRouteProtocolMismatch
+		}
+	case string(MediaVideoTaskExtension):
+		// 扩展任务仅允许 extensions 协议回查；RetrieveVideoTask 已支持该协议。
+		if adapter != llm.AdapterXAIVideoExtensions {
+			return nil, ErrMediaRouteProtocolMismatch
+		}
+	default:
+		return nil, ErrMediaRouteProtocolMismatch
+	}
 	if strings.TrimSpace(run.UpstreamTaskID) == "" {
 		// 上游任务从未提交成功（如提交即被拒），没有可回查的对象
 		return nil, ErrMediaVideoInputInvalid
@@ -116,7 +116,11 @@ func (s *Service) RequeryMediaVideoRun(ctx context.Context, userID uint, runID s
 		UpstreamModel:    route.UpstreamModel,
 	}
 
-	retrieval, err := s.llmClient.RetrieveVideoTask(ctx, routeConfig, run.UpstreamTaskID)
+	videoGateway, ok := s.llmClient.(videoTaskGateway)
+	if !ok {
+		return nil, wrapUpstreamRequestError(llm.ErrUnsupportedAdapter)
+	}
+	retrieval, err := videoGateway.RetrieveVideoTask(ctx, routeConfig, run.UpstreamTaskID)
 	if err != nil {
 		s.logRequeryFailure(ctx, run, "retrieve_upstream_task", err)
 		return nil, wrapUpstreamRequestError(err)
@@ -284,3 +288,4 @@ func (s *Service) logRequeryFailure(ctx context.Context, run *model.Run, stage s
 	}
 	s.logger.Warn("media_video_requery_failed", fields...)
 }
+

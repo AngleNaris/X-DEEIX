@@ -206,7 +206,7 @@ func TestBuildMessageProcessTraceDTOBlockCarriesStartedAt(t *testing.T) {
 		ContentMarkdown: "思考内容",
 		RoundID:         "round_1",
 		StartedAt:       started,
-	}}, nil)
+	}}, nil, nil)
 	if trace == nil || trace.UpstreamThink == nil {
 		t.Fatalf("expected upstream think block, got %#v", trace)
 	}

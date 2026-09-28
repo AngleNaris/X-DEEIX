@@ -6,28 +6,20 @@ import (
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
 	appcompact "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/compact"
+	domainchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/channel"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"go.uber.org/zap"
 )
 
-// resolveContextCompactionTrigger returns the strictest enabled input budget.
-// A zero runtime token trigger remains an intentional opt-out for token-based
-// compaction; turn-based compaction continues to be handled independently.
+// resolveContextCompactionTrigger uses the same model-aware budget as the
+// upstream context policy. Zero percent disables token-triggered compaction;
+// the independent turn limit still applies.
 func resolveContextCompactionTrigger(cfg config.Config, modelName string, capabilitiesJSON string) int64 {
-	trigger := int64(cfg.ContextCompactTrigger)
-	if trigger <= 0 {
-		return 0
-	}
-	if maxInput := int64(cfg.ContextMaxInputTokens); maxInput > 0 && maxInput < trigger {
-		trigger = maxInput
-	}
-	if modelBudget := llm.CompactionThresholdFromCapabilities(modelName, capabilitiesJSON); modelBudget > 0 && modelBudget < trigger {
-		trigger = modelBudget
-	}
-	return trigger
+	return domainchannel.CompactionThresholdFromCapabilitiesWithFallback(
+		modelName, capabilitiesJSON, cfg.ContextWindowFallbackTokens, cfg.ContextCompactTriggerPercent,
+	)
 }
 
 func estimateMessagesForCompaction(messages []model.Message) int64 {
@@ -72,19 +64,18 @@ func (s *Service) maybeCompactContextBeforePrompt(
 	triggerTokens := resolveContextCompactionTrigger(cfg, route.UpstreamModel, route.ModelCapabilitiesJSON)
 	promptTokenEstimate := estimateMessagesForCompaction(messages)
 	exceedsTurnCap := cfg.ContextMaxTurns > 0 && countContextUserTurns(messages) > cfg.ContextMaxTurns
-	exceedsTokenCap := triggerTokens > 0 && promptTokenEstimate > triggerTokens
+	exceedsTokenCap := triggerTokens > 0 && promptTokenEstimate >= triggerTokens
 	if !exceedsTurnCap && !exceedsTokenCap {
 		return nil
 	}
 
-	compactModelName := s.resolveTextTaskModel(
-		ctx,
-		cfg.CompactTaskModel,
-		conversationModel,
-		input.UserID,
-		input.ConversationID,
-		input.RequestID,
-	)
+	compactModelName := s.resolveTextTaskModel(ctx, textTaskRouteInput{
+		ConfiguredModel:   cfg.CompactTaskModel,
+		ConversationModel: conversationModel,
+		UserID:            input.UserID,
+		ConversationID:    input.ConversationID,
+		RequestID:         input.RequestID,
+	})
 	snapshot, err := s.compactSvc.MaybeCompactConversation(ctx, appcompact.MaybeCompactConversationInput{
 		ConversationID:      input.ConversationID,
 		UserID:              input.UserID,
@@ -93,6 +84,8 @@ func (s *Service) maybeCompactContextBeforePrompt(
 		PromptTokenEstimate: promptTokenEstimate,
 		TriggerTokens:       triggerTokens,
 		PlatformModelName:   compactModelName,
+		ContextModelName:    route.UpstreamModel,
+		CapabilitiesJSON:    route.ModelCapabilitiesJSON,
 	})
 	if err != nil {
 		if s.logger != nil {

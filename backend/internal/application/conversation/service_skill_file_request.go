@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	domainskill "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/skill"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
 // 请求式披露常量：模型通过在回复中输出 <read_file path="..."> 标记请求技能包内文件内容，
@@ -209,3 +209,4 @@ func matchPackageFileOwner(skills []map[string]domainskill.PackageFile, skillIDs
 	}
 	return 0, false
 }
+

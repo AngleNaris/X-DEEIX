@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
 func (s *Service) persistMessageToolHistory(ctx context.Context, userID, conversationID, messageID uint, runID string, messages []llm.Message, attempts, successful []credentialWrite) error {
@@ -118,3 +118,4 @@ func validToolHistory(messages []llm.Message) bool {
 	}
 	return len(pending) == 0
 }
+

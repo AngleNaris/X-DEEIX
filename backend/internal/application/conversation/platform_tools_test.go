@@ -10,6 +10,7 @@ import (
 	"time"
 
 	appartifact "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/artifact"
+	appaudit "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/audit"
 	appcredentials "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/credentials"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/skill"
 	domainartifact "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/artifact"
@@ -101,12 +102,12 @@ type recordingPlatformAuditWriter struct {
 	payloads []string
 }
 
-func (w *recordingPlatformAuditWriter) Write(_ context.Context, _ string, _ uint, action string, resource string, resourceID string, _ string, _ string, detail interface{}) {
+func (w *recordingPlatformAuditWriter) Write(_ context.Context, input appaudit.WriteInput) {
 	payload, _ := json.Marshal(map[string]interface{}{
-		"action":      action,
-		"resource":    resource,
-		"resource_id": resourceID,
-		"detail":      detail,
+		"action":      input.Action,
+		"resource":    input.Resource,
+		"resource_id": input.ResourceID,
+		"detail":      input.Detail,
 	})
 	w.payloads = append(w.payloads, string(payload))
 }

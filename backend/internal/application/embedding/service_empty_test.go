@@ -3,6 +3,7 @@ package embedding
 import (
 	"context"
 	"testing"
+	"time"
 
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
@@ -58,15 +59,31 @@ func TestProcessFileStillFailsWhenExtractionErrors(t *testing.T) {
 	}
 }
 
+type observedReindexRepo struct {
+	reindexRepo
+	called chan bool
+}
+
+func (r *observedReindexRepo) ListFilesForReindex(ctx context.Context, limit int, afterID uint, includeEmpty bool) ([]domainconversation.FileObject, error) {
+	files, err := r.reindexRepo.ListFilesForReindex(ctx, limit, afterID, includeEmpty)
+	r.called <- includeEmpty
+	return files, err
+}
+
 func TestReindexStaleFilesPassesIncludeEmptyToRepository(t *testing.T) {
-	repo := &reindexRepo{vectorAvailable: true}
+	repo := &observedReindexRepo{reindexRepo: reindexRepo{vectorAvailable: true}, called: make(chan bool, 1)}
 	service := newTestService(emptyTestConfig(), repo, nil, infraembedding.New(security.OutboundPolicy{}), nil)
 
 	if _, err := service.ReindexStaleFiles(context.Background(), true); err != nil {
 		t.Fatalf("ReindexStaleFiles() error = %v", err)
 	}
-	if len(repo.listIncludeEmpty) == 0 || !repo.listIncludeEmpty[0] {
-		t.Fatalf("expected includeEmpty=true forwarded to repository, got %v", repo.listIncludeEmpty)
+	select {
+	case includeEmpty := <-repo.called:
+		if !includeEmpty {
+			t.Fatal("expected includeEmpty=true forwarded to repository")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("background reindex never called repository")
 	}
 }
 

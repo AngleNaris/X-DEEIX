@@ -102,7 +102,7 @@ func (s *Service) StreamTemporaryChat(
 	if err != nil {
 		return nil, err
 	}
-	systemPrompt := resolveMessageSystemPromptInjection(cfg, route, "", requestPromptOptions{HTMLVisual: input.HTMLVisualPromptEnabled, UIComponents: uiComponents})
+	systemPrompt := resolveMessageSystemPromptInjection(cfg, route, "", "", input.HTMLVisualPromptEnabled, s.resolveSystemPromptVars(ctx, input.UserID), uiComponents)
 	if systemPrompt.Content != "" {
 		if systemPrompt.InlineToUser {
 			messages = inlineSystemPromptIntoLatestUserMessage(messages, systemPrompt.Content)

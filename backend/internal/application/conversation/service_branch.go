@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	appcompact "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/compact"
+	domainchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/channel"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
@@ -115,8 +116,29 @@ func (s *Service) resolveMessageBranch(
 		}
 	}
 
+	var ancestorMessages []model.Message
+	if parentMessage != nil {
+		ancestors, ancestorErr := s.repo.ListMessageAncestors(ctx, conversationID, parentMessage.ID, s.compactSvc.ResolveContextMessageLimit())
+		if ancestorErr != nil {
+			s.logger.Warn("list_message_ancestors_failed",
+				zap.String("trace_id", traceid.FromContext(ctx)),
+				zap.Error(ancestorErr),
+			)
+			ancestorMessages = []model.Message{}
+		} else {
+			ancestorMessages = ancestors
+		}
+	}
+	if branchReason == "default" {
+		normalizedAncestors, contextParent := normalizeDefaultBranchContext(ancestorMessages, parentMessage)
+		ancestorMessages = normalizedAncestors
+		if strings.TrimSpace(parentPublicID) == "" {
+			parentMessage = contextParent
+		}
+	}
+
 	state := &messageBranchState{
-		ExistingMessages: nil,
+		ExistingMessages: ancestorMessages,
 	}
 	if parentMessage != nil {
 		state.ParentMessageID = &parentMessage.ID
@@ -289,6 +311,112 @@ func buildBranchMessagePath(branch *messageBranchState, userMessage *model.Messa
 	allMessages = append(allMessages, branch.ExistingMessages...)
 	allMessages = append(allMessages, *userMessage)
 	return buildMessagePath(allMessages, userMessage.ID)
+}
+
+func normalizeDefaultBranchContext(
+	ancestors []model.Message,
+	parent *model.Message,
+) ([]model.Message, *model.Message) {
+	if len(ancestors) == 0 {
+		if isContextMessage(parent) {
+			return ancestors, parent
+		}
+		return nil, nil
+	}
+
+	contextMessages := recoverAssistantRetryUserStates(ancestors)
+
+	end := len(contextMessages)
+	for end > 0 && !isContextMessage(&contextMessages[end-1]) {
+		end--
+	}
+	if end == 0 {
+		return nil, nil
+	}
+
+	start := 0
+	for index := end - 1; index >= 0; index-- {
+		if !isContextMessage(&contextMessages[index]) {
+			start = index + 1
+			break
+		}
+	}
+
+	normalized := append([]model.Message(nil), contextMessages[start:end]...)
+	if len(normalized) == 0 {
+		return nil, nil
+	}
+	nextParent := normalized[len(normalized)-1]
+	return normalized, &nextParent
+}
+
+func (s *Service) expandContextMessagesToSnapshotBoundary(
+	ctx context.Context,
+	conversationID uint,
+	userMessageID uint,
+	messages []model.Message,
+	snapshot *model.ContextSnapshot,
+	policy contextCompactionPolicy,
+) []model.Message {
+	if !policy.EffectiveEnabled() || snapshot == nil || userMessageID == 0 {
+		return messages
+	}
+	if _, ok := appcompact.SnapshotBoundaryIndex(messages, snapshot); ok {
+		return messages
+	}
+	if _, ok := appcompact.SnapshotBoundaryAncestorIndex(messages, snapshot); ok {
+		return messages
+	}
+
+	expanded, found, err := s.repo.ListMessageAncestorsUntil(
+		ctx,
+		conversationID,
+		userMessageID,
+		snapshot.CoveredUntilMessageID,
+		s.compactSvc.ResolveSnapshotBoundaryLookupLimit(),
+	)
+	if err != nil || !found || len(expanded) == 0 {
+		if err != nil && s.logger != nil {
+			s.logger.Warn("expand_context_to_snapshot_boundary_failed",
+				zap.String("trace_id", traceid.FromContext(ctx)),
+				zap.Uint("conversation_id", conversationID),
+				zap.Uint("snapshot_boundary_message_id", snapshot.CoveredUntilMessageID),
+				zap.Error(err),
+			)
+		}
+		return messages
+	}
+	return expanded
+}
+
+// applyContextTokenBudget 按模型 Token 预算截断，保留最近消息。
+func (s *Service) applyContextTokenBudget(messages []model.Message, capabilityModelName string, capabilitiesJSON string, includeReasoningContent bool) []model.Message {
+	cfg := s.cfg.Snapshot()
+	if !cfg.ContextTokenBudgetEnabled || len(messages) <= 1 {
+		return messages
+	}
+	budget := domainchannel.EffectiveContextBudgetFromCapabilitiesWithFallback(capabilityModelName, capabilitiesJSON, cfg.ContextWindowFallbackTokens)
+	return truncateContextByTokenBudget(messages, budget, includeReasoningContent)
+}
+
+// truncateContextByTokenBudget 从最近消息开始，保留在 budgetTokens 以内的消息。
+// 始终保留最后一条消息（当前用户输入）。
+func truncateContextByTokenBudget(messages []model.Message, budgetTokens int, includeReasoningContent bool) []model.Message {
+	if budgetTokens <= 0 || len(messages) == 0 {
+		return messages
+	}
+	total := 0
+	cutFrom := len(messages)
+	imageTokenReserve := conversationImageTokenReserveByMessage(messages)
+	for i := len(messages) - 1; i >= 0; i-- {
+		msgTokens := int(estimateDomainMessageTokens(messages[i], includeReasoningContent) + imageTokenReserve[i])
+		if total+msgTokens > budgetTokens && cutFrom < len(messages) {
+			break
+		}
+		total += msgTokens
+		cutFrom = i
+	}
+	return messages[cutFrom:]
 }
 
 // buildModelContextMessages resolves the complete active branch before removing

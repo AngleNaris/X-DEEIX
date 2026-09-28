@@ -214,7 +214,7 @@ func TestInjectConversationImageContextRejectsMissingAndOversizedContext(t *test
 
 	domainMessages = []model.Message{{Role: "user", Attachments: `[{"file_id":"stored","kind":"image","mime_type":"image/png"}]`}}
 	attachments := []AttachmentInput{{FileID: "stored", Kind: "image", MimeType: "image/png", StoragePath: "images/stored.png", ContextMode: fileContextModeDirectImage}}
-	_, err = service.injectConversationImageContext(t.Context(), historyMessagesFromDomain(domainMessages, historyMessageOptions{}), domainMessages, attachments, config.Config{})
+	_, err = service.injectConversationImageContext(t.Context(), historyMessagesFromDomain(domainMessages, historyMessageOptions{}), domainMessages, attachments, config.Config{}, true)
 	if !errors.Is(err, appstorage.ErrProviderNotConfigured) {
 		t.Fatalf("expected missing object store provider to fail explicitly, got %v", err)
 	}
@@ -353,7 +353,7 @@ func TestInjectUserContextPreservesExistingImageParts(t *testing.T) {
 
 func TestInjectUserContextSilentlySkipsImagesWithoutObjectStoreProvider(t *testing.T) {
 	messages := []llm.Message{{Role: "user", Content: "describe this image"}}
-	got := injectUserContext(t.Context(), messages, userContextInput{Attachments: []AttachmentInput{{
+	got := injectUserContext(t.Context(), messages, userContextInput{SupportsVision: true, Attachments: []AttachmentInput{{
 		FileID: "image-1", Kind: "image", MimeType: "image/png", StoragePath: "images/one.png", Current: true,
 	}}}, config.Config{}, nil)
 	if len(got) != 1 || len(got[0].Parts) != 0 || got[0].Content != messages[0].Content {

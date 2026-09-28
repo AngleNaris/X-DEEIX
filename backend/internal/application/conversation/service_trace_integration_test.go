@@ -166,7 +166,7 @@ func TestScrubCredentialAttemptsRewritesPersistedTraceEvents(t *testing.T) {
 	recorder.appendToolSection(
 		"credential attempt "+secret,
 		"credential attempt "+ref,
-		map[string]interface{}{"secret": secret, "ref": ref},
+		&tracePayload{ToolCalls: []traceToolCall{{InputDetail: secret, OutputDetail: ref}}},
 		messageTraceStatusCompleted,
 	)
 	recorder.scrubCredentialAttempts(context.Background(), []credentialWrite{{

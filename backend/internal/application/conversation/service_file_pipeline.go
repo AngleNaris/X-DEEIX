@@ -161,7 +161,7 @@ func (s *Service) resolveAttachments(
 				ProcessingErrorMessage: fileItem.ProcessingErrorMessage,
 				ExtractStatus:          fileItem.ExtractStatus,
 				EmbedStatus:            fileItem.EmbedStatus,
-				RAGOptOut:              fileItem.RAGOptOut,
+				RagOptOut:              fileItem.RagOptOut,
 				ChunkCount:             fileItem.ChunkCount,
 				FileUpdatedAt:          fileItem.UpdatedAt,
 			})
@@ -240,7 +240,7 @@ func (s *Service) resolveConversationFileContext(
 			ProcessingErrorMessage: fileItem.ProcessingErrorMessage,
 			ExtractStatus:          fileItem.ExtractStatus,
 			EmbedStatus:            fileItem.EmbedStatus,
-			RAGOptOut:              fileItem.RAGOptOut,
+			RagOptOut:              fileItem.RagOptOut,
 			ChunkCount:             fileItem.ChunkCount,
 			FileUpdatedAt:          fileItem.UpdatedAt,
 			Current:                isCurrent,

@@ -15,7 +15,7 @@ import (
 	appcm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/contentmoderation"
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/google/uuid"
@@ -57,23 +57,29 @@ func (s *Service) StreamMediaVideo(ctx context.Context, input MediaVideoInput) (
 	if s.routeResolver == nil || s.llmClient == nil {
 		return nil, ErrModelRouteNotConfigured
 	}
-	ctx = context.WithoutCancel(ctx)
 
 	runID := normalizeRunID(input.ClientRunID)
 	if runID == "" {
 		runID = "run_" + normalizePublicID(uuid.NewString())
 	}
-	existingRuns, err := s.repo.ListConversationRunsByRunIDs(ctx, input.UserID, input.ConversationID, []string{runID})
-	if err != nil {
-		return nil, err
-	}
-	if len(existingRuns) > 0 {
-		return nil, ErrDuplicateMessageGenerationRun
-	}
 	startedAt := time.Now()
 	conversation, err := s.repo.GetConversationByUser(ctx, input.ConversationID, input.UserID)
 	if err != nil {
 		return nil, ErrConversationNotFound
+	}
+
+	// A durable unique claim closes the check-then-insert race across processes.
+	if err := s.claimConversationRun(ctx, &model.Run{
+		RunID: runID, RequestID: strings.TrimSpace(input.RequestID), UserID: input.UserID,
+		ConversationID: input.ConversationID, TaskType: string(input.TaskType),
+		RequestedModelName: strings.TrimSpace(input.PlatformModelName), Status: "error", StartedAt: startedAt,
+	}); err != nil {
+		return nil, err
+	}
+	cancelCtx, cancel := context.WithCancel(ctx)
+	ctx = cancelCtx
+	if err := s.generationStreams.register(ctx, runID, input.UserID, conversation.PublicID, cancel); err != nil {
+		return nil, err
 	}
 
 	normalizedBranchReason := normalizeBranchReason(input.BranchReason)
@@ -119,19 +125,19 @@ func (s *Service) StreamMediaVideo(ctx context.Context, input MediaVideoInput) (
 		ConversationID:    input.ConversationID,
 		RequestID:         strings.TrimSpace(input.RequestID),
 	})
- 	if err != nil {
- 		return nil, ErrModelRouteNotConfigured
- 	}
- 	if taskType == MediaVideoTaskExtension && isVideoExtensionDisabledByCapabilities(route.ModelCapabilitiesJSON) {
- 		// 前端 use-chat-model-options 会按 mediaTasks.video_extension.enabled=false 隐藏入口；服务端同样拦截显式禁用的直接 API 调用。缺省（无该字段）保持放行。
- 		return nil, ErrMediaVideoInputInvalid
- 	}
- 	if !llm.IsVideoGenerationAdapter(route.Protocol) {
- 		return nil, ErrMediaRouteProtocolMismatch
- 	}
- 	if taskType == MediaVideoTaskExtension && llm.NormalizeAdapter(route.Protocol) != llm.AdapterXAIVideoExtensions {
- 		return nil, ErrMediaRouteProtocolMismatch
- 	}
+	if err != nil {
+		return nil, ErrModelRouteNotConfigured
+	}
+	if taskType == MediaVideoTaskExtension && isVideoExtensionDisabledByCapabilities(route.ModelCapabilitiesJSON) {
+		// 前端 use-chat-model-options 会按 mediaTasks.video_extension.enabled=false 隐藏入口；服务端同样拦截显式禁用的直接 API 调用。缺省（无该字段）保持放行。
+		return nil, ErrMediaVideoInputInvalid
+	}
+	if !llm.IsVideoGenerationAdapter(route.Protocol) {
+		return nil, ErrMediaRouteProtocolMismatch
+	}
+	if taskType == MediaVideoTaskExtension && llm.NormalizeAdapter(route.Protocol) != llm.AdapterXAIVideoExtensions {
+		return nil, ErrMediaRouteProtocolMismatch
+	}
 	videoEndpoint := llm.DefaultEndpointForAdapter(route.Protocol)
 	if strings.TrimSpace(conversation.Model) != strings.TrimSpace(route.PlatformModelName) {
 		conversation.Model = strings.TrimSpace(route.PlatformModelName)
@@ -218,9 +224,6 @@ func (s *Service) StreamMediaVideo(ctx context.Context, input MediaVideoInput) (
 			)
 		}
 	}()
-	cancelCtx, cancel := context.WithCancel(ctx)
-	ctx = cancelCtx
-	s.generationStreams.register(ctx, runID, input.UserID, cancel)
 
 	assistantMessage = &model.Message{
 		ConversationID: input.ConversationID,
@@ -831,25 +834,26 @@ func videoAttachmentsFromFiles(files []model.FileObject, durations []int64) []At
 	}
 	return items
 }
- 
- // isVideoExtensionDisabledByCapabilities 仅在 capabilitiesJSON 显式声明 mediaTasks.video_extension.enabled=false 时返回 true。
- // 无该字段、解析失败或 enabled 非 false 一律放行，避免误伤历史绑定。
- func isVideoExtensionDisabledByCapabilities(raw string) bool {
- 	trimmed := strings.TrimSpace(raw)
- 	if trimmed == "" {
- 		return false
- 	}
- 	var payload struct {
- 		MediaTasks map[string]struct {
- 			Enabled *bool `json:"enabled"`
- 		} `json:"mediaTasks"`
- 	}
- 	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
- 		return false
- 	}
- 	task, ok := payload.MediaTasks["video_extension"]
- 	if !ok || task.Enabled == nil {
- 		return false
- 	}
- 	return !*task.Enabled
- }
+
+// isVideoExtensionDisabledByCapabilities 仅在 capabilitiesJSON 显式声明 mediaTasks.video_extension.enabled=false 时返回 true。
+// 无该字段、解析失败或 enabled 非 false 一律放行，避免误伤历史绑定。
+func isVideoExtensionDisabledByCapabilities(raw string) bool {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return false
+	}
+	var payload struct {
+		MediaTasks map[string]struct {
+			Enabled *bool `json:"enabled"`
+		} `json:"mediaTasks"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
+		return false
+	}
+	task, ok := payload.MediaTasks["video_extension"]
+	if !ok || task.Enabled == nil {
+		return false
+	}
+	return !*task.Enabled
+}
+

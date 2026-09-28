@@ -6,8 +6,10 @@ import (
 	"strings"
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
+	appuicomponent "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/uicomponent"
+	domainuicomponent "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/uicomponent"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
 const (
@@ -97,11 +99,14 @@ type systemPromptCapabilities struct {
 
 // resolveMessageSystemPromptInjection 合并平台、模型、项目、角色和本次请求级系统提示词，并按路由能力决定注入方式。
 // vars 为模板变量上下文（{{date}}/{{language}}/{{js:...}} 等），渲染时展开。
-func resolveMessageSystemPromptInjection(cfg config.Config, route *channel.ResolvedRoute, projectPrompt string, rolePrompt string, htmlVisualPrompt bool, vars systemPromptVars) systemPromptInjection {
+func resolveMessageSystemPromptInjection(cfg config.Config, route *channel.ResolvedRoute, projectPrompt string, rolePrompt string, htmlVisualPrompt bool, vars systemPromptVars, components ...[]domainuicomponent.Component) systemPromptInjection {
 	if route == nil {
 		return systemPromptInjection{}
 	}
-	content := buildResolvedMessageSystemPrompt(cfg.DefaultSystemPrompt, route.ModelSystemPrompt, projectPrompt, rolePrompt, htmlVisualPrompt, vars)
+	if !cfg.UIComponentsEnabled {
+		components = nil
+	}
+	content := buildResolvedMessageSystemPrompt(cfg.DefaultSystemPrompt, route.ModelSystemPrompt, projectPrompt, rolePrompt, htmlVisualPrompt, vars, components...)
 	if content == "" {
 		return systemPromptInjection{}
 	}
@@ -113,7 +118,7 @@ func resolveMessageSystemPromptInjection(cfg config.Config, route *channel.Resol
 
 // buildResolvedMessageSystemPrompt 把项目/角色指令放在全局/模型之后、请求级输出格式之前，保持优先级稳定。
 // 四层用户可编辑文本均先做模板变量展开（platform/model/project/role）。
-func buildResolvedMessageSystemPrompt(globalPrompt string, modelPrompt string, projectPrompt string, rolePrompt string, htmlVisualPrompt bool, vars systemPromptVars) string {
+func buildResolvedMessageSystemPrompt(globalPrompt string, modelPrompt string, projectPrompt string, rolePrompt string, htmlVisualPrompt bool, vars systemPromptVars, components ...[]domainuicomponent.Component) string {
 	layers := []systemPromptLayer{
 		{tag: "platform", content: expandSystemPromptVars(globalPrompt, vars)},
 		{tag: "model", content: expandSystemPromptVars(modelPrompt, vars)},
@@ -136,6 +141,11 @@ func buildResolvedMessageSystemPrompt(globalPrompt string, modelPrompt string, p
 			scope:   "request",
 			content: buildHTMLVisualPromptInstruction(),
 		})
+	}
+	for _, catalog := range components {
+		if len(catalog) > 0 {
+			layers = append(layers, systemPromptLayer{tag: "ui-components", scope: "request", content: appuicomponent.CatalogPrompt(catalog)})
+		}
 	}
 	return buildSystemPromptLayers(layers)
 }
@@ -362,3 +372,4 @@ func formatInlineSystemPrompt(prompt string, userContent string) string {
 	}
 	return "<system_instructions>\n" + prompt + "\n</system_instructions>\n\n<user_message>\n" + userContent + "\n</user_message>"
 }
+

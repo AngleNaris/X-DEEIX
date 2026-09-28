@@ -12,7 +12,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
 	domainagentgroup "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/agentgroup"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/google/uuid"
@@ -86,6 +86,15 @@ func (s *Service) executeAgentGroupRun(
 	}
 	if existing != nil {
 		return nil, ErrDuplicateMessageGenerationRun
+	}
+
+	// Claim the stream before creating messages or run state; rejected duplicates must not write.
+	if input.Cancelable {
+		cancelCtx, cancel := context.WithCancel(ctx)
+		ctx = cancelCtx
+		if err := s.generationStreams.register(ctx, runID, input.UserID, conversation.PublicID, cancel); err != nil {
+			return nil, err
+		}
 	}
 
 	// 冻结配置快照（成员覆盖 > 角色默认 > 平台默认；不保存凭证）。
@@ -171,11 +180,11 @@ func (s *Service) executeAgentGroupRun(
 		return nil, ErrAgentGroupRunInProgress
 	}
 	s.RecordAudit(ctx, AuditInput{
-		UserID:     input.UserID,
-		RequestID:  input.RequestID,
-		Action:     "create_agent_group_run",
-		Resource:   "agent_group_run",
-		ResourceID: run.PublicID,
+		ActorUserID: input.UserID,
+		RequestID:   input.RequestID,
+		Action:      "create_agent_group_run",
+		Resource:    "agent_group_run",
+		ResourceID:  run.PublicID,
 		Detail: map[string]interface{}{
 			"conversation_id": input.ConversationID,
 			"group_public_id": run.GroupPublicID,
@@ -184,13 +193,6 @@ func (s *Service) executeAgentGroupRun(
 			"status":          run.Status,
 		},
 	})
-
-	// Cancelable 时注册取消。
-	if input.Cancelable {
-		cancelCtx, cancel := context.WithCancel(ctx)
-		ctx = cancelCtx
-		s.generationStreams.register(ctx, runID, input.UserID, cancel)
-	}
 
 	// CAS pending → running。
 	running := domainagentgroup.RunStatusRunning
@@ -1016,7 +1018,7 @@ func (st *agentGroupRunState) completeAgentGroupRun(ctx context.Context) error {
 	if !st.credentialAttempted {
 		s.persistInitialConversationFallbackTitle(ctx, *st.conversation, *st.userMessage)
 		metadataResult := st.completedResult(ctx)
-		s.scheduleConversationMetadataAfterBilling(SendMessageBillingInput{
+		s.scheduleConversationMetadataAfterBilling(ctx, SendMessageBillingInput{
 			UserID:         st.input.UserID,
 			ConversationID: st.input.ConversationID,
 			Conversation:   st.conversation,
@@ -1028,11 +1030,11 @@ func (st *agentGroupRunState) completeAgentGroupRun(ctx context.Context) error {
 	// 4. 完成事件。
 	st.emitAgentGroupRunCompleted(ctx)
 	s.RecordAudit(ctx, AuditInput{
-		UserID:     st.input.UserID,
-		RequestID:  st.input.RequestID,
-		Action:     "complete_agent_group_run",
-		Resource:   "agent_group_run",
-		ResourceID: st.run.PublicID,
+		ActorUserID: st.input.UserID,
+		RequestID:   st.input.RequestID,
+		Action:      "complete_agent_group_run",
+		Resource:    "agent_group_run",
+		ResourceID:  st.run.PublicID,
 		Detail: map[string]interface{}{
 			"conversation_id":   st.input.ConversationID,
 			"group_public_id":   st.run.GroupPublicID,
@@ -1682,3 +1684,4 @@ func agentGroupThinkToolPatch(output *AgentTurnOutput) domainagentgroup.AttemptP
 	}
 	return patch
 }
+

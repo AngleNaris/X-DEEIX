@@ -11,8 +11,8 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/objectstore"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/objectstore"
 	"github.com/google/uuid"
 )
 
@@ -532,24 +532,23 @@ func (s *Service) delegateUnsupportedMediaGroup(
 		return s.failMultimodalDelegation(ctx, input, result, row, route.PlatformModelName, len(group.AuditFiles), fmt.Errorf("model %s: %w", route.PlatformModelName, err))
 	}
 	s.routeResolver.MarkRouteSuccess(ctx, route)
-	if err = s.recordBasicServiceUsage(
-		ctx,
-		authorization,
-		input.UserID,
-		input.ConversationID,
-		"multimodal",
-		"多模态分析",
-		route.PlatformModelName,
-		route.BindingCode,
-		route.Protocol,
-		route.UpstreamName,
-		route.UpstreamModel,
-		"5m",
-		output.Usage,
-		generateInput.Messages,
-		analysis,
-		time.Since(startedAt).Milliseconds(),
-	); err != nil {
+	if err = s.recordBasicServiceUsage(ctx, basicServiceUsageInput{
+		Authorization:     authorization,
+		UserID:            input.UserID,
+		ConversationID:    input.ConversationID,
+		ServiceCode:       "multimodal",
+		ServiceName:       "多模态分析",
+		PlatformModelName: route.PlatformModelName,
+		RoutedBindingCode: route.BindingCode,
+		ProviderProtocol:  route.Protocol,
+		UpstreamName:      route.UpstreamName,
+		UpstreamModelName: route.UpstreamModel,
+		CacheTimeout:      "5m",
+		Usage:             output.Usage,
+		FallbackMessages:  generateInput.Messages,
+		FallbackOutput:    analysis,
+		LatencyMS:         time.Since(startedAt).Milliseconds(),
+	}); err != nil {
 		return s.failMultimodalDelegation(ctx, input, result, row, route.PlatformModelName, len(group.AuditFiles), fmt.Errorf("settle usage: %w", err))
 	}
 
@@ -568,13 +567,13 @@ func (s *Service) delegateUnsupportedMediaGroup(
 		input.TraceRecorder.appendProcessSection(
 			fmt.Sprintf("已通过 %s 分析 %d 个媒体附件", route.PlatformModelName, len(group.AuditFiles)),
 			formatTraceStep("多模态分析", "不支持对应媒体输入的主模型已接收系统多模态模型的分析结果，并将继续执行原始任务。"),
-			map[string]interface{}{
-				"model":      route.PlatformModelName,
-				"file_count": len(group.AuditFiles),
-				"file_ids":   multimodalAuditFileIDs(group.AuditFiles),
-				processTracePayloadStage: map[string]interface{}{
-					"kind":   "system_multimodal",
-					"status": messageTraceStatusCompleted,
+			&tracePayload{
+				Model:     route.PlatformModelName,
+				FileCount: len(group.AuditFiles),
+				FileIDs:   multimodalAuditFileIDs(group.AuditFiles),
+				TraceStage: &traceStage{
+					Kind:   "system_multimodal",
+					Status: messageTraceStatusCompleted,
 				},
 			},
 			messageTraceStatusCompleted,
@@ -965,3 +964,4 @@ func withoutHandledAttachments(items []AttachmentInput, handled map[string]struc
 	}
 	return result
 }
+

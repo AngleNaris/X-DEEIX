@@ -56,6 +56,7 @@ type ConversationProject struct {
 	Name                    string
 	Description             string
 	SystemPrompt            string
+	DefaultModel            string
 	MCPDefaultMode          string
 	DefaultMCPToolIDs       []uint
 	DefaultSkillIDs         []uint
@@ -73,6 +74,7 @@ type ConversationProjectPatch struct {
 	Name                    *string
 	Description             *string
 	SystemPrompt            *string
+	DefaultModel            *string
 	MCPDefaultMode          *string
 	DefaultMCPToolIDs       *[]uint
 	DefaultSkillIDs         *[]uint
@@ -148,6 +150,7 @@ type ConversationShare struct {
 
 // MessageTraceBlock 表示单个消息轨迹块。
 type MessageTraceBlock struct {
+	StartedAt       time.Time
 	Title           string
 	Summary         string
 	ContentMarkdown string
@@ -372,11 +375,13 @@ type FileObjectProcessing struct {
 	DetectedMIME                string
 	FileCategory                string
 	ProcessingStatus            string
+	ProcessingReady             bool
 	ExtractStatus               string
 	ExtractEngine               string
 	ExtractStoragePath          string
 	ExtractChars                int
 	ExtractPages                int
+	PageCount                   int
 	PreviewText                 string
 	OCRUsed                     bool
 	RAGReady                    bool
@@ -387,6 +392,7 @@ type FileObjectProcessing struct {
 	PayloadJSON                 string
 	StartedAt                   *time.Time
 	CompletedAt                 *time.Time
+	ExtractedAt                 *time.Time
 	CreatedAt                   time.Time
 	UpdatedAt                   time.Time
 }
@@ -464,6 +470,12 @@ type Run struct {
 	EndedAt                  *time.Time
 	CreatedAt                time.Time
 	UpdatedAt                time.Time
+}
+
+// RunStatus 表示用于状态同步的最小运行快照。
+type RunStatus struct {
+	RunID  string
+	Status string
 }
 
 // MessageTrace 表示消息处理轨迹。
@@ -545,12 +557,32 @@ type EventLog struct {
 	ToolName          string
 	LatencyMS         int64
 	InputJSON         string
+	InputSizeBytes    int64
+	InputOmitted      bool
 	OutputJSON        string
+	OutputSizeBytes   int64
+	OutputOmitted     bool
 	ErrorJSON         string
+	ErrorSizeBytes    int64
+	ErrorOmitted      bool
 	StartedAt         time.Time
 	EndedAt           *time.Time
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+}
+
+// ToolCallDetail 表示当前用户可读取的工具调用结果详情。
+type ToolCallDetail struct {
+	RunID           string
+	ToolCallID      string
+	ToolName        string
+	Status          string
+	OutputJSON      string
+	OutputSizeBytes int64
+	OutputOmitted   bool
+	ErrorJSON       string
+	ErrorSizeBytes  int64
+	ErrorOmitted    bool
 }
 
 // ToolCall 表示工具调用记录。

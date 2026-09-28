@@ -25,6 +25,8 @@ type ConversationRepository interface {
 	SharedFileCloneRepository
 	FileEmbeddingArtifactsRepository
 	ConversationSettingsRepository
+	// 平台 write_file 直接调用内容替换，不扩大到整个处理流水线接口。
+	ReplaceFileObjectContent(ctx context.Context, userID uint, fileID string, storagePath string, sha256 string, sizeBytes int64) (ReplaceFileObjectContentResult, error)
 	// 文件处理状态只在读取附件状态与复制分享文件时用到这两项，不嵌入处理流水线的完整仓储接口。
 	GetFileObjectProcessingByObjectID(ctx context.Context, fileObjID uint) (*domainconversation.FileObjectProcessing, error)
 	CloneFileObjectProcessingState(ctx context.Context, sourceFileObjID uint, targetFileObjID uint, userID uint) error

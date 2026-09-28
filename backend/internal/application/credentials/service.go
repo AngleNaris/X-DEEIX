@@ -13,13 +13,14 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/conv"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/secretbox"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/google/uuid"
 )
 
 // 错误定义。
 var (
-	ErrCredentialNotFound = errors.New("credential not found")
-	ErrNameConflict       = errors.New("credential name already exists")
+	ErrCredentialNotFound = apperr.New("credential.not_found", "credential not found")
+	ErrNameConflict       = apperr.New("credential.name_conflict", "credential name already exists")
 )
 
 // 长度限制。
@@ -107,28 +108,28 @@ func toView(item *domaincredentials.Credential) View {
 func (s *Service) CreateCredential(ctx context.Context, userID uint, input UpsertInput) (*View, error) {
 	name := strings.TrimSpace(input.Name)
 	if name == "" {
-		return nil, errors.New("credential name is required")
+		return nil, apperr.New("credential.name_required", "credential name is required")
 	}
 	if len([]rune(name)) > MaxNameLen {
-		return nil, errors.New("credential name too long")
+		return nil, apperr.New("credential.name_too_long", "credential name too long")
 	}
 	credentialType := strings.TrimSpace(input.Type)
 	if credentialType == "" || !domaincredentials.ValidType(credentialType) {
-		return nil, errors.New("credential type must be one of: ssh, api_key, generic")
+		return nil, apperr.New("credential.invalid_type", "credential type must be one of: ssh, api_key, generic")
 	}
 	value := input.Value
 	if strings.TrimSpace(value) == "" {
-		return nil, errors.New("credential value is required")
+		return nil, apperr.New("credential.value_required", "credential value is required")
 	}
 	if len(value) > 64*1024 {
-		return nil, errors.New("credential value too large")
+		return nil, apperr.New("credential.value_too_large", "credential value too large")
 	}
 	description := strings.TrimSpace(input.Description)
 	if len([]rune(description)) > MaxDescriptionLen {
-		return nil, errors.New("credential description too long")
+		return nil, apperr.New("credential.description_too_long", "credential description too long")
 	}
 	if len(input.Meta) > MaxMetaKeys {
-		return nil, errors.New("credential meta has too many keys")
+		return nil, apperr.New("credential.meta_too_large", "credential meta has too many keys")
 	}
 	secretEnc, err := s.encryptValue(value)
 	if err != nil {
@@ -158,27 +159,27 @@ func (s *Service) UpdateCredential(ctx context.Context, userID uint, publicID st
 	patch := &domaincredentials.CredentialPatch{}
 	if name := strings.TrimSpace(input.Name); name != "" {
 		if len([]rune(name)) > MaxNameLen {
-			return nil, errors.New("credential name too long")
+			return nil, apperr.New("credential.name_too_long", "credential name too long")
 		}
 		patch.Name = &name
 	}
 	if credentialType := strings.TrimSpace(input.Type); credentialType != "" {
 		if !domaincredentials.ValidType(credentialType) {
-			return nil, errors.New("credential type must be one of: ssh, api_key, generic")
+			return nil, apperr.New("credential.invalid_type", "credential type must be one of: ssh, api_key, generic")
 		}
 		patch.Type = &credentialType
 	}
 	description := strings.TrimSpace(input.Description)
 	patch.Description = &description
 	if len([]rune(description)) > MaxDescriptionLen {
-		return nil, errors.New("credential description too long")
+		return nil, apperr.New("credential.description_too_long", "credential description too long")
 	}
 	if len(input.Meta) > MaxMetaKeys {
-		return nil, errors.New("credential meta has too many keys")
+		return nil, apperr.New("credential.meta_too_large", "credential meta has too many keys")
 	}
 	if value := input.Value; strings.TrimSpace(value) != "" {
 		if len(value) > 64*1024 {
-			return nil, errors.New("credential value too large")
+			return nil, apperr.New("credential.value_too_large", "credential value too large")
 		}
 		secretEnc, err := s.encryptValue(value)
 		if err != nil {

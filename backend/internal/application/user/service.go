@@ -3,20 +3,17 @@ package user
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"mime"
+	"net/url"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
+	"unicode"
 
-	appstorage "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/objectstorage"
 	domainbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/billing"
 	domainuser "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/user"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/pagination"
 	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -25,11 +22,10 @@ const passwordHashCost = 12
 
 // Service 封装用户业务能力。
 type Service struct {
+	activityStatsRepo   activityStatsRepository
 	repo                repository.UserRepository
 	avatarContentOpener avatarContentOpener
 	avatarFileValidator avatarFileValidator
-	storeProvider       appstorage.Provider
-	activityStatsRepo   activityStatsRepository
 }
 
 type accountHardDeleteRepository interface {
@@ -44,7 +40,11 @@ type avatarFileValidator interface {
 	ValidateImageFile(ctx context.Context, userID uint, fileID string) error
 }
 
-// CreateUserInput 描述管理员创建普通用户所需的账号与订阅信息。
+const (
+	defaultPageSize = 20
+	maxPageSize     = 1000
+)
+
 type CreateUserInput struct {
 	Username              string
 	Password              string
@@ -59,7 +59,6 @@ type CreateUserInput struct {
 	SubscriptionExpiresAt *time.Time
 }
 
-// AuthEventListInput 描述管理员查询认证事件的筛选与分页条件。
 type AuthEventListInput struct {
 	UserID    uint
 	EventType string
@@ -81,11 +80,6 @@ func (s *Service) SetAvatarContentOpener(opener avatarContentOpener) {
 // SetAvatarFileValidator 注入头像文件校验能力。
 func (s *Service) SetAvatarFileValidator(validator avatarFileValidator) {
 	s.avatarFileValidator = validator
-}
-
-// SetObjectStoreProvider 注入账户删除所需的对象存储。
-func (s *Service) SetObjectStoreProvider(provider appstorage.Provider) {
-	s.storeProvider = provider
 }
 
 // AvatarFileContent 描述用户域读取到的头像源文件内容。
@@ -169,7 +163,7 @@ func (s *Service) OpenAvatarContent(ctx context.Context, publicID string) (*Avat
 
 // ListUsers 分页查询用户列表。
 func (s *Service) ListUsers(ctx context.Context, page int, pageSize int, filter repository.UserListFilter) ([]domainuser.User, int64, error) {
-	offset, limit := pagination.Offset(page, pageSize)
+	offset, limit := normalizePage(page, pageSize)
 	return s.repo.ListUsers(ctx, offset, limit, filter)
 }
 
@@ -194,6 +188,23 @@ func (s *Service) ListLatestSessionActivityByUserIDs(ctx context.Context, userID
 	return s.repo.ListLatestSessionActivityByUserIDs(ctx, userIDs)
 }
 
+func normalizePage(page int, pageSize int) (int, int) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 {
+		pageSize = defaultPageSize
+	}
+	if pageSize > maxPageSize {
+		pageSize = maxPageSize
+	}
+	offset := (page - 1) * pageSize
+	if offset < 0 {
+		offset = 0
+	}
+	return offset, pageSize
+}
+
 // CountSuperAdmins 统计超级管理员数量。
 func (s *Service) CountSuperAdmins(ctx context.Context) (int64, error) {
 	return s.repo.CountSuperAdmins(ctx)
@@ -216,7 +227,18 @@ func (s *Service) ImportUsersWithCredentialsAndBalances(ctx context.Context, rec
 
 // CreateUser 创建普通用户账号。
 func (s *Service) CreateUser(ctx context.Context, input CreateUserInput) (*domainuser.User, error) {
-	normalizedUsername, err := NormalizeUsername(input.Username)
+	username := input.Username
+	password := input.Password
+	avatarURL := input.AvatarURL
+	displayName := input.DisplayName
+	email := input.Email
+	phone := input.Phone
+	timezone := input.Timezone
+	locale := input.Locale
+	billingMode := input.BillingMode
+	subscriptionTier := input.SubscriptionTier
+	subscriptionExpiresAt := input.SubscriptionExpiresAt
+	normalizedUsername, err := NormalizeUsername(username)
 	if err != nil {
 		return nil, err
 	}
@@ -228,7 +250,7 @@ func (s *Service) CreateUser(ctx context.Context, input CreateUserInput) (*domai
 		return nil, err
 	}
 
-	normalizedPassword, err := NormalizePassword(input.Password)
+	normalizedPassword, err := NormalizePassword(password)
 	if err != nil {
 		return nil, err
 	}
@@ -238,15 +260,15 @@ func (s *Service) CreateUser(ctx context.Context, input CreateUserInput) (*domai
 	}
 	now := time.Now()
 
-	normalizedAvatarURL := strings.TrimSpace(input.AvatarURL)
-	if !domainuser.IsValidAvatarURL(normalizedAvatarURL) {
-		return nil, ErrInvalidAvatarURL
+	normalizedAvatarURL := strings.TrimSpace(avatarURL)
+	if err = validateAvatarURL(normalizedAvatarURL); err != nil {
+		return nil, err
 	}
 	if _, ok := domainuser.ParseFileAvatarURL(normalizedAvatarURL); ok {
 		return nil, ErrInvalidAvatarURL
 	}
 
-	normalizedDisplayName := strings.TrimSpace(input.DisplayName)
+	normalizedDisplayName := strings.TrimSpace(displayName)
 	if normalizedDisplayName == "" {
 		normalizedDisplayName = normalizedUsername
 	}
@@ -255,17 +277,17 @@ func (s *Service) CreateUser(ctx context.Context, input CreateUserInput) (*domai
 		return nil, err
 	}
 
-	normalizedEmail, err := NormalizeEmail(input.Email)
+	normalizedEmail, err := NormalizeEmail(email)
 	if err != nil {
 		return nil, err
 	}
 
-	normalizedPhone, err := NormalizePhone(input.Phone)
+	normalizedPhone, err := NormalizePhone(phone)
 	if err != nil {
 		return nil, err
 	}
 
-	normalizedTimezone := strings.TrimSpace(input.Timezone)
+	normalizedTimezone := strings.TrimSpace(timezone)
 	if normalizedTimezone == "" {
 		normalizedTimezone = "Etc/UTC"
 	}
@@ -273,18 +295,18 @@ func (s *Service) CreateUser(ctx context.Context, input CreateUserInput) (*domai
 		return nil, ErrInvalidTimeZone
 	}
 
-	normalizedLocale, err := normalizeLocale(input.Locale)
+	normalizedLocale, err := normalizeLocale(locale)
 	if err != nil {
 		return nil, err
 	}
 
-	normalizedBillingMode := strings.ToLower(strings.TrimSpace(input.BillingMode))
+	normalizedBillingMode := strings.ToLower(strings.TrimSpace(billingMode))
 	var subscriptionPlanID uint
 	var subscriptionPriceID uint
 	var normalizedSubscriptionEndAt *time.Time
 	autoRenew := false
 	if normalizedBillingMode == "period" {
-		normalizedSubscriptionTier := strings.ToLower(strings.TrimSpace(input.SubscriptionTier))
+		normalizedSubscriptionTier := strings.ToLower(strings.TrimSpace(subscriptionTier))
 		if normalizedSubscriptionTier == "" {
 			normalizedSubscriptionTier = defaultFreePlanCode
 		}
@@ -308,10 +330,10 @@ func (s *Service) CreateUser(ctx context.Context, input CreateUserInput) (*domai
 		subscriptionPlanID = plan.ID
 		subscriptionPriceID = price.ID
 		if plan.Code != defaultFreePlanCode {
-			if input.SubscriptionExpiresAt == nil {
+			if subscriptionExpiresAt == nil {
 				return nil, ErrSubscriptionExpiryRequired
 			}
-			expiresAt := input.SubscriptionExpiresAt.UTC()
+			expiresAt := subscriptionExpiresAt.UTC()
 			if !expiresAt.After(time.Now().UTC()) {
 				return nil, ErrInvalidSubscriptionExpiry
 			}
@@ -335,21 +357,14 @@ func (s *Service) CreateUser(ctx context.Context, input CreateUserInput) (*domai
 		Locale:      normalizedLocale,
 	}
 
-	if err = s.repo.CreateWithCredential(ctx, repository.CreateWithCredentialInput{
-		User: item,
-		Credential: domainuser.Credential{
-			PasswordHash:      string(passwordHash),
-			PasswordAlgo:      "bcrypt",
-			PasswordEnabled:   true,
-			PasswordUpdatedAt: &now,
-			PasswordSetAt:     &now,
-			PasswordOrigin:    domainuser.PasswordOriginAdminCreated,
-		},
-		SubscriptionPlanID:  subscriptionPlanID,
-		SubscriptionPriceID: subscriptionPriceID,
-		SubscriptionEndAt:   normalizedSubscriptionEndAt,
-		AutoRenew:           autoRenew,
-	}); err != nil {
+	if err = s.repo.CreateWithCredential(ctx, repository.CreateWithCredentialInput{User: item, Credential: domainuser.Credential{
+		PasswordHash:      string(passwordHash),
+		PasswordAlgo:      "bcrypt",
+		PasswordEnabled:   true,
+		PasswordUpdatedAt: &now,
+		PasswordSetAt:     &now,
+		PasswordOrigin:    domainuser.PasswordOriginAdminCreated,
+	}, SubscriptionPlanID: subscriptionPlanID, SubscriptionPriceID: subscriptionPriceID, SubscriptionEndAt: normalizedSubscriptionEndAt, AutoRenew: autoRenew}); err != nil {
 		return nil, err
 	}
 	return item, nil
@@ -370,8 +385,8 @@ func (s *Service) UpdateFields(ctx context.Context, userID uint, input repositor
 	avatarFileReferenceRequested := false
 	if input.AvatarURL != nil {
 		normalizedAvatarURL := strings.TrimSpace(*input.AvatarURL)
-		if !domainuser.IsValidAvatarURL(normalizedAvatarURL) {
-			return nil, ErrInvalidAvatarURL
+		if err := validateAvatarURL(normalizedAvatarURL); err != nil {
+			return nil, err
 		}
 		if fileID, ok := domainuser.ParseFileAvatarURL(normalizedAvatarURL); ok {
 			avatarFileReferenceRequested = true
@@ -440,63 +455,20 @@ func (s *Service) DeleteAccountHardWithStoragePaths(ctx context.Context, userID 
 
 // DeleteAccountHard 删除用户主记录及主要用户域数据。
 func (s *Service) DeleteAccountHard(ctx context.Context, userID uint) error {
-	storagePaths, err := s.repo.ListDistinctFileStoragePathsByUserID(ctx, userID)
-	if err != nil {
-		return err
-	}
 	if err := s.repo.DeleteAccountHard(ctx, userID); err != nil {
 		if errors.Is(err, repository.ErrNotFound) {
 			return ErrUserNotFound
 		}
 		return err
 	}
-	failedPaths := s.cleanupDeletedAccountFiles(ctx, storagePaths)
-	if len(failedPaths) > 0 {
-		return fmt.Errorf("account deleted but %d storage objects could not be cleaned", len(failedPaths))
-	}
 	return nil
-}
-
-func (s *Service) cleanupDeletedAccountFiles(ctx context.Context, storagePaths []string) []string {
-	if len(storagePaths) == 0 {
-		return nil
-	}
-	if s.storeProvider == nil {
-		return append([]string(nil), storagePaths...)
-	}
-	store, err := s.storeProvider.Open(ctx)
-	if err != nil {
-		return append([]string(nil), storagePaths...)
-	}
-	seen := make(map[string]struct{}, len(storagePaths))
-	failed := make([]string, 0)
-	for _, rawPath := range storagePaths {
-		normalizedPath := strings.TrimSpace(rawPath)
-		if normalizedPath == "" {
-			continue
-		}
-		if _, ok := seen[normalizedPath]; ok {
-			continue
-		}
-		seen[normalizedPath] = struct{}{}
-		if err := store.Delete(ctx, normalizedPath); err != nil {
-			failed = append(failed, normalizedPath)
-		}
-	}
-	sort.Strings(failed)
-	return failed
 }
 
 // ListAuthEvents 查询认证事件列表。
 func (s *Service) ListAuthEvents(ctx context.Context, input AuthEventListInput) ([]domainuser.AuthEvent, int64, error) {
-	offset, limit := pagination.Offset(input.Page, input.PageSize)
-	return s.repo.ListAuthEvents(ctx, repository.AuthEventListInput{
-		UserID:    input.UserID,
-		EventType: strings.TrimSpace(input.EventType),
-		Result:    strings.TrimSpace(input.Result),
-		Offset:    offset,
-		Limit:     limit,
-	})
+	offset, limit := normalizePage(input.Page, input.PageSize)
+
+	return s.repo.ListAuthEvents(ctx, repository.AuthEventListInput{UserID: input.UserID, EventType: strings.TrimSpace(input.EventType), Result: strings.TrimSpace(input.Result), Offset: offset, Limit: limit})
 }
 
 // RecordAuthEvent 写入认证事件。
@@ -506,6 +478,27 @@ func (s *Service) RecordAuthEvent(ctx context.Context, input repository.AuthEven
 
 func normalizePublicID(raw string) string {
 	return strings.ReplaceAll(raw, "-", "")
+}
+
+func validateAvatarURL(raw string) error {
+	if raw == "" || strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "generated:github:") {
+		return nil
+	}
+	if strings.HasPrefix(raw, "file:") {
+		if _, ok := domainuser.ParseFileAvatarURL(raw); !ok {
+			return ErrInvalidAvatarURL
+		}
+		return nil
+	}
+
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ErrInvalidAvatarURL
+	}
+	if (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return ErrInvalidAvatarURL
+	}
+	return nil
 }
 
 func normalizeLocale(raw string) (string, error) {
@@ -521,7 +514,7 @@ func normalizeLocale(raw string) (string, error) {
 	}
 
 	languagePart := strings.ToLower(parts[0])
-	if len(languagePart) < 2 || len(languagePart) > 3 || !textutil.IsASCIIAlpha(languagePart) {
+	if len(languagePart) < 2 || len(languagePart) > 3 || !isAlpha(languagePart) {
 		return "", ErrInvalidLocale
 	}
 
@@ -530,9 +523,18 @@ func normalizeLocale(raw string) (string, error) {
 	}
 
 	regionPart := strings.ToUpper(parts[1])
-	if len(regionPart) != 2 || !textutil.IsASCIIAlpha(regionPart) {
+	if len(regionPart) != 2 || !isAlpha(regionPart) {
 		return "", ErrInvalidLocale
 	}
 
 	return languagePart + "-" + regionPart, nil
+}
+
+func isAlpha(value string) bool {
+	for _, r := range value {
+		if !unicode.IsLetter(r) || r > unicode.MaxASCII {
+			return false
+		}
+	}
+	return true
 }

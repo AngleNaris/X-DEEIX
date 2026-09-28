@@ -2,8 +2,8 @@ package memory
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"strings"
 	"sync"
 	"time"
@@ -27,10 +27,10 @@ type auditWriter interface {
 const maxUserMemoriesPerUser = 200
 
 // ErrMemoryLimitReached 表示当前用户的新增长期记忆已达到上限。
-var ErrMemoryLimitReached = errors.New("memory limit reached")
+var ErrMemoryLimitReached = apperr.New("memory.limit_reached", "memory limit reached")
 
 // ErrInvalidMemoryCategory rejects unknown categories at write boundaries.
-var ErrInvalidMemoryCategory = errors.New("invalid memory category")
+var ErrInvalidMemoryCategory = apperr.New("memory.invalid_category", "invalid memory category")
 
 type userMemoryLock struct {
 	mu   sync.Mutex

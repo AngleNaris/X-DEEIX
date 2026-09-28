@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/objectstore"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/objectstore"
 	"github.com/google/uuid"
 )
 
@@ -239,3 +239,4 @@ func cleanupStaleAttachmentImportLanes(root string, cutoff time.Time, prefix str
 		}
 	}
 }
+

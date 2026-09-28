@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
 // 凭据占位符语法：{{credential: name}}（与 {{script: name}} 变量风格一致）。
@@ -600,3 +600,4 @@ func (s *Service) applyCredentialWritesToUserMessage(
 	message.Content = content
 	return true, nil
 }
+

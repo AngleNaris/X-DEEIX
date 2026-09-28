@@ -4,7 +4,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
 const maxCredentialStreamBufferBytes = 8 * 1024 * 1024
@@ -145,3 +145,4 @@ func flushCredentialBufferedStreamEvents(
 	}
 	return nil
 }
+

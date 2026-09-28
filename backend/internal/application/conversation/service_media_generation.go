@@ -15,7 +15,7 @@ import (
 	appcm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/contentmoderation"
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/google/uuid"
@@ -69,24 +69,30 @@ func (s *Service) StreamMediaImage(ctx context.Context, input MediaImageInput) (
 	if s.routeResolver == nil || s.llmClient == nil {
 		return nil, ErrModelRouteNotConfigured
 	}
-	ctx = context.WithoutCancel(ctx)
 
 	// clientRunID 是媒体任务的幂等键；重复提交不能继续创建 run 和消息。
 	runID := normalizeRunID(input.ClientRunID)
 	if runID == "" {
 		runID = "run_" + normalizePublicID(uuid.NewString())
 	}
-	existingRuns, err := s.repo.ListConversationRunsByRunIDs(ctx, input.UserID, input.ConversationID, []string{runID})
-	if err != nil {
-		return nil, err
-	}
-	if len(existingRuns) > 0 {
-		return nil, ErrDuplicateMessageGenerationRun
-	}
 	startedAt := time.Now()
 	conversation, err := s.repo.GetConversationByUser(ctx, input.ConversationID, input.UserID)
 	if err != nil {
 		return nil, ErrConversationNotFound
+	}
+
+	// Atomically reserve the globally unique run before branch, model or upstream effects.
+	if err := s.claimConversationRun(ctx, &model.Run{
+		RunID: runID, RequestID: strings.TrimSpace(input.RequestID), UserID: input.UserID,
+		ConversationID: input.ConversationID, TaskType: string(input.TaskType),
+		RequestedModelName: strings.TrimSpace(input.PlatformModelName), Status: "error", StartedAt: startedAt,
+	}); err != nil {
+		return nil, err
+	}
+	cancelCtx, cancel := context.WithCancel(ctx)
+	ctx = cancelCtx
+	if err := s.generationStreams.register(ctx, runID, input.UserID, conversation.PublicID, cancel); err != nil {
+		return nil, err
 	}
 
 	normalizedBranchReason := normalizeBranchReason(input.BranchReason)
@@ -239,9 +245,6 @@ func (s *Service) StreamMediaImage(ctx context.Context, input MediaImageInput) (
 			)
 		}
 	}()
-	cancelCtx, cancel := context.WithCancel(ctx)
-	ctx = cancelCtx
-	s.generationStreams.register(ctx, runID, input.UserID, cancel)
 
 	assistantMessage = &model.Message{
 		ConversationID: input.ConversationID,
@@ -1116,3 +1119,4 @@ func attachmentsFromFiles(files []model.FileObject) []AttachmentInput {
 	}
 	return items
 }
+

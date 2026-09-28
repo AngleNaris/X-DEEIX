@@ -13,8 +13,8 @@ import (
 	domainbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/billing"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	domainmemory "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/memory"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/mcp"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/mcp"
 	platformtracing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/observability/tracing"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"go.opentelemetry.io/otel/attribute"
@@ -495,7 +495,7 @@ func (s *Service) ExecuteAgentTurn(ctx context.Context, input AgentTurnInput) (*
 			output.Text = cleanText
 			return nil
 		}
-		usageAccumulator.beginCall(currentInput)
+		usageAccumulator.beginCall(estimateGenerateInputTokens(currentInput))
 		generationCtx, generationSpan := platformtracing.Start(ctx, "conversation.agent_turn.llm.generate",
 			trace.WithAttributes(
 				attribute.Int64("conversation.id", int64(input.ConversationID)),
@@ -737,6 +737,7 @@ func (s *Service) ExecuteAgentTurn(ctx context.Context, input AgentTurnInput) (*
 		usageAccumulator.setObservedUsage(totalUsage)
 	}
 	totalServerSideToolUsage := addServerSideToolUsage(nil, upstreamOutput.ServerSideToolUsage)
+	totalMCPToolUsage := mergeMCPToolUsage(nil, imageProcessing.MCPToolUsage)
 	remainingToolCalls := s.resolveMaxToolCallsPerRun()
 	windowBaseCalls := 0
 	llmCallCount := llmRequestCount - windowBaseCalls
@@ -805,6 +806,7 @@ func (s *Service) ExecuteAgentTurn(ctx context.Context, input AgentTurnInput) (*
 				toolSpan.SetStatus(codes.Error, "tool execution failed")
 			}
 			toolSpan.End()
+			totalMCPToolUsage = mergeMCPToolUsage(totalMCPToolUsage, toolResult.MCPToolUsage)
 			toolCallRows = append(toolCallRows, toolResult.Rows...)
 			remainingToolCalls = max(remainingToolCalls-countBudgetedToolCalls(toolResult.Rows), 0)
 			credentialAttempted := len(toolResult.CredentialAttempts) > 0
@@ -835,6 +837,7 @@ func (s *Service) ExecuteAgentTurn(ctx context.Context, input AgentTurnInput) (*
 						ToolCallLimit:     &attachmentToolCallLimit,
 						SkipPersistence:   !input.PersistToolCalls,
 					})
+					totalMCPToolUsage = mergeMCPToolUsage(totalMCPToolUsage, activatedProcessing.MCPToolUsage)
 					if processingErr != nil {
 						return nil, processingErr
 					}
@@ -1067,6 +1070,7 @@ func (s *Service) ExecuteAgentTurn(ctx context.Context, input AgentTurnInput) (*
 		CacheWrite5mTokens:  totalUsage.CacheWrite5mTokens,
 		CacheWrite1hTokens:  totalUsage.CacheWrite1hTokens,
 		ServerSideToolUsage: totalServerSideToolUsage,
+		MCPToolUsage:        totalMCPToolUsage,
 		LatencyMS:           time.Since(startedAt).Milliseconds(),
 		StartedAt:           startedAt,
 	}
@@ -1300,3 +1304,4 @@ func (s *Service) executeAgentTurnToolCalls(ctx context.Context, turn AgentTurnI
 	}
 	return result
 }
+

@@ -13,8 +13,8 @@ import (
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	domainmcp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/mcp"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/objectstore"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/objectstore"
 )
 
 const (
@@ -50,6 +50,7 @@ type imageAttachmentProcessingInput struct {
 }
 
 type imageAttachmentProcessingResult struct {
+	MCPToolUsage          []MCPToolUsageItem
 	Routed                bool
 	Analyses              []imageAttachmentAnalysis
 	Rows                  []domainconversation.ToolCall
@@ -210,6 +211,8 @@ func (s *Service) processImageAttachments(
 			s.persistImageAttachmentToolRow(ctx, &row, &result, input.SkipPersistence)
 			return result, fmt.Errorf("%w: %v", ErrImageAttachmentProcessingFailed, executeErr)
 		}
+		// A successful upstream call is billable even when its text cannot be parsed.
+		result.MCPToolUsage = mergeMCPToolUsage(result.MCPToolUsage, []MCPToolUsageItem{{ServerID: processor.serverID, ServerName: processor.serverName, ToolName: processor.toolName, PriceNanousd: processor.priceNanousd, CallCount: 1}})
 		row.OutputJSON = sanitizeOpaqueToolOutput(output)
 		if row.OutputJSON == "" {
 			row.OutputJSON = "{}"
@@ -245,14 +248,14 @@ func (s *Service) processImageAttachments(
 		input.TraceRecorder.appendProcessSection(
 			fmt.Sprintf("已通过 %s 处理 %d 个%s", processor.displayName, len(result.Analyses), attachmentLabel),
 			formatTraceStep(attachmentLabel, fmt.Sprintf("%s已交由 %s 处理，主模型仅接收处理结果。", attachmentLabel, processor.displayName)),
-			map[string]interface{}{
-				"tool_id":    processor.toolID,
-				"tool_name":  processor.toolName,
-				"file_names": fileNames,
-				processTracePayloadStage: map[string]interface{}{
-					"kind":       "mcp_attachment_processor",
-					"status":     messageTraceStatusCompleted,
-					"file_count": len(result.Analyses),
+			&tracePayload{
+				ToolID:    processor.toolID,
+				ToolName:  processor.toolName,
+				FileNames: fileNames,
+				TraceStage: &traceStage{
+					Kind:      "mcp_attachment_processor",
+					Status:    messageTraceStatusCompleted,
+					FileCount: len(result.Analyses),
 				},
 			},
 			messageTraceStatusCompleted,
@@ -481,3 +484,4 @@ func withoutCurrentImageAttachments(plan conversationFileContextPlan) conversati
 	plan.FullAttachments = filter(plan.FullAttachments)
 	return plan
 }
+

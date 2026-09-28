@@ -153,6 +153,9 @@ func (s *Service) exportFilePath(input executeAssistantToolCallsInput, path stri
 // 返回 markdown 下载链接（注入工具结果文本，模型可见并可在回答中引用）。
 // 失败不阻断工具循环（记日志降级）：导出是增强能力，工具结果仍按原路径回喂模型。
 func (s *Service) exportToolArtifacts(ctx context.Context, input executeAssistantToolCallsInput, outputJSON string) string {
+	if input.Ephemeral {
+		return ""
+	}
 	items := parseToolExportItems(outputJSON)
 	if len(items) == 0 {
 		return ""

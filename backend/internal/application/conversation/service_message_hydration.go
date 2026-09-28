@@ -8,6 +8,7 @@ import (
 
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/filelink"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/toolresult"
 )
 
 // hydrateMessages 是消息读取路径的统一富化入口：反馈计数 + 媒体直连地址。
@@ -187,6 +188,7 @@ func buildMessageProcessTraceDTO(
 			Stage:           row.Stage,
 			RoundID:         row.RoundID,
 			ParentEventID:   row.ParentEventID,
+			StartedAt:       row.StartedAt,
 			UpdatedAt:       row.UpdatedAt,
 			PayloadJSON:     row.PayloadJSON,
 		}
@@ -267,36 +269,35 @@ func reconcilePlatformApprovalTrace(
 	if len(terminalOutputs) == 0 || strings.TrimSpace(payloadJSON) == "" {
 		return summary, markdown, payloadJSON
 	}
-	var payload map[string]interface{}
+	var payload tracePayload
 	if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
 		return summary, markdown, payloadJSON
 	}
-	toolCalls := normalizeTraceToolCalls(payload["tool_calls"])
 	changed := false
-	for _, call := range toolCalls {
-		output, ok := terminalOutputs[traceToolCallID(call)]
+	for index := range payload.ToolCalls {
+		call := &payload.ToolCalls[index]
+		output, ok := terminalOutputs[strings.TrimSpace(call.ToolCallID)]
 		if !ok {
 			continue
 		}
-		detail, truncated := toolTraceDetail(output, toolTraceDetailMaxChars)
-		call["output_preview"] = toolOutputPreview(output)
-		call["output_detail"] = detail
-		call["output_size"] = len(output)
-		call["output_truncated"] = truncated
+		call.OutputPresentation = toolresult.BuildPresentation(output)
+		call.OutputPreview = toolOutputPreview(output, call.OutputPresentation)
+		call.OutputDetail = toolTraceDetail(output, toolTraceDetailMaxChars)
+		call.OutputSize = len(output)
+		call.OutputTruncated = len([]rune(strings.TrimSpace(output))) > toolTraceDetailMaxChars
 		changed = true
 	}
 	if !changed {
 		return summary, markdown, payloadJSON
 	}
-	payload["tool_calls"] = toolCalls
 	raw, err := json.Marshal(payload)
 	if err != nil || len(raw) > maxTracePayloadBytes {
 		return summary, markdown, payloadJSON
 	}
-	if value := summarizeToolTracePayload(payload); value != "" {
+	if value := summarizeToolTracePayload(&payload); value != "" {
 		summary = value
 	}
-	if value := renderToolTraceMarkdownFromPayload(payload); value != "" {
+	if value := renderToolTraceMarkdownFromPayload(&payload); value != "" {
 		markdown = value
 	}
 	return summary, markdown, string(raw)

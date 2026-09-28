@@ -120,11 +120,21 @@ func (s *Service) RetryAgentGroupRunStep(
 		return st.failedResult(), blockErr
 	}
 
-	// Cancelable 时注册取消（与 executeAgentGroupRun 一致）。
+	// Retry owns a separate lease; the original run keeps its replay retention.
+	// Keep the persisted run ID unchanged for history, checkpoints and billing.
 	if input.Cancelable {
-		cancelCtx, cancel := context.WithCancel(ctx)
+		generationCtx, releaseLifecycle, ok := s.AcquireMessageGenerationLifecycle(context.WithoutCancel(ctx))
+		if !ok {
+			return nil, context.Canceled
+		}
+		defer releaseLifecycle()
+		cancelCtx, cancel := context.WithCancel(generationCtx)
 		ctx = cancelCtx
-		s.generationStreams.register(ctx, st.runID, input.UserID, cancel)
+		streamID := agentGroupRetryStreamID(st.runID, retryRequestID)
+		if err := s.generationStreams.register(ctx, streamID, input.UserID, st.conversation.PublicID, cancel); err != nil {
+			return nil, err
+		}
+		defer s.FinishMessageGeneration(ctx, streamID)
 	}
 
 	// 重试启动三段写收敛为单事务（run CAS + 步骤回 running + 插入 Attempt N+1），
@@ -690,7 +700,7 @@ func (st *agentGroupRunState) updateTopLevelRun(ctx context.Context, retErr erro
 	// 断连场景 ctx 已取消：审计行用独立上下文落库（失败仅记日志，不影响运行终态）。
 	persistCtx, cancelPersist := finalizePersistContext(ctx)
 	defer cancelPersist()
-	if _, err := st.service.repo.UpdateConversationRun(persistCtx, st.input.UserID, st.input.ConversationID, st.runID, patch); err != nil {
+	if _, err := st.service.repo.PatchConversationRun(persistCtx, st.input.UserID, st.input.ConversationID, st.runID, patch); err != nil {
 		st.service.logger.Error("update_conversation_run_failed",
 			zap.String("trace_id", traceid.FromContext(ctx)),
 			zap.String("run_id", st.runID),
@@ -715,7 +725,34 @@ func (s *Service) CancelAgentGroupRun(ctx context.Context, userID uint, runPubli
 	if run.Status != domainagentgroup.RunStatusRunning {
 		return false, ErrAgentGroupRunNotCancelable
 	}
-	return s.CancelMessageGeneration(ctx, userID, run.ClientRunID), nil
+	if s.CancelMessageGeneration(ctx, userID, run.ClientRunID) {
+		return true, nil
+	}
+	// Retry leases are execution-scoped. Resolve only attempts of this owned run,
+	// including the initiating attempt when execution has advanced to another step.
+	steps, err := s.agentGroupRunStore.ListStepsByRun(ctx, run.ID)
+	if err != nil {
+		return false, err
+	}
+	stepIDs := make([]uint, 0, len(steps))
+	for _, step := range steps {
+		stepIDs = append(stepIDs, step.ID)
+	}
+	attemptsByStep, err := s.agentGroupRunStore.ListAttemptsBySteps(ctx, stepIDs)
+	if err != nil {
+		return false, err
+	}
+	for _, attempts := range attemptsByStep {
+		for _, attempt := range attempts {
+			if strings.TrimSpace(attempt.RetryRequestID) == "" {
+				continue
+			}
+			if s.CancelMessageGeneration(ctx, userID, agentGroupRetryStreamID(run.ClientRunID, attempt.RetryRequestID)) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // AbandonAgentGroupRun 放弃暂停/阻塞的群组运行（仅 paused_retryable / blocked 可放弃）。

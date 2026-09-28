@@ -14,7 +14,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/requestmeta"
 )
 
-func TestDeleteAccountDoesNotWritePostDeleteAuthEvents(t *testing.T) {
+func TestDeleteAccountWritesAuditEventsAndCleansStorage(t *testing.T) {
 	now := time.Now()
 	expiresAt := now.Add(time.Hour)
 	code := "123456"
@@ -54,8 +54,8 @@ func TestDeleteAccountDoesNotWritePostDeleteAuthEvents(t *testing.T) {
 	if !repo.deleted || repo.deletedUserID != 7 {
 		t.Fatalf("account deletion state = deleted:%v user:%d", repo.deleted, repo.deletedUserID)
 	}
-	if repo.authEventCount != 0 {
-		t.Fatalf("post-delete auth event count = %d, want 0", repo.authEventCount)
+	if repo.authEventCount != 2 {
+		t.Fatalf("auth event count = %d, want 2", repo.authEventCount)
 	}
 	if len(store.deleted) != 2 || store.deleted[0] != "object-a" || store.deleted[1] != "object-b" {
 		t.Fatalf("deleted object paths = %v", store.deleted)
@@ -70,9 +70,7 @@ type deleteAccountRepo struct {
 	authEventCount int
 }
 
-func (r *deleteAccountRepo) DeleteAccountHardWithStoragePaths(_ context.Context, userID uint) ([]string, error) {
-	r.deleted = true
-	r.deletedUserID = userID
+func (r *deleteAccountRepo) ListDistinctFileStoragePathsByUserID(_ context.Context, _ uint) ([]string, error) {
 	return append([]string(nil), r.storagePaths...), nil
 }
 
@@ -82,7 +80,7 @@ func (r *deleteAccountRepo) DeleteAccountHard(_ context.Context, userID uint) er
 	return nil
 }
 
-func (r *deleteAccountRepo) RecordAuthEvent(context.Context, uint, string, string, string, string, string, string, string) error {
+func (r *deleteAccountRepo) RecordAuthEvent(context.Context, repository.AuthEventInput) error {
 	r.authEventCount++
 	return nil
 }

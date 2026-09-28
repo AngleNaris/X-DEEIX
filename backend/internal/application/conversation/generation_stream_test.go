@@ -92,7 +92,7 @@ func TestGenerationStreamRegistryReplayAndTerminal(t *testing.T) {
 		t.Fatalf("unexpected seq values: first=%v second=%v", first["seq"], second["seq"])
 	}
 
-	replay, events, unsubscribe, ok := registry.subscribe(ctx, 7, runID, 0, true)
+	replay, events, unsubscribe, ok := registry.subscribe(ctx, 7, runID, 1, true)
 	if !ok {
 		t.Fatal("expected subscription to existing run")
 	}
@@ -104,27 +104,15 @@ func TestGenerationStreamRegistryReplayAndTerminal(t *testing.T) {
 		t.Fatal("terminal replay should close live event channel")
 	}
 
-	replay, events, unsubscribe, ok = registry.subscribe(ctx, 7, runID, 1, true)
-	if !ok {
-		t.Fatal("expected subscription after snapshot seq to existing run")
-	}
-	defer unsubscribe()
-	if len(replay) != 1 || replay[0].Seq != 2 || replay[0].Payload["type"] != "completed" {
-		t.Fatalf("unexpected replay after snapshot seq: %+v", replay)
-	}
-	if _, open := <-events; open {
-		t.Fatal("terminal state should close live event channel")
-	}
-
 	replay, events, unsubscribe, ok = registry.subscribe(ctx, 7, runID, 2, true)
 	if !ok {
 		t.Fatal("expected subscription after terminal seq to existing run")
 	}
 	defer unsubscribe()
-	if len(replay) != 0 {
-		t.Fatalf("expected no replay at terminal cursor, got %+v", replay)
+	if len(replay) != 1 || replay[0].Payload["type"] != "delta" || replay[0].Payload["delta"] != "a" || replay[0].Payload["replace"] != true {
+		t.Fatalf("unexpected replay after terminal seq: %+v", replay)
 	}
-	if _, open := <-events; open {
+	if _, ok := <-events; ok {
 		t.Fatal("terminal state should close live event channel after last seq")
 	}
 }
@@ -1233,15 +1221,15 @@ func TestGenerationStreamSanitizesOversizedTracePayload(t *testing.T) {
 		t.Fatalf("expected one sanitized tool call, got %#v", parsedTrace.ToolCalls)
 	}
 	call := parsedTrace.ToolCalls[0]
-	if traceInt64(call["output_detail_size"]) != int64(len(largeOutput)) ||
-		traceInt64(call["output_text_size"]) != int64(len(largeOutput)) {
+	if call["output_detail_size"] != float64(len(largeOutput)) ||
+		call["output_text_size"] != float64(len(largeOutput)) {
 		t.Fatalf("expected output size metadata in sanitized payload, got %#v", call)
 	}
 	if _, ok := call["output_detail"]; ok {
 		t.Fatalf("expected oversized output detail to be removed, got %#v", call)
 	}
 	presentation, ok := call["output_presentation"].(map[string]any)
-	if !ok || getTraceString(presentation["text"]) != "## Structured result\n\n- first item" {
+	if !ok || presentation["text"] != "## Structured result\n\n- first item" {
 		t.Fatalf("expected semantic output presentation to survive stream sanitization, got %#v", call)
 	}
 }

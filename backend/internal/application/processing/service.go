@@ -12,7 +12,10 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/extraction"
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/background"
+	"github.com/google/uuid"
 	"go.uber.org/zap"
 )
 
@@ -22,34 +25,46 @@ const (
 	fileProcessingMaxRetries = 3
 	defaultProcessingPreview = 280
 	defaultExtractTimeout    = 60 * time.Second
-	fixedEmbeddingTimeout    = 5 * time.Minute
-	failurePersistTimeout    = 5 * time.Second
+	fixedEmbeddingTimeout        = 5 * time.Minute
+	failurePersistTimeout        = 5 * time.Second
+	processingQueueFailureMessage = "文件处理失败，请稍后重试。"
+	fileProcessingLeaseRenew      = 15 * time.Second
+	fallbackProcessingConcurrency = 4
+	fallbackProcessingTimeout     = 30 * time.Minute
 )
 
 var (
 	// ErrFileProcessingFailed 表示文件处理失败。
-	ErrFileProcessingFailed = errors.New("file processing failed")
+	ErrFileProcessingFailed           = errors.New("file processing failed")
+	errExtractionServiceNotConfigured = errors.New("extraction service not configured")
+	ErrFileNotFound                   = errors.New("file not found")
+	errFileProcessingClaimLost        = errors.New("file processing claim lost")
 )
 
 // FileProcessingStatusDTO 文件处理状态响应数据。
 type FileProcessingStatusDTO struct {
-	FileID           string
-	DetectedMIME     string
-	FileCategory     string
-	ProcessingStatus string
-	ProcessingReady  bool
-	ExtractStatus    string
-	EmbedStatus      string
-	PreviewText      string
-	OCRUsed          bool
-	RAGReady         bool
-	RAGReason        string
-	ErrorCode        string
-	ErrorMessage     string
-	ExtractChars     int
-	ExtractPages     int
-	StartedAt        *time.Time
-	CompletedAt      *time.Time
+	FileID              string
+	DetectedMIME        string
+	FileCategory        string
+	ProcessingStatus    string
+	ProcessingReady     bool
+	ExtractStatus       string
+	EmbedStatus         string
+	PreviewText         string
+	OCRUsed             bool
+	RAGReady            bool
+	RAGReason           string
+	ErrorCode           string
+	ErrorMessage        string
+	ExtractChars        int
+	ExtractPages        int
+	ChunkCount          int
+	EmbedError          string
+	CanVectorize        bool
+	VectorizationReason string
+	StartedAt           *time.Time
+	CompletedAt         *time.Time
+	UpdatedAt           time.Time
 }
 
 // ReadyFileResult 表示等待文件处理完成后的可消费结果。
@@ -67,12 +82,14 @@ type ReadyFileResult struct {
 type Service struct {
 	cfg              *config.Runtime
 	repo             repository.FileProcessingRepository
+	statusRepo       repository.FileProcessingStatusRepository
 	cache            repository.FileProcessingQueueRepository
 	extractSvc       *extraction.Service
 	embeddingSvc     *appembedding.Service
 	logger           *zap.Logger
 	extractorVersion string
 	reprocessLocks   sync.Map
+	fallbackSlots    chan struct{}
 }
 
 // NewService 创建文件处理服务。
@@ -85,31 +102,71 @@ func NewService(
 	logger *zap.Logger,
 	extractorVersion string,
 ) *Service {
-	return NewServiceWithRuntime(config.NewRuntime(cfg), repo, cache, extractSvc, embeddingSvc, logger, extractorVersion)
+	return NewServiceWithRuntime(Dependencies{Config: config.NewRuntime(cfg), Repository: repo, Cache: cache, ExtractService: extractSvc, EmbeddingService: embeddingSvc, Logger: logger, ExtractorVersion: extractorVersion})
 }
 
-// NewServiceWithRuntime 创建使用运行时配置容器的文件处理服务。
-func NewServiceWithRuntime(
-	cfg *config.Runtime,
-	repo repository.FileProcessingRepository,
-	cache repository.FileProcessingQueueRepository,
-	extractSvc *extraction.Service,
-	embeddingSvc *appembedding.Service,
-	logger *zap.Logger,
-	extractorVersion string,
-) *Service {
-	if extractSvc == nil {
-		extractSvc = extraction.NewServiceWithRuntime(cfg)
+type Dependencies struct {
+	Config           *config.Runtime
+	Repository       repository.FileProcessingRepository
+	StatusRepository repository.FileProcessingStatusRepository
+	Cache            repository.FileProcessingQueueRepository
+	ExtractService   *extraction.Service
+	EmbeddingService *appembedding.Service
+	Logger           *zap.Logger
+	ExtractorVersion string
+}
+
+// NewServiceWithRuntime uses explicitly supplied application dependencies.
+func NewServiceWithRuntime(deps Dependencies) *Service {
+	return &Service{cfg: deps.Config, repo: deps.Repository, statusRepo: deps.StatusRepository, cache: deps.Cache,
+		extractSvc: deps.ExtractService, embeddingSvc: deps.EmbeddingService,
+		logger: deps.Logger, extractorVersion: strings.TrimSpace(deps.ExtractorVersion),
+		fallbackSlots: make(chan struct{}, fallbackProcessingConcurrency)}
+}
+
+// SubmitFileEmbeddings 将显式向量化任务提交到独立的可恢复队列。
+func (s *Service) SubmitFileEmbeddings(ctx context.Context, userID uint, fileIDs []string) (appembedding.TargetedSubmissionResult, error) {
+	result := appembedding.TargetedSubmissionResult{SubmittedFileIDs: []string{}, Skipped: []appembedding.TargetedFileSkip{}}
+	if s == nil || s.embeddingSvc == nil || s.cache == nil {
+		return result, appembedding.ErrEmbeddingServiceNotConfigured
 	}
-	return &Service{
-		cfg:              cfg,
-		repo:             repo,
-		cache:            cache,
-		extractSvc:       extractSvc,
-		embeddingSvc:     embeddingSvc,
-		logger:           logger,
-		extractorVersion: strings.TrimSpace(extractorVersion),
+	plan, err := s.embeddingSvc.PlanFiles(ctx, userID, fileIDs)
+	if err != nil {
+		return result, err
 	}
+	result.Skipped = append(result.Skipped, plan.Skipped...)
+	for _, job := range plan.Jobs {
+		queued, queueErr := s.embeddingSvc.QueueTargetedJob(ctx, job)
+		if queueErr != nil {
+			result.Skipped = append(result.Skipped, appembedding.TargetedFileSkip{FileID: job.FileID, Reason: appembedding.SkipReasonSubmitFailed})
+			continue
+		}
+		if !queued {
+			result.Skipped = append(result.Skipped, appembedding.TargetedFileSkip{FileID: job.FileID, Reason: appembedding.SkipReasonProcessing})
+			continue
+		}
+		if err := s.cache.EnqueueFileEmbedding(ctx, job.UserID, job.FileID, job.EmbeddingSignature, job.EmbeddingHost); err == nil {
+			result.SubmittedFileIDs = append(result.SubmittedFileIDs, job.FileID)
+			continue
+		}
+		if releaseErr := s.embeddingSvc.FailTargetedJob(ctx, job, appembedding.ErrEmbeddingQueueUnavailable); releaseErr != nil && s.logger != nil {
+			zapLogger := s.logger
+			_ = zapLogger
+		}
+		result.Skipped = append(result.Skipped, appembedding.TargetedFileSkip{FileID: job.FileID, Reason: appembedding.SkipReasonQueueBusy})
+	}
+	return result, nil
+}
+
+func (s *Service) ResolveFileVectorizationCapabilities(ctx context.Context, files []domainconversation.FileObject) map[string]appembedding.FileVectorizationCapability {
+	if s == nil || s.embeddingSvc == nil {
+		capabilities := make(map[string]appembedding.FileVectorizationCapability, len(files))
+		for i := range files {
+			capabilities[files[i].FileID] = appembedding.FileVectorizationCapability{Reason: "embedding_service_unavailable"}
+		}
+		return capabilities
+	}
+	return s.embeddingSvc.ResolveFileVectorizationCapabilities(ctx, files)
 }
 
 // StartBackgroundWorkers 启动文件处理后台 worker，ctx 取消时 worker 退出。
@@ -202,12 +259,27 @@ func (s *Service) InitializeUploadedFile(ctx context.Context, fileObj *domaincon
 
 // ProcessFile 执行单个文件处理任务。
 func (s *Service) ProcessFile(ctx context.Context, userID uint, fileID string) error {
+	_, err := s.processFile(ctx, userID, fileID, false, "")
+	return err
+}
+
+func (s *Service) processFile(ctx context.Context, userID uint, fileID string, allowRecovery bool, attemptID string) (bool, error) {
 	fileObj, err := s.repo.GetActiveFileObjectByID(ctx, userID, fileID)
 	if err != nil || fileObj == nil {
-		return err
+		return false, err
+	}
+	if fileObj.ProcessingStatus == "ready" || fileObj.ProcessingStatus == "failed" {
+		return false, nil
+	}
+	if attemptID == "" {
+		return false, nil
+	}
+	claimed, err := s.repo.TryClaimFileObjectProcessing(ctx, userID, fileID, allowRecovery, s.version(), attemptID)
+	if err != nil || !claimed {
+		return false, err
 	}
 	if fileObj.FileCategory == "image" && !s.snapshot().ExtractImageOCREnabled {
-		return nil
+		return true, s.updateClaimedFileProcessingState(ctx, attemptID, s.readyWithoutExtractionState(fileObj, "image_not_applicable"))
 	}
 
 	cfg := s.snapshot()
@@ -216,42 +288,58 @@ func (s *Service) ProcessFile(ctx context.Context, userID uint, fileID string) e
 	defer cancel()
 
 	startedAt := time.Now().UTC().Truncate(time.Microsecond)
-	extractorVersion := s.version()
-	claimed, err := s.repo.ClaimFileProcessingExecution(
-		runCtx,
-		userID,
-		fileID,
-		fileObj.StoragePath,
-		extractorVersion,
-		startedAt,
-	)
-	if err != nil {
-		return err
-	}
-	if !claimed {
-		return nil
-	}
 	fileObj.ProcessingStartedAt = &startedAt
-	processingStatus := "extracting"
-	processingReady := false
-	processingErrorCode := ""
-	processingErrorMessage := ""
-	extractStatus := "processing"
 
 	extractCtx, extractCancel := context.WithTimeout(runCtx, extractTimeout)
 	extractResult, extractErr := s.extractTextForProcessing(extractCtx, *fileObj)
 	extractCancel()
 	if extractErr != nil {
+		if ctx.Err() != nil {
+			return true, ctx.Err()
+		}
+		if extraction.IsEmptyContent(extractErr) {
+			return true, s.markClaimedFileProcessingEmpty(runCtx, fileObj, attemptID, extraction.ErrorCode(extractErr))
+		}
 		code, message := resolveProcessingFailure(fileObj, extractErr)
-		return s.markFileProcessingFailed(runCtx, fileObj, code, message)
+		return true, s.markClaimedFileProcessingFailed(runCtx, fileObj, attemptID, code, message)
 	}
 	if strings.TrimSpace(extractResult.Text) == "" {
-		return s.markFileProcessingFailed(runCtx, fileObj, "extract_failed", "无法提取文本")
+		return true, s.markClaimedFileProcessingEmpty(runCtx, fileObj, attemptID, domainconversation.FileErrorCodeNoExtractableText)
 	}
 
 	extractPath, err := s.extractSvc.WriteExtractedText(runCtx, fileObj.UserID, fileObj.FileID, fileObj.StoragePath, startedAt, extractResult.Text)
 	if err != nil {
-		return s.markFileProcessingFailed(runCtx, fileObj, "extract_failed", err.Error())
+		if ctx.Err() != nil {
+			return true, ctx.Err()
+		}
+		return true, s.markClaimedFileProcessingFailed(runCtx, fileObj, attemptID, "extract_failed", HumanizeFileProcessingError(fileObj.FileCategory, "extract_failed", ""))
+	}
+	return true, s.processClaimedFile(runCtx, fileObj, attemptID, extractResult, extractPath)
+}
+
+func (s *Service) readyWithoutExtractionState(fileObj *domainconversation.FileObject, ragReason string) *domainconversation.FileObjectProcessing {
+	now := time.Now()
+	return &domainconversation.FileObjectProcessing{
+		FileObjectID:     fileObj.ID,
+		UserID:           fileObj.UserID,
+		DetectedMIME:     fileObj.DetectedMIME,
+		FileCategory:     fileObj.FileCategory,
+		ProcessingStatus: "ready",
+		ProcessingReady:  true,
+		ExtractStatus:    "none",
+		RAGReady:         false,
+		RAGReason:        ragReason,
+		ExtractorVersion: s.version(),
+		StartedAt:        &now,
+		CompletedAt:      &now,
+	}
+}
+
+func (s *Service) processClaimedFile(ctx context.Context, fileObj *domainconversation.FileObject, attemptID string, extractResult extraction.Result, extractPath string) error {
+	runCtx := ctx
+	startedAt := time.Now().UTC().Truncate(time.Microsecond)
+	if fileObj.ProcessingStartedAt != nil {
+		startedAt = *fileObj.ProcessingStartedAt
 	}
 	now := time.Now()
 	preview := compactSnippet(extractResult.Text, defaultProcessingPreview)
@@ -267,119 +355,86 @@ func (s *Service) ProcessFile(ctx context.Context, userID uint, fileID string) e
 			resultRAGReason = ragReason
 		}
 	}
-	if err = s.repo.UpdateFileObjectProcessingState(runCtx, &domainconversation.FileObjectProcessing{
-		FileObjectID:                fileObj.ID,
-		ExpectedStoragePath:         fileObj.StoragePath,
-		ExpectedProcessingStartedAt: &startedAt,
-		UserID:                      fileObj.UserID,
-		DetectedMIME:                fileObj.DetectedMIME,
-		FileCategory:                fileObj.FileCategory,
-		ProcessingStatus:            "extracted",
-		ExtractStatus:               "ready",
-		ExtractEngine:               extractResult.Engine,
-		ExtractStoragePath:          extractPath,
-		ExtractChars:                len([]rune(extractResult.Text)),
-		ExtractPages:                extractResult.PageCount,
-		PreviewText:                 preview,
-		OCRUsed:                     extractResult.OCRUsed,
-		RAGReady:                    resultRAGReady,
-		RAGReason:                   resultRAGReason,
-		ExtractorVersion:            s.version(),
-		StartedAt:                   &startedAt,
-		CompletedAt:                 &now,
+	shouldEmbed := indexingAvailable && supportsRAG(fileObj.FileCategory) && s.embeddingSvc.ShouldTrigger(*fileObj)
+	nextProcessingStatus := "ready"
+	if shouldEmbed {
+		nextProcessingStatus = "embedding"
+	}
+	if err := s.updateClaimedFileProcessingState(runCtx, attemptID, &domainconversation.FileObjectProcessing{
+		FileObjectID:      fileObj.ID,
+		UserID:            fileObj.UserID,
+		DetectedMIME:      fileObj.DetectedMIME,
+		FileCategory:      fileObj.FileCategory,
+		ProcessingStatus:  nextProcessingStatus,
+		ProcessingReady:   true,
+		ExtractStatus:     "ready",
+		ExtractEngine:     extractResult.Engine,
+		ExtractChars:      len([]rune(extractResult.Text)),
+		ExtractPages:      extractResult.PageCount,
+		PageCount:         extractResult.PageCount,
+		PreviewText:       preview,
+		OCRUsed:           extractResult.OCRUsed,
+		RAGReady:          resultRAGReady,
+		RAGReason:         resultRAGReason,
+		ExtractorVersion:  s.version(),
+		StartedAt:         &startedAt,
+		CompletedAt:       &now,
+		ExtractedAt:       &now,
 	}); err != nil {
-		if errors.Is(err, repository.ErrNotFound) || errors.Is(err, repository.ErrConflict) {
+		if errors.Is(err, errFileProcessingClaimLost) {
 			s.removeOrphanExtract(runCtx, fileObj.ID, fileObj.UserID, fileObj.FileID, extractPath)
 		}
 		return err
 	}
-	processingStatus = "extracted"
-	processingReady = true
-	extractStatus = "ready"
-	extractedAt := &now
-	extractorVersion = s.version()
-	if err = s.repo.UpdateFileObjectProcessing(runCtx, fileObj.UserID, fileObj.FileID, repository.UpdateFileObjectProcessingInput{
-		ExpectedStoragePath:         fileObj.StoragePath,
-		ExpectedProcessingStartedAt: &startedAt,
-		ProcessingStatus:            &processingStatus,
-		ProcessingReady:             &processingReady,
-		ExtractStatus:               &extractStatus,
-		PageCount:                   &extractResult.PageCount,
-		ExtractedAt:                 &extractedAt,
-		ExtractorVersion:            &extractorVersion,
-	}); err != nil {
-		if errors.Is(err, repository.ErrNotFound) || errors.Is(err, repository.ErrConflict) {
-			s.removeOrphanExtract(runCtx, fileObj.ID, fileObj.UserID, fileObj.FileID, extractPath)
-		}
-		return err
-	}
-
-	if indexingAvailable && supportsRAG(fileObj.FileCategory) && s.embeddingSvc.ShouldTrigger(*fileObj) {
-		processingStatus = "embedding"
-		_ = s.repo.UpdateFileObjectProcessing(runCtx, fileObj.UserID, fileObj.FileID, repository.UpdateFileObjectProcessingInput{
-			ExpectedStoragePath:         fileObj.StoragePath,
-			ExpectedProcessingStartedAt: &startedAt,
-			ProcessingStatus:            &processingStatus,
-		})
+	if shouldEmbed {
 		embedCtx, embedCancel := context.WithTimeout(runCtx, fixedEmbeddingTimeout)
 		embedErr := s.embeddingSvc.ProcessFile(embedCtx, *fileObj)
 		embedCancel()
 		if embedErr != nil {
-			_ = s.repo.UpdateFileObjectProcessingState(runCtx, &domainconversation.FileObjectProcessing{
-				FileObjectID:                fileObj.ID,
-				ExpectedStoragePath:         fileObj.StoragePath,
-				ExpectedProcessingStartedAt: &startedAt,
-				UserID:                      fileObj.UserID,
-				DetectedMIME:                fileObj.DetectedMIME,
-				FileCategory:                fileObj.FileCategory,
-				ProcessingStatus:            "ready",
-				ExtractStatus:               "ready",
-				ExtractEngine:               extractResult.Engine,
-				ExtractStoragePath:          extractPath,
-				ExtractChars:                len([]rune(extractResult.Text)),
-				ExtractPages:                extractResult.PageCount,
-				PreviewText:                 preview,
-				OCRUsed:                     extractResult.OCRUsed,
-				RAGReady:                    false,
-				RAGReason:                   "embed_failed",
-				ErrorCode:                   "embed_failed",
-				ErrorMessage:                truncateError(embedErr.Error(), 255),
-				ExtractorVersion:            s.version(),
-				StartedAt:                   &startedAt,
-				CompletedAt:                 &now,
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return s.updateClaimedFileProcessingState(runCtx, attemptID, &domainconversation.FileObjectProcessing{
+				FileObjectID:      fileObj.ID,
+				UserID:            fileObj.UserID,
+				DetectedMIME:      fileObj.DetectedMIME,
+				FileCategory:      fileObj.FileCategory,
+				ProcessingStatus:  "ready",
+				ProcessingReady:   true,
+				ExtractStatus:     "ready",
+				ExtractEngine:     extractResult.Engine,
+				ExtractChars:      len([]rune(extractResult.Text)),
+				ExtractPages:      extractResult.PageCount,
+				PageCount:         extractResult.PageCount,
+				PreviewText:       preview,
+				OCRUsed:           extractResult.OCRUsed,
+				RAGReady:          false,
+				RAGReason:         "embed_failed",
+				ErrorCode:         "embed_failed",
+				ErrorMessage:      appembedding.ErrorSummary(embedErr),
+				ExtractorVersion:  s.version(),
+				StartedAt:         &startedAt,
+				CompletedAt:       &now,
+				ExtractedAt:       &now,
 			})
-			processingStatus = "ready"
-			processingReady = true
-			processingErrorCode = "embed_failed"
-			processingErrorMessage = truncateError(embedErr.Error(), 255)
-			_ = s.repo.UpdateFileObjectProcessing(runCtx, fileObj.UserID, fileObj.FileID, repository.UpdateFileObjectProcessingInput{
-				ExpectedStoragePath:         fileObj.StoragePath,
-				ExpectedProcessingStartedAt: &startedAt,
-				ProcessingStatus:            &processingStatus,
-				ProcessingReady:             &processingReady,
-				ProcessingErrorCode:         &processingErrorCode,
-				ProcessingErrorMessage:      &processingErrorMessage,
-			})
-			return nil
 		}
 	}
 
-	if err = s.repo.UpdateFileObjectProcessingState(runCtx, &domainconversation.FileObjectProcessing{
-		FileObjectID:                fileObj.ID,
-		ExpectedStoragePath:         fileObj.StoragePath,
-		ExpectedProcessingStartedAt: &startedAt,
-		UserID:                      fileObj.UserID,
-		DetectedMIME:                fileObj.DetectedMIME,
-		FileCategory:                fileObj.FileCategory,
-		ProcessingStatus:            "ready",
-		ExtractStatus:               "ready",
-		ExtractEngine:               extractResult.Engine,
-		ExtractStoragePath:          extractPath,
-		ExtractChars:                len([]rune(extractResult.Text)),
-		ExtractPages:                extractResult.PageCount,
-		PreviewText:                 preview,
-		OCRUsed:                     extractResult.OCRUsed,
-		RAGReady:                    ragAvailable && supportsRAG(fileObj.FileCategory),
+	return s.updateClaimedFileProcessingState(runCtx, attemptID, &domainconversation.FileObjectProcessing{
+		FileObjectID:      fileObj.ID,
+		UserID:            fileObj.UserID,
+		DetectedMIME:      fileObj.DetectedMIME,
+		FileCategory:      fileObj.FileCategory,
+		ProcessingStatus:  "ready",
+		ProcessingReady:   true,
+		ExtractStatus:     "ready",
+		ExtractEngine:     extractResult.Engine,
+		ExtractChars:      len([]rune(extractResult.Text)),
+		ExtractPages:      extractResult.PageCount,
+		PageCount:         extractResult.PageCount,
+		PreviewText:       preview,
+		OCRUsed:           extractResult.OCRUsed,
+		RAGReady:          ragAvailable && supportsRAG(fileObj.FileCategory),
 		RAGReason: func() string {
 			if !supportsRAG(fileObj.FileCategory) {
 				return "not_applicable"
@@ -392,20 +447,7 @@ func (s *Service) ProcessFile(ctx context.Context, userID uint, fileID string) e
 		ExtractorVersion: s.version(),
 		StartedAt:        &startedAt,
 		CompletedAt:      &now,
-	}); err != nil {
-		return err
-	}
-	processingStatus = "ready"
-	processingReady = true
-	processingErrorCode = ""
-	processingErrorMessage = ""
-	return s.repo.UpdateFileObjectProcessing(runCtx, fileObj.UserID, fileObj.FileID, repository.UpdateFileObjectProcessingInput{
-		ExpectedStoragePath:         fileObj.StoragePath,
-		ExpectedProcessingStartedAt: &startedAt,
-		ProcessingStatus:            &processingStatus,
-		ProcessingReady:             &processingReady,
-		ProcessingErrorCode:         &processingErrorCode,
-		ProcessingErrorMessage:      &processingErrorMessage,
+		ExtractedAt:      &now,
 	})
 }
 
@@ -432,14 +474,82 @@ func (s *Service) removeOrphanExtract(ctx context.Context, fileObjID uint, userI
 // GetFileProcessingStatus 查询文件处理状态。
 func (s *Service) GetFileProcessingStatus(ctx context.Context, userID uint, fileID string) (*FileProcessingStatusDTO, error) {
 	fileObj, err := s.repo.GetActiveFileObjectByID(ctx, userID, fileID)
-	if err != nil || fileObj == nil {
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, ErrFileNotFound
+		}
 		return nil, err
 	}
-	result, err := s.repo.GetFileObjectProcessingByObjectID(ctx, fileObj.ID)
-	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+	if fileObj == nil {
+		return nil, ErrFileNotFound
+	}
+	result := fileProcessingStatusFromFileObject(fileObj)
+	if s.statusRepo != nil {
+		if statuses, statusesErr := s.statusRepo.GetActiveFileProcessingStatusesByIDs(ctx, userID, []string{fileObj.FileID}); statusesErr == nil && len(statuses) == 1 {
+			result = fileProcessingStatusFromFileObject(&statuses[0])
+		}
+	}
+	if capability, ok := s.ResolveFileVectorizationCapabilities(ctx, []domainconversation.FileObject{*fileObj})[fileObj.FileID]; ok {
+		result.CanVectorize = capability.CanVectorize
+		result.VectorizationReason = capability.Reason
+	}
+	return &result, nil
+}
+
+// GetFileProcessingStatuses 批量查询文件处理状态。
+func (s *Service) GetFileProcessingStatuses(ctx context.Context, userID uint, fileIDs []string) ([]FileProcessingStatusDTO, error) {
+	normalizedIDs := make([]string, 0, len(fileIDs))
+	seen := make(map[string]struct{}, len(fileIDs))
+	for _, value := range fileIDs {
+		fileID := strings.TrimSpace(value)
+		if fileID == "" {
+			continue
+		}
+		if _, ok := seen[fileID]; ok {
+			continue
+		}
+		seen[fileID] = struct{}{}
+		normalizedIDs = append(normalizedIDs, fileID)
+	}
+	if len(normalizedIDs) == 0 {
+		return []FileProcessingStatusDTO{}, nil
+	}
+	statusRepo := s.statusRepo
+	if statusRepo == nil {
+		if fallback, ok := any(s.repo).(repository.FileProcessingStatusRepository); ok {
+			statusRepo = fallback
+		}
+	}
+	if statusRepo == nil {
+		return []FileProcessingStatusDTO{}, nil
+	}
+	fileObjects, err := statusRepo.GetActiveFileProcessingStatusesByIDs(ctx, userID, normalizedIDs)
+	if err != nil {
 		return nil, err
 	}
-	dto := &FileProcessingStatusDTO{
+	filesByID := make(map[string]domainconversation.FileObject, len(fileObjects))
+	for _, fileObj := range fileObjects {
+		filesByID[fileObj.FileID] = fileObj
+	}
+	capabilities := s.ResolveFileVectorizationCapabilities(ctx, fileObjects)
+	results := make([]FileProcessingStatusDTO, 0, len(normalizedIDs))
+	for _, fileID := range normalizedIDs {
+		fileObj, ok := filesByID[fileID]
+		if !ok {
+			continue
+		}
+		dto := fileProcessingStatusFromFileObject(&fileObj)
+		if capability, ok := capabilities[fileID]; ok {
+			dto.CanVectorize = capability.CanVectorize
+			dto.VectorizationReason = capability.Reason
+		}
+		results = append(results, dto)
+	}
+	return results, nil
+}
+
+func fileProcessingStatusFromFileObject(fileObj *domainconversation.FileObject) FileProcessingStatusDTO {
+	dto := FileProcessingStatusDTO{
 		FileID:           fileObj.FileID,
 		DetectedMIME:     fileObj.DetectedMIME,
 		FileCategory:     fileObj.FileCategory,
@@ -447,23 +557,22 @@ func (s *Service) GetFileProcessingStatus(ctx context.Context, userID uint, file
 		ProcessingReady:  fileObj.ProcessingReady,
 		ExtractStatus:    fileObj.ExtractStatus,
 		EmbedStatus:      fileObj.EmbedStatus,
+		PreviewText:      fileObj.PreviewText,
+		OCRUsed:          fileObj.OCRUsed,
+		RAGReady:         fileObj.RAGReady,
+		RAGReason:        fileObj.RAGReason,
 		ErrorCode:        fileObj.ProcessingErrorCode,
 		ErrorMessage:     fileObj.ProcessingErrorMessage,
-	}
-	if result != nil {
-		dto.PreviewText = result.PreviewText
-		dto.OCRUsed = result.OCRUsed
-		dto.RAGReady = result.RAGReady
-		dto.RAGReason = result.RAGReason
-		dto.ErrorCode = result.ErrorCode
-		dto.ErrorMessage = result.ErrorMessage
-		dto.ExtractChars = result.ExtractChars
-		dto.ExtractPages = result.ExtractPages
-		dto.StartedAt = result.StartedAt
-		dto.CompletedAt = result.CompletedAt
+		ExtractChars:     fileObj.ExtractChars,
+		ExtractPages:     fileObj.ExtractPages,
+		ChunkCount:       fileObj.ChunkCount,
+		EmbedError:       fileObj.EmbedError,
+		StartedAt:        fileObj.ProcessingStartedAt,
+		CompletedAt:      fileObj.ProcessingCompletedAt,
+		UpdatedAt:        fileObj.UpdatedAt,
 	}
 	dto.ErrorMessage = HumanizeFileProcessingError(dto.FileCategory, dto.ErrorCode, dto.ErrorMessage)
-	return dto, nil
+	return dto
 }
 
 // WaitUntilReady 等待文件处理完成，并在就绪时返回提取产物。
@@ -549,6 +658,38 @@ func (s *Service) ensureImageOCRProcessing(ctx context.Context, userID uint, fil
 	return s.InitializeUploadedFile(ctx, fileObj)
 }
 
+func (s *Service) handleEmbeddingMessage(ctx context.Context, consumerName string, msg repository.FileProcessingMessage) {
+	if s.embeddingSvc == nil {
+		return
+	}
+	job := appembedding.TargetedJob{FileID: msg.FileID, UserID: msg.UserID, EmbeddingSignature: msg.EmbeddingSignature, EmbeddingHost: msg.EmbeddingHost}
+	processingCtx, cancelProcessing := context.WithCancel(ctx)
+	defer cancelProcessing()
+	err := s.embeddingSvc.ProcessTargetedJob(processingCtx, job)
+	if taskCtxErr := ctx.Err(); taskCtxErr != nil {
+		return
+	}
+	if owned, ownershipErr := s.cache.RenewFileProcessingMessageLease(ctx, consumerName, msg); ownershipErr != nil || !owned {
+		return
+	}
+	if err == nil {
+		_, _ = s.cache.SettleFileProcessingMessage(ctx, consumerName, msg)
+		return
+	}
+	failureMessage := appembedding.ErrorSummary(err)
+	if msg.Retry < fileProcessingMaxRetries {
+		if retryStateErr := s.embeddingSvc.RequeueTargetedJob(ctx, job, err); retryStateErr != nil {
+			return
+		}
+		_, _ = s.cache.RequeueFileProcessingMessage(ctx, consumerName, msg, msg.Retry+1, failureMessage)
+		return
+	}
+	if failErr := s.embeddingSvc.FailTargetedJob(ctx, job, err); failErr != nil {
+		return
+	}
+	_, _ = s.cache.DeadLetterFileProcessingMessage(ctx, consumerName, msg, failureMessage)
+}
+
 func (s *Service) runFileProcessingWorker(ctx context.Context, consumerName string) {
 	for {
 		select {
@@ -567,7 +708,7 @@ func (s *Service) runFileProcessingWorker(ctx context.Context, consumerName stri
 			}
 		} else if len(claimed) > 0 {
 			for _, msg := range claimed {
-				s.handleProcessingMessage(ctx, msg)
+				s.handleProcessingMessage(ctx, consumerName, msg)
 			}
 			continue
 		}
@@ -588,80 +729,251 @@ func (s *Service) runFileProcessingWorker(ctx context.Context, consumerName stri
 			continue
 		}
 		for _, msg := range messages {
-			s.handleProcessingMessage(ctx, msg)
+			s.handleProcessingMessage(ctx, consumerName, msg)
 		}
 	}
 }
 
-func (s *Service) handleProcessingMessage(ctx context.Context, msg repository.FileProcessingMessage) {
-	if msg.FileID == "" {
-		_ = s.cache.AckFileProcessingMessage(ctx, msg.ID)
-		_ = s.cache.DeleteFileProcessingMessage(ctx, msg.ID)
+type fileMessageReader func(context.Context, string) ([]repository.FileProcessingMessage, error)
+
+type fileMessageHandler func(context.Context, string, repository.FileProcessingMessage)
+
+func (s *Service) handleProcessingMessage(ctx context.Context, consumerName string, msg repository.FileProcessingMessage) {
+	if strings.TrimSpace(msg.FileID) == "" {
+		s.settleProcessingMessage(ctx, consumerName, msg)
+		return
+	}
+	if msg.Kind == repository.FileProcessingKindEmbedding {
+		s.handleEmbeddingMessage(ctx, consumerName, msg)
 		return
 	}
 
-	err := s.ProcessFile(ctx, msg.UserID, msg.FileID)
-	if err != nil {
-		if ctx.Err() != nil {
+	attemptID := uuid.NewString()
+	processingCtx, cancelProcessing := context.WithCancel(ctx)
+	defer cancelProcessing()
+	leaseCtx, stopLease := context.WithCancel(ctx)
+	leaseDone := make(chan struct{})
+	ownershipLost := make(chan struct{})
+	go s.renewProcessingMessageLease(leaseCtx, leaseDone, ownershipLost, cancelProcessing, consumerName, msg)
+	claimed, processErr := s.processFile(processingCtx, msg.UserID, msg.FileID, msg.Reclaimed, attemptID)
+	stopLease()
+	<-leaseDone
+	if ctx.Err() != nil {
+		return
+	}
+	select {
+	case <-ownershipLost:
+		return
+	default:
+	}
+	if owned, ownershipErr := s.cache.RenewFileProcessingMessageLease(ctx, consumerName, msg); ownershipErr != nil || !owned {
+		if ownershipErr != nil && s.logger != nil {
+			s.logger.Warn("verify_file_processing_lease_failed",
+				zap.Uint("user_id", msg.UserID),
+				zap.String("file_id", msg.FileID),
+				zap.String("message_id", msg.ID),
+				zap.Error(ownershipErr),
+			)
+		}
+		return
+	}
+	if processErr != nil {
+		if errors.Is(processErr, errFileProcessingClaimLost) {
+			s.settleProcessingMessage(ctx, consumerName, msg)
 			return
 		}
-		// ProcessFile 内部已把可恢复失败落为 failed（供重试 claim），此处仅负责
-		// 队列侧的补投递；入队失败时保留原消息等待超时认领，避免无声丢任务。
+		if !claimed {
+			if s.logger != nil {
+				s.logger.Warn("prepare_file_processing_failed",
+					zap.Uint("user_id", msg.UserID),
+					zap.String("file_id", msg.FileID),
+					zap.String("message_id", msg.ID),
+					zap.Error(processErr),
+				)
+			}
+			return
+		}
+		failureMessage := processingErrorSummary(processErr)
 		if msg.Retry < fileProcessingMaxRetries {
-			if enqueueErr := s.enqueueFileProcessing(ctx, msg.UserID, msg.FileID, msg.Retry+1, err.Error()); enqueueErr != nil {
+			if reset, resetErr := s.repo.ResetFileObjectProcessingForRetry(ctx, msg.UserID, msg.FileID, attemptID); resetErr != nil || !reset {
+				if s.logger != nil {
+					s.logger.Warn("reset_file_processing_for_retry_failed",
+						zap.Uint("user_id", msg.UserID),
+						zap.String("file_id", msg.FileID),
+						zap.Int("retry", msg.Retry),
+						zap.Error(resetErr),
+					)
+				}
+				return
+			}
+			if settled, requeueErr := s.cache.RequeueFileProcessingMessage(ctx, consumerName, msg, msg.Retry+1, failureMessage); requeueErr != nil || !settled {
+				if s.logger != nil {
+					s.logger.Warn("requeue_file_processing_failed",
+						zap.Uint("user_id", msg.UserID),
+						zap.String("file_id", msg.FileID),
+						zap.Int("retry", msg.Retry),
+						zap.Error(requeueErr),
+					)
+				}
 				return
 			}
 		} else {
-			_ = s.cache.SendFileProcessingToDLQ(ctx, msg.UserID, msg.FileID, msg.Retry, err.Error())
-			s.forceFinalizeFailed(msg.UserID, msg.FileID, err)
+			if finalizeErr := s.forceFinalizeFailed(ctx, msg.UserID, msg.FileID, attemptID, processErr); finalizeErr != nil {
+				if s.logger != nil {
+					s.logger.Warn("force_finalize_file_processing_failed",
+						zap.Uint("user_id", msg.UserID),
+						zap.String("file_id", msg.FileID),
+						zap.Error(finalizeErr),
+					)
+				}
+				return
+			}
+			if !s.deadLetterProcessingMessage(ctx, consumerName, msg) {
+				return
+			}
 		}
 		if s.logger != nil {
 			s.logger.Warn("process_queued_file_failed",
 				zap.Uint("user_id", msg.UserID),
 				zap.String("file_id", msg.FileID),
 				zap.Int("retry", msg.Retry),
-				zap.Error(err),
+				zap.Error(processErr),
 			)
 		}
-	}
-
-	_ = s.cache.AckFileProcessingMessage(ctx, msg.ID)
-	_ = s.cache.DeleteFileProcessingMessage(ctx, msg.ID)
-}
-
-func (s *Service) forceFinalizeFailed(userID uint, fileID string, processingErr error) {
-	if s == nil || s.repo == nil || strings.TrimSpace(fileID) == "" {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), failurePersistTimeout)
+
+	if !claimed && msg.Retry >= fileProcessingMaxRetries && strings.TrimSpace(msg.LastError) != "" {
+		if fileObj, lookupErr := s.repo.GetActiveFileObjectByID(ctx, msg.UserID, msg.FileID); lookupErr == nil && fileObj != nil && fileObj.ProcessingStatus == "failed" {
+			s.deadLetterProcessingMessage(ctx, consumerName, msg)
+			return
+		}
+	}
+	s.settleProcessingMessage(ctx, consumerName, msg)
+}
+
+func (s *Service) renewProcessingMessageLease(ctx context.Context, done chan<- struct{}, ownershipLost chan<- struct{}, cancelProcessing context.CancelFunc, consumerName string, msg repository.FileProcessingMessage) {
+	defer close(done)
+	ticker := time.NewTicker(fileProcessingLeaseRenew)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			owned, err := s.cache.RenewFileProcessingMessageLease(ctx, consumerName, msg)
+			if err == nil && owned {
+				continue
+			}
+			if err != nil && s.logger != nil {
+				s.logger.Warn("file_processing_lease_failed", zap.Error(err))
+			}
+			close(ownershipLost)
+			cancelProcessing()
+			return
+		}
+	}
+}
+
+func (s *Service) settleProcessingMessage(ctx context.Context, consumerName string, msg repository.FileProcessingMessage) {
+	if settled, err := s.cache.SettleFileProcessingMessage(ctx, consumerName, msg); (err != nil || !settled) && s.logger != nil {
+		s.logger.Warn("settle_file_processing_message_failed",
+			zap.Uint("user_id", msg.UserID),
+			zap.String("file_id", msg.FileID),
+			zap.String("message_id", msg.ID),
+			zap.Error(err),
+		)
+	}
+}
+
+func (s *Service) deadLetterProcessingMessage(ctx context.Context, consumerName string, msg repository.FileProcessingMessage) bool {
+	if settled, err := s.cache.DeadLetterFileProcessingMessage(ctx, consumerName, msg, processingQueueFailureMessage); err == nil && settled {
+		return true
+	} else if s.logger != nil {
+		s.logger.Warn("dead_letter_file_processing_failed",
+			zap.Uint("user_id", msg.UserID),
+			zap.String("file_id", msg.FileID),
+			zap.Int("retry", msg.Retry),
+			zap.String("message_id", msg.ID),
+			zap.Error(err),
+		)
+	}
+	return false
+}
+
+func (s *Service) renewProcessingLease(ctx context.Context, consumerName string, msg repository.FileProcessingMessage) bool {
+	leaseCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	owned, err := s.cache.RenewFileProcessingMessageLease(leaseCtx, consumerName, msg)
+	if err != nil && s.logger != nil {
+		s.logger.Warn("file_processing_lease_failed", zap.Error(err))
+	}
+	return err == nil && owned
+}
+
+func (s *Service) forceFinalizeFailed(parent context.Context, userID uint, fileID string, attemptID string, processingErr error) error {
+	if s == nil || s.repo == nil || strings.TrimSpace(fileID) == "" {
+		return nil
+	}
+	ctx, cancel := background.WithTimeout(parent, failurePersistTimeout)
 	defer cancel()
 
 	fileObj, err := s.repo.GetActiveFileObjectByID(ctx, userID, fileID)
-	if err != nil || fileObj == nil {
-		return
+	if err != nil {
+		return err
+	}
+	if fileObj == nil {
+		return nil
 	}
 	if fileObj.ProcessingStatus == "ready" || fileObj.ProcessingStatus == "failed" {
-		return
+		return nil
 	}
 
 	code, message := resolveProcessingFailure(fileObj, processingErr)
-	if persistErr := s.markFileProcessingFailed(ctx, fileObj, code, message); persistErr != nil && s.logger != nil {
-		s.logger.Warn("force_finalize_file_processing_failed",
-			zap.Uint("user_id", userID),
-			zap.String("file_id", fileID),
-			zap.Error(persistErr),
-		)
+	if err := s.markClaimedFileProcessingFailed(ctx, fileObj, attemptID, code, message); errors.Is(err, errFileProcessingClaimLost) {
+		return s.markFileProcessingFailed(ctx, fileObj, code, message)
+	} else {
+		return err
 	}
 }
 
 func (s *Service) enqueueFileProcessing(ctx context.Context, userID uint, fileID string, retry int, lastError string) error {
 	if s.cache == nil {
-		go func() {
-			_ = s.ProcessFile(context.Background(), userID, fileID)
-		}()
-		return nil
+		return s.processInFallbackMode(ctx, userID, fileID)
+	}
+	if strings.TrimSpace(lastError) == "" {
+		lastError = processingQueueFailureMessage
 	}
 	return s.cache.EnqueueFileProcessing(ctx, userID, fileID, retry, lastError)
+}
+
+func (s *Service) processInFallbackMode(parent context.Context, userID uint, fileID string) error {
+	select {
+	case s.fallbackSlots <- struct{}{}:
+	default:
+		return repository.ErrFileProcessingQueueFull
+	}
+	background.Go(s.logger, "fallback_file_processing", func() {
+		defer func() { <-s.fallbackSlots }()
+		attemptID := uuid.NewString()
+		taskCtx, cancel := background.WithTimeout(parent, fallbackProcessingTimeout)
+		defer cancel()
+		claimed, err := s.processFile(taskCtx, userID, fileID, false, attemptID)
+		if err == nil {
+			return
+		}
+		if claimed || taskCtx.Err() != nil {
+			_ = s.forceFinalizeFailed(taskCtx, userID, fileID, attemptID, err)
+		}
+		if s.logger != nil {
+			s.logger.Warn("fallback_file_processing_failed",
+				zap.Uint("user_id", userID),
+				zap.String("file_id", fileID),
+				zap.Error(err),
+			)
+		}
+	})
+	return nil
 }
 
 // EnqueueFileProcessing 将 pending 文件原子占用并提交到处理队列。
@@ -719,7 +1031,7 @@ func (s *Service) RecoverFileProcessingQueue(ctx context.Context, debounce time.
 	return recoveryErr
 }
 
-func (s *Service) markFileProcessingFailed(ctx context.Context, fileObj *domainconversation.FileObject, code string, message string) error {
+func (s *Service) markClaimedFileProcessingEmpty(ctx context.Context, fileObj *domainconversation.FileObject, attemptID string, reason string) error {
 	if fileObj == nil {
 		return nil
 	}
@@ -730,41 +1042,89 @@ func (s *Service) markFileProcessingFailed(ctx context.Context, fileObj *domainc
 		defer cancel()
 	}
 	now := time.Now()
-	if err := s.repo.UpdateFileObjectProcessingState(writeCtx, &domainconversation.FileObjectProcessing{
-		FileObjectID:                fileObj.ID,
-		ExpectedStoragePath:         fileObj.StoragePath,
-		ExpectedProcessingStartedAt: fileObj.ProcessingStartedAt,
-		UserID:                      fileObj.UserID,
-		DetectedMIME:                fileObj.DetectedMIME,
-		FileCategory:                fileObj.FileCategory,
-		ProcessingStatus:            "failed",
-		ExtractStatus:               "failed",
-		RAGReady:                    false,
-		RAGReason:                   code,
-		ErrorCode:                   code,
-		ErrorMessage:                truncateError(message, 255),
-		ExtractorVersion:            s.version(),
-		StartedAt:                   fileObj.ProcessingStartedAt,
-		CompletedAt:                 &now,
-	}); err != nil {
-		return err
-	}
-	processingStatus := "failed"
-	processingReady := false
-	processingErrorMessage := truncateError(message, 255)
-	extractStatus := "failed"
-	return s.repo.UpdateFileObjectProcessing(writeCtx, fileObj.UserID, fileObj.FileID, repository.UpdateFileObjectProcessingInput{
-		ExpectedStoragePath:         fileObj.StoragePath,
-		ExpectedProcessingStartedAt: fileObj.ProcessingStartedAt,
-		ProcessingStatus:            &processingStatus,
-		ProcessingReady:             &processingReady,
-		ProcessingErrorCode:         &code,
-		ProcessingErrorMessage:      &processingErrorMessage,
-		ExtractStatus:               &extractStatus,
+	return s.updateClaimedFileProcessingState(writeCtx, attemptID, &domainconversation.FileObjectProcessing{
+		FileObjectID:     fileObj.ID,
+		UserID:           fileObj.UserID,
+		DetectedMIME:     fileObj.DetectedMIME,
+		FileCategory:     fileObj.FileCategory,
+		ProcessingStatus: "ready",
+		ProcessingReady:  false,
+		ExtractStatus:    domainconversation.FileSubprocessStatusEmpty,
+		RAGReady:         false,
+		RAGReason:        reason,
+		ExtractorVersion: s.version(),
+		CompletedAt:      &now,
 	})
 }
 
+func (s *Service) updateClaimedFileProcessingState(ctx context.Context, attemptID string, state *domainconversation.FileObjectProcessing) error {
+	updated, err := s.repo.UpdateClaimedFileObjectProcessingState(ctx, state, attemptID)
+	if err != nil {
+		return err
+	}
+	if !updated {
+		return errFileProcessingClaimLost
+	}
+	return nil
+}
+
+func (s *Service) markFileProcessingFailed(ctx context.Context, fileObj *domainconversation.FileObject, code string, message string) error {
+	if fileObj == nil {
+		return nil
+	}
+	writeCtx := ctx
+	if writeCtx == nil || writeCtx.Err() != nil {
+		var cancel context.CancelFunc
+		writeCtx, cancel = background.WithTimeout(ctx, failurePersistTimeout)
+		defer cancel()
+	}
+	return s.repo.UpdateFileObjectProcessingState(
+		writeCtx,
+		s.failedFileProcessingState(fileObj, code, message),
+	)
+}
+
+func (s *Service) markClaimedFileProcessingFailed(ctx context.Context, fileObj *domainconversation.FileObject, attemptID string, code string, message string) error {
+	if fileObj == nil {
+		return nil
+	}
+	writeCtx := ctx
+	if writeCtx == nil || writeCtx.Err() != nil {
+		var cancel context.CancelFunc
+		writeCtx, cancel = background.WithTimeout(ctx, failurePersistTimeout)
+		defer cancel()
+	}
+	return s.updateClaimedFileProcessingState(
+		writeCtx,
+		attemptID,
+		s.failedFileProcessingState(fileObj, code, message),
+	)
+}
+
+func (s *Service) failedFileProcessingState(fileObj *domainconversation.FileObject, code string, message string) *domainconversation.FileObjectProcessing {
+	now := time.Now()
+	return &domainconversation.FileObjectProcessing{
+		FileObjectID:     fileObj.ID,
+		UserID:           fileObj.UserID,
+		DetectedMIME:     fileObj.DetectedMIME,
+		FileCategory:     fileObj.FileCategory,
+		ProcessingStatus: "failed",
+		ProcessingReady:  false,
+		ExtractStatus:    "failed",
+		RAGReady:         false,
+		RAGReason:        code,
+		ErrorCode:        code,
+		ErrorMessage:     textutil.TruncateTrimmed(HumanizeFileProcessingError(fileObj.FileCategory, code, message), 255),
+		ExtractorVersion: s.version(),
+		StartedAt:        fileObj.ProcessingStartedAt,
+		CompletedAt:      &now,
+	}
+}
+
 func (s *Service) extractTextForProcessing(ctx context.Context, fileObj domainconversation.FileObject) (extraction.Result, error) {
+	if s == nil || s.extractSvc == nil {
+		return extraction.Result{}, errExtractionServiceNotConfigured
+	}
 	type extractOutcome struct {
 		result extraction.Result
 		err    error
@@ -962,7 +1322,19 @@ func classifyProcessingErrorCode(err error) string {
 
 func resolveProcessingFailure(fileObj *domainconversation.FileObject, err error) (string, string) {
 	code := classifyProcessingErrorCode(err)
-	return code, resolveProcessingFailureMessage(fileObj, code, err)
+	category := ""
+	if fileObj != nil {
+		category = fileObj.FileCategory
+	}
+	return code, HumanizeFileProcessingError(category, code, "")
+}
+
+func processingErrorSummary(err error) string {
+	if err == nil {
+		return ""
+	}
+	code := classifyProcessingErrorCode(err)
+	return HumanizeFileProcessingError("", code, "")
 }
 
 func resolveProcessingFailureMessage(fileObj *domainconversation.FileObject, code string, err error) string {

@@ -12,38 +12,48 @@ import (
 // kept at the protocol boundary; trace state itself is always represented by
 // explicit fields before it is serialized for persistence or events.
 type tracePayload struct {
-	FileMode       string                     `json:"file_mode,omitempty"`
-	FileNames      []string                   `json:"file_names,omitempty"`
-	FileRefs       []attachmentTraceFileRef   `json:"file_refs,omitempty"`
-	FileGroups     *attachmentTraceFileGroups `json:"file_groups,omitempty"`
-	FileGroupRefs  *attachmentTraceRefGroups  `json:"file_group_refs,omitempty"`
-	Query          string                     `json:"query,omitempty"`
-	HitChunkCount  int                        `json:"hit_chunk_count,omitempty"`
-	CandidateCount int                        `json:"candidate_count,omitempty"`
-	FilteredCount  int                        `json:"filtered_count,omitempty"`
-	MaxScore       float32                    `json:"max_score,omitempty"`
-	Fallback       string                     `json:"fallback,omitempty"`
-	Citations      []traceCitation            `json:"citations,omitempty"`
-	ToolCalls      []traceToolCall            `json:"tool_calls,omitempty"`
-	TraceStage     *traceStage                `json:"trace_stage,omitempty"`
-	Stages         []traceStage               `json:"trace_stages,omitempty"`
-	Strategy       string                     `json:"strategy,omitempty"`
-	FromTurn       int                        `json:"from_turn,omitempty"`
-	ToTurn         int                        `json:"to_turn,omitempty"`
-	SourceTokens   int64                      `json:"source_tokens,omitempty"`
-	SummaryTokens  int64                      `json:"summary_tokens,omitempty"`
-	Reasoning      *traceReasoning            `json:"reasoning,omitempty"`
-	PromptTrace    *promptTracePayload        `json:"prompt_trace,omitempty"`
-	Error          string                     `json:"error,omitempty"`
-	Reason         string                     `json:"reason,omitempty"`
-	Status         string                     `json:"status,omitempty"`
-	ToolID         uint                       `json:"tool_id,omitempty"`
-	ToolName       string                     `json:"tool_name,omitempty"`
-	SkillCount     int                        `json:"skill_count,omitempty"`
-	SkillIDs       []uint                     `json:"skill_ids,omitempty"`
-	SkillTitles    []string                   `json:"skill_titles,omitempty"`
-	SkillTriggers  []string                   `json:"skill_triggers,omitempty"`
-	UpstreamDebug  json.RawMessage            `json:"upstream_debug,omitempty"`
+	Model              string                     `json:"model,omitempty"`
+	FileCount          int                        `json:"file_count,omitempty"`
+	FileIDs            []string                   `json:"file_ids,omitempty"`
+	SkillFileRead      int                        `json:"skill_file_read,omitempty"`
+	SkillFilePaths     []string                   `json:"skill_file_paths,omitempty"`
+	StageMergeRound    int                        `json:"stage_merge_round,omitempty"`
+	StrippedToolIntent bool                       `json:"stripped_tool_intent,omitempty"`
+	AutoContinueWindow bool                       `json:"auto_continue_window,omitempty"`
+	FileMode           string                     `json:"file_mode,omitempty"`
+	FileNames          []string                   `json:"file_names,omitempty"`
+	FileRefs           []attachmentTraceFileRef   `json:"file_refs,omitempty"`
+	FileGroups         *attachmentTraceFileGroups `json:"file_groups,omitempty"`
+	FileGroupRefs      *attachmentTraceRefGroups  `json:"file_group_refs,omitempty"`
+	// Query is retained for decoding legacy traces; new RAG traces record only QueryChars.
+	Query          string              `json:"query,omitempty"`
+	QueryChars     int                 `json:"query_chars,omitempty"`
+	HitChunkCount  int                 `json:"hit_chunk_count,omitempty"`
+	CandidateCount int                 `json:"candidate_count,omitempty"`
+	FilteredCount  int                 `json:"filtered_count,omitempty"`
+	MaxScore       float32             `json:"max_score,omitempty"`
+	Fallback       string              `json:"fallback,omitempty"`
+	Citations      []traceCitation     `json:"citations,omitempty"`
+	ToolCalls      []traceToolCall     `json:"tool_calls,omitempty"`
+	TraceStage     *traceStage         `json:"trace_stage,omitempty"`
+	Stages         []traceStage        `json:"trace_stages,omitempty"`
+	Strategy       string              `json:"strategy,omitempty"`
+	FromTurn       int                 `json:"from_turn,omitempty"`
+	ToTurn         int                 `json:"to_turn,omitempty"`
+	SourceTokens   int64               `json:"source_tokens,omitempty"`
+	SummaryTokens  int64               `json:"summary_tokens,omitempty"`
+	Reasoning      *traceReasoning     `json:"reasoning,omitempty"`
+	PromptTrace    *promptTracePayload `json:"prompt_trace,omitempty"`
+	Error          string              `json:"error,omitempty"`
+	Reason         string              `json:"reason,omitempty"`
+	Status         string              `json:"status,omitempty"`
+	ToolID         uint                `json:"tool_id,omitempty"`
+	ToolName       string              `json:"tool_name,omitempty"`
+	SkillCount     int                 `json:"skill_count,omitempty"`
+	SkillIDs       []uint              `json:"skill_ids,omitempty"`
+	SkillTitles    []string            `json:"skill_titles,omitempty"`
+	SkillTriggers  []string            `json:"skill_triggers,omitempty"`
+	UpstreamDebug  json.RawMessage     `json:"upstream_debug,omitempty"`
 }
 
 type traceStage struct {
@@ -73,6 +83,8 @@ type traceCitation struct {
 }
 
 type traceToolCall struct {
+	OutputSize         int                      `json:"output_size,omitempty"`
+	OutputTruncated    bool                     `json:"output_truncated,omitempty"`
 	ToolCallID         string                   `json:"tool_call_id,omitempty"`
 	Name               string                   `json:"name,omitempty"`
 	Type               string                   `json:"type,omitempty"`
@@ -134,6 +146,8 @@ func (p *tracePayload) clone() *tracePayload {
 		return nil
 	}
 	cloned := *p
+	cloned.FileIDs = append([]string(nil), p.FileIDs...)
+	cloned.SkillFilePaths = append([]string(nil), p.SkillFilePaths...)
 	cloned.FileNames = append([]string(nil), p.FileNames...)
 	cloned.FileRefs = append([]attachmentTraceFileRef(nil), p.FileRefs...)
 	if p.FileGroups != nil {

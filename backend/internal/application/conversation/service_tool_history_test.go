@@ -124,7 +124,7 @@ func TestToolHistoryScrubsPreviouslySeenCredential(t *testing.T) {
 
 func TestCachedOnlyInputDoesNotFallBackToPaidInputEstimate(t *testing.T) {
 	a := &messageUsageAccumulator{}
-	a.beginCall(llm.GenerateInput{Messages: []llm.Message{{Role: "user", Content: "cached prompt"}}})
+	a.beginCall(estimateGenerateInputTokens(llm.GenerateInput{Messages: []llm.Message{{Role: "user", Content: "cached prompt"}}}))
 	a.addObservedUsage(llm.Usage{CacheReadTokens: 100})
 	a.finishCall(hasObservedInputUsage(a.usage()))
 	if a.effectiveInputTokens(999) != 0 || a.interruptedInputTokens() != 0 {

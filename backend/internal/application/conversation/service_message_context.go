@@ -10,17 +10,22 @@ import (
 	"sort"
 	"strings"
 
+	appbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/billing"
+	appchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
 	appdoccard "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/doccard"
 	appstorage "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/objectstorage"
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	domainmemory "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/memory"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/objectstore"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/objectstore"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/conv"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 )
 
 const (
+	MessageErrorCodeUpstreamRateLimited           = "upstream.rate_limited"
+	MessageErrorCodeUpstreamEmptyResponse         = "llm.empty_response"
 	MessageErrorCodeMediaImageStreamUnsupported   = "media.image_stream_unsupported"
 	MessageErrorCodeKnowledgeBaseInvalidReference = "knowledge_base.invalid_reference"
 	MessageErrorCodeKnowledgeBaseUnavailable      = "knowledge_base.unavailable"
@@ -188,6 +193,9 @@ func inferProvider(platformModelName string) string {
 }
 
 func classifyRunErrorCode(err error) string {
+	if errors.Is(err, appbilling.ErrUsageBalanceInsufficient) {
+		return messageUsageBalanceErrorCode
+	}
 	if errors.Is(err, ErrGeneratedMediaArtifactUnavailable) {
 		return MessageErrorCodeMediaArtifactUnavailable
 	}
@@ -223,7 +231,7 @@ func classifyRunErrorCode(err error) string {
 		// 带点分段，与前端 errors.json 的 toolRun.finalAnswerMissing 嵌套结构一致。
 		return "tool_run.final_answer_missing"
 	case errors.Is(err, ErrMessageGenerationCanceled):
-		return "generation_canceled"
+		return "conversation_run.canceled"
 	case errors.Is(err, ErrMediaImagePromptRequired):
 		return "media_image_prompt_required"
 	case errors.Is(err, ErrMediaImageGenerationRejectsInputs):
@@ -257,29 +265,28 @@ func messageErrorSummary(err error) string {
 	if errors.As(err, &upstreamErr) {
 		return upstreamErrorSummary(upstreamErr)
 	}
-	value := strings.TrimSpace(err.Error())
-	if value == "" {
-		return ""
+	switch {
+	case errors.Is(err, ErrGeneratedMediaArtifactUnavailable):
+		return ErrGeneratedMediaArtifactUnavailable.Error()
+	case errors.Is(err, ErrMessageGenerationCanceled):
+		return ErrMessageGenerationCanceled.Error()
+	case errors.Is(err, ErrUpstreamRequestFailed):
+		return "upstream service unavailable"
+	case errors.Is(err, ErrStorageQuotaExceeded):
+		return "quota exceeded"
+	case errors.Is(err, ErrToolRunFinalAnswerMissing):
+		return "tool run ended without a final answer"
 	}
-	prefix := ErrUpstreamRequestFailed.Error() + ":"
-	for strings.HasPrefix(value, prefix) {
-		value = strings.TrimSpace(strings.TrimPrefix(value, prefix))
+	if coded, ok := apperr.Find(err); ok {
+		if message := strings.TrimSpace(coded.Message()); message != "" {
+			return message
+		}
 	}
-	return value
+	return "internal server error"
 }
 
 func isMessageGenerationCanceledError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, ErrMessageGenerationCanceled) {
-		return true
-	}
-	var upstreamErr *llm.UpstreamError
-	if !errors.As(err, &upstreamErr) || !isSuccessfulUpstreamStatus(upstreamErr.StatusCode) {
-		return false
-	}
-	return strings.TrimSpace(upstreamErr.Message) == ErrMessageGenerationCanceled.Error()
+	return errors.Is(err, ErrMessageGenerationCanceled)
 }
 
 func messageErrorDebug(err error) *llm.UpstreamDebugSnapshot {
@@ -512,7 +519,21 @@ func MessageErrorSummary(err error) string {
 }
 
 // MessageErrorCode 返回适合边界层和前端本地化使用的稳定错误码。
+func IsUpstreamRateLimitError(err error) bool {
+	if errors.Is(err, appchannel.ErrAllRoutesRateLimited) {
+		return true
+	}
+	var upstreamErr *llm.UpstreamError
+	return errors.As(err, &upstreamErr) && upstreamErr.StatusCode == 429
+}
+
 func MessageErrorCode(err error) string {
+	if IsUpstreamRateLimitError(err) {
+		return MessageErrorCodeUpstreamRateLimited
+	}
+	if errors.Is(err, ErrUpstreamEmptyResponse) {
+		return MessageErrorCodeUpstreamEmptyResponse
+	}
 	if err == nil {
 		return ""
 	}
@@ -982,7 +1003,7 @@ func (s *Service) injectConversationImageContext(
 				if store == nil {
 					openedStore, openErr := storeProvider.Open(ctx)
 					if openErr != nil {
-						return nil, fmt.Errorf("%w: open object storage: %v", ErrFileNotFound, openErr)
+						return nil, fmt.Errorf("%w: open object storage: %w", ErrFileNotFound, openErr)
 					}
 					store = openedStore
 				}
@@ -1661,3 +1682,4 @@ func (s *Service) nonVisionImageExtractText(ctx context.Context, userID uint, fi
 	}
 	return text
 }
+

@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"go.uber.org/zap"
 
+	appaudit "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/audit"
 	domainagentgroup "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/agentgroup"
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/conv"
@@ -28,7 +29,7 @@ type settingsReader interface {
 
 // auditWriter 写入审计日志（由审计服务注入；nil 时静默跳过）。
 type auditWriter interface {
-	Write(ctx context.Context, requestID string, actorUserID uint, action string, resource string, resourceID string, ip string, userAgent string, detail interface{})
+	Write(ctx context.Context, input appaudit.WriteInput)
 }
 
 // Service 封装 Agent 群组业务能力。
@@ -70,17 +71,16 @@ func (s *Service) RecordAudit(ctx context.Context, input AuditInput) {
 	if s.auditWriter == nil {
 		return
 	}
-	s.auditWriter.Write(
-		ctx,
-		strings.TrimSpace(input.RequestID),
-		input.UserID,
-		strings.TrimSpace(input.Action),
-		strings.TrimSpace(input.Resource),
-		strings.TrimSpace(input.ResourceID),
-		strings.TrimSpace(input.ClientIP),
-		strings.TrimSpace(input.UserAgent),
-		input.Detail,
-	)
+	s.auditWriter.Write(ctx, appaudit.WriteInput{
+		RequestID:   input.RequestID,
+		ActorUserID: input.UserID,
+		Action:      input.Action,
+		Resource:    input.Resource,
+		ResourceID:  input.ResourceID,
+		IP:          input.ClientIP,
+		UserAgent:   input.UserAgent,
+		Detail:      input.Detail,
+	})
 }
 
 // agentGroupEnabled 读取运行时系统设置 agent_group.enabled（默认关闭）。

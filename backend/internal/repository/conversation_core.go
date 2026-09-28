@@ -77,6 +77,12 @@ type ConversationRunPatch struct {
 	ToolCallsCount   *int
 }
 
+// DeleteConversationProjectOptions controls deletion of project-owned records.
+type DeleteConversationProjectOptions struct {
+	DeleteConversations bool
+	DeleteFiles         bool
+}
+
 // ConversationMetadataRepository 封装会话元信息与用户访问能力。
 type ConversationMetadataRepository interface {
 	CreateConversation(ctx context.Context, item *domainconversation.Conversation) error
@@ -88,7 +94,7 @@ type ConversationMetadataRepository interface {
 	ListConversationProjects(ctx context.Context, userID uint, statusFilter string) ([]domainconversation.ConversationProject, error)
 	GetConversationProjectByPublicID(ctx context.Context, userID uint, publicID string) (*domainconversation.ConversationProject, error)
 	UpdateConversationProjectMetadataByPublicID(ctx context.Context, userID uint, publicID string, patch domainconversation.ConversationProjectPatch) (*domainconversation.ConversationProject, error)
-	DeleteConversationProjectByPublicID(ctx context.Context, userID uint, publicID string, deleteConversations bool, deleteFiles bool) ([]string, error)
+	DeleteConversationProjectByPublicID(ctx context.Context, userID uint, publicID string, options DeleteConversationProjectOptions) ([]string, error)
 	ReorderConversationProjects(ctx context.Context, userID uint, publicIDs []string) error
 	UpdateConversationProjectAssignmentByPublicID(ctx context.Context, userID uint, conversationPublicID string, projectID *uint) (*domainconversation.Conversation, error)
 	BatchUpdateConversationProjectByPublicIDs(ctx context.Context, userID uint, conversationPublicIDs []string, projectID *uint) (int64, error)
@@ -137,6 +143,7 @@ type MessageRepository interface {
 	UpdateUserMessageContent(ctx context.Context, messageID uint, conversationID uint, userID uint, content string) error
 	UpdateAssistantMessageContent(ctx context.Context, userID uint, publicID string, content string, editedAt time.Time) (*domainconversation.Message, error)
 	DeleteMessageByPublicID(ctx context.Context, userID uint, publicID string) (int64, error)
+	DeleteMessageAndReparentChildren(ctx context.Context, userID uint, conversationID uint, messageID uint) (int64, error)
 	CancelPendingGenerationMessagesByRunID(ctx context.Context, userID uint, runID string, errorCode string, errorMessage string) (bool, error)
 	InterruptPendingAssistantMessageByRunID(ctx context.Context, userID uint, runID string, errorCode string, errorMessage string) (bool, error)
 	UpdateAssistantMessageCompletion(ctx context.Context, messageID uint, update AssistantMessageCompletionUpdate) error
@@ -190,10 +197,14 @@ type ConversationTraceRepository interface {
 	ListConversationToolCallsByRunIDPrefix(ctx context.Context, userID uint, conversationID uint, runIDPrefix string) ([]domainconversation.ToolCall, error)
 	ListConversationRuns(ctx context.Context, userID uint, conversationID uint, offset int, limit int) ([]domainconversation.Run, int64, error)
 	ListConversationRunsByRunIDs(ctx context.Context, userID uint, conversationID uint, runIDs []string) ([]domainconversation.Run, error)
+	ListConversationRunStatusesByRunIDs(ctx context.Context, userID uint, runIDs []string) ([]domainconversation.RunStatus, error)
 	// UpdateConversationRun 按运行 ID 更新会话运行快照字段（群组重试/放弃时推进顶层运行行）。
-	UpdateConversationRun(ctx context.Context, userID uint, conversationID uint, runID string, patch ConversationRunPatch) (*domainconversation.Run, error)
+	PatchConversationRun(ctx context.Context, userID uint, conversationID uint, runID string, patch ConversationRunPatch) (*domainconversation.Run, error)
+	// UpdateConversationRun updates an existing owned snapshot without inserting or transferring ownership.
+	UpdateConversationRun(ctx context.Context, item *domainconversation.Run) error
 	ListConversationEventLogs(ctx context.Context, filter ConversationEventLogListFilter, offset int, limit int) ([]domainconversation.EventLog, int64, error)
 	GetConversationEventLog(ctx context.Context, eventID uint) (*domainconversation.EventLog, error)
+	GetConversationToolCallDetail(ctx context.Context, userID uint, runID string, toolCallID string) (*domainconversation.ToolCallDetail, error)
 }
 
 // ConversationEventLogListFilter 描述管理员对话事件列表筛选和排序条件。

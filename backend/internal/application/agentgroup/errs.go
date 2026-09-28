@@ -1,6 +1,7 @@
 package agentgroup
 
 import "errors"
+import "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 
 var (
 	// ErrAgentGroupNotFound 群组不存在或无权限。
@@ -34,7 +35,7 @@ var (
 	// ErrInvalidAgentGroupModelOverride 模型覆盖不合法。
 	ErrInvalidAgentGroupModelOverride = errors.New("invalid agent group model override")
 	// ErrInvalidReasoningEffort 思考强度档位不合法。
-	ErrInvalidReasoningEffort = errors.New("invalid reasoning effort")
+	ErrInvalidReasoningEffort = apperr.New("request.invalid_reasoning_effort", "invalid reasoning effort")
 	// ErrAgentGroupInvalidMemberOrder 成员排序输入不合法。
 	ErrAgentGroupInvalidMemberOrder = errors.New("invalid agent group member order")
 	// ErrAgentGroupHistoryExists 保留用于兼容旧调用方；群组删除不再因历史记录失败。

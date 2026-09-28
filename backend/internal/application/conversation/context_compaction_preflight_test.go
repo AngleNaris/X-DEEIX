@@ -54,7 +54,6 @@ func preflightTestService(t *testing.T, cfg config.Config, repo repository.Compa
 		nil,
 		nil,
 		nil,
-		nil,
 		compactSvc,
 		nil,
 		nil,
@@ -64,52 +63,50 @@ func preflightTestService(t *testing.T, cfg config.Config, repo repository.Compa
 	)
 }
 
-func TestResolveContextCompactionTriggerUsesStrictestBudget(t *testing.T) {
-	// 200000 - 4000 - 13000 = 183000
-	caps := `{"contextWindow":200000,"maxOutputTokens":4000}`
-	cfg := config.Config{
-		ContextCompactTrigger: 65536,
-		ContextMaxInputTokens: 31000,
+func TestResolveContextCompactionTriggerUsesModelAwarePercentage(t *testing.T) {
+	cases := []struct {
+		name, caps string
+		percent    int
+		want       int64
+	}{
+		{"large model", `{"contextWindow":200000,"maxOutputTokens":4000}`, 80, 146400},
+		{"smaller model", `{"contextWindow":32000,"maxOutputTokens":4000}`, 80, 12000},
+		{"budget floor", `{"contextWindow":16384,"maxOutputTokens":4096}`, 80, 4000},
+		{"percentage floor", `{"contextWindow":32000,"maxOutputTokens":4000}`, 10, 4000},
+		{"disabled", `{"contextWindow":32000,"maxOutputTokens":4000}`, 0, 0},
 	}
-	if got := resolveContextCompactionTrigger(cfg, "unknown-custom-model", caps); got != 31000 {
-		t.Fatalf("expected ContextMaxInputTokens to lower the trigger, got %d", got)
-	}
-
-	cfg.ContextMaxInputTokens = 0
-	if got := resolveContextCompactionTrigger(cfg, "unknown-custom-model", caps); got != 65536 {
-		t.Fatalf("expected runtime trigger to stay when model budget is larger, got %d", got)
-	}
-
-	// 32000 - 4000 - 13000 = 15000
-	strictCaps := `{"contextWindow":32000,"maxOutputTokens":4000}`
-	if got := resolveContextCompactionTrigger(cfg, "unknown-custom-model", strictCaps); got != 15000 {
-		t.Fatalf("expected model capability budget to lower the trigger, got %d", got)
-	}
-
-	cfg.ContextCompactTrigger = 0
-	if got := resolveContextCompactionTrigger(cfg, "unknown-custom-model", strictCaps); got != 0 {
-		t.Fatalf("expected disabled runtime trigger to stay disabled, got %d", got)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := config.Config{ContextCompactTriggerPercent: tc.percent, ContextCompactTrigger: 65536, ContextMaxInputTokens: 31000}
+			if got := resolveContextCompactionTrigger(cfg, "unknown-custom-model", tc.caps); got != tc.want {
+				t.Fatalf("threshold=%d, want %d", got, tc.want)
+			}
+			cfg.ContextMaxInputTokens = 0
+			if got := resolveContextCompactionTrigger(cfg, "unknown-custom-model", tc.caps); got != tc.want {
+				t.Fatalf("attachment budget must not change compaction threshold: %d", got)
+			}
+		})
 	}
 }
 
 func TestMaybeCompactContextBeforePromptCreatesSnapshotForOversizedHistory(t *testing.T) {
 	cfg := config.Config{
-		ContextCompactEnabled:  true,
-		ContextCompactTrigger:  65536,
-		ContextMaxInputTokens:  1000,
-		ContextCompactPreserve: 1,
+		ContextCompactEnabled:        true,
+		ContextCompactTriggerPercent: 80,
+		ContextMaxInputTokens:        1000,
+		ContextCompactPreserve:       1,
 	}
 	repo := &preflightCompactRepoStub{}
 	svc := preflightTestService(t, cfg, repo)
 
-	large := strings.Repeat("上下文内容", 200)
+	large := strings.Repeat("上下文内容", 1600)
 	messages := []model.Message{
 		{ID: 1, PublicID: "m1", Role: "user", Content: large},
 		{ID: 2, PublicID: "m2", ParentMessageID: preflightMessageIDPtr(1), Role: "assistant", Content: large},
 		{ID: 3, PublicID: "m3", ParentMessageID: preflightMessageIDPtr(2), Role: "user", Content: "latest"},
 		{ID: 4, PublicID: "m4", ParentMessageID: preflightMessageIDPtr(3), Role: "assistant", Content: "latest answer"},
 	}
-	route := &channel.ResolvedRoute{UpstreamModel: "unknown-custom-model"}
+	route := &channel.ResolvedRoute{UpstreamModel: "unknown-custom-model", ModelCapabilitiesJSON: `{"contextWindow":16384,"maxOutputTokens":4096}`}
 	policy := contextCompactionPolicy{AdminEnabled: true, UserEnabled: true}
 
 	snapshot := svc.maybeCompactContextBeforePrompt(
@@ -139,10 +136,10 @@ func TestMaybeCompactContextBeforePromptCreatesSnapshotForOversizedHistory(t *te
 
 func TestMaybeCompactContextBeforePromptSkipsWhenDisabledOrSmall(t *testing.T) {
 	cfg := config.Config{
-		ContextCompactEnabled:  true,
-		ContextCompactTrigger:  65536,
-		ContextMaxInputTokens:  100000,
-		ContextCompactPreserve: 1,
+		ContextCompactEnabled:        true,
+		ContextCompactTriggerPercent: 80,
+		ContextMaxInputTokens:        100000,
+		ContextCompactPreserve:       1,
 	}
 	repo := &preflightCompactRepoStub{}
 	svc := preflightTestService(t, cfg, repo)
@@ -163,7 +160,7 @@ func TestMaybeCompactContextBeforePromptSkipsWhenDisabledOrSmall(t *testing.T) {
 	}
 
 	// Disabled policy must never compact, even for oversized history.
-	cfg.ContextMaxInputTokens = 10
+	messages[0].Content = strings.Repeat("上下文内容", 40000)
 	if snapshot := svc.maybeCompactContextBeforePrompt(
 		context.Background(), cfg, contextCompactionPolicy{AdminEnabled: true, UserEnabled: false},
 		route, "unknown-custom-model", SendMessageInput{UserID: 7, ConversationID: 9}, "run_disabled", messages,

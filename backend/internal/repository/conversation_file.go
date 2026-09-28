@@ -84,6 +84,8 @@ type FileEmbeddingArtifactsRepository interface {
 
 // EmbeddingRepository 封装文件 embedding 状态与分片能力。
 type EmbeddingRepository interface {
+	GetActiveFileObjectsByIDs(ctx context.Context, userID uint, fileIDs []string) ([]domainconversation.FileObject, error)
+	QueueFileEmbedding(ctx context.Context, userID uint, fileID string, embeddingSignature string) (bool, error)
 	VectorStoreAvailable(ctx context.Context) (bool, error)
 	GetActiveFileObjectByID(ctx context.Context, userID uint, fileID string) (*domainconversation.FileObject, error)
 	GetFileObjectProcessingByObjectID(ctx context.Context, fileObjID uint) (*domainconversation.FileObjectProcessing, error)
@@ -98,7 +100,7 @@ type EmbeddingRepository interface {
 	// CountFilesByEmbedStatus 统计指定 embed_status 的文件数量。
 	CountFilesByEmbedStatus(ctx context.Context, status string) (int64, error)
 	// ListFilesForReindex 分页返回需要重建向量的文件（embed_status 为 none、stale 或 failed）。
-	ListFilesForReindex(ctx context.Context, limit int, afterID uint) ([]domainconversation.FileObject, error)
+	ListFilesForReindex(ctx context.Context, limit int, afterID uint, includeEmpty bool) ([]domainconversation.FileObject, error)
 }
 
 // RAGRepository 封装向量检索能力。
@@ -121,8 +123,11 @@ type ReplaceFileObjectContentResult struct {
 type FileProcessingRepository interface {
 	GetActiveFileObjectByID(ctx context.Context, userID uint, fileID string) (*domainconversation.FileObject, error)
 	UpdateFileObjectProcessingState(ctx context.Context, item *domainconversation.FileObjectProcessing) error
+	UpdateClaimedFileObjectProcessingState(ctx context.Context, item *domainconversation.FileObjectProcessing, attemptID string) (bool, error)
 	GetFileObjectProcessingByObjectID(ctx context.Context, fileObjID uint) (*domainconversation.FileObjectProcessing, error)
 	CloneFileObjectProcessingState(ctx context.Context, sourceFileObjID uint, targetFileObjID uint, userID uint) error
+	TryClaimFileObjectProcessing(ctx context.Context, userID uint, fileID string, allowRecovery bool, extractorVersion string, attemptID string) (bool, error)
+	ResetFileObjectProcessingForRetry(ctx context.Context, userID uint, fileID string, attemptID string) (bool, error)
 	UpdateFileObjectProcessing(ctx context.Context, userID uint, fileID string, input UpdateFileObjectProcessingInput) error
 	// CanRemoveExtractStoragePath 判断提取产物是否已无任何保留引用（stale worker 清理用）。
 	CanRemoveExtractStoragePath(ctx context.Context, fileObjID uint, userID uint, extractPath string) (bool, error)
@@ -163,6 +168,12 @@ func (input UpdateFileObjectProcessingInput) IsZero() bool {
 		input.PageCount == nil &&
 		input.ExtractorVersion == nil &&
 		input.ExtractedAt == nil
+}
+
+// FileProcessingStatusRepository 封装单个与批量文件处理状态读取能力。
+type FileProcessingStatusRepository interface {
+	FileProcessingRepository
+	GetActiveFileProcessingStatusesByIDs(ctx context.Context, userID uint, fileIDs []string) ([]domainconversation.FileObject, error)
 }
 
 // ConversationSettingsRepository 封装会话域设置读取能力。

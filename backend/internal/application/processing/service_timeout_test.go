@@ -9,6 +9,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/extraction"
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 )
 
 func TestExtractTextForProcessingRequiresExtractionService(t *testing.T) {
@@ -72,6 +73,34 @@ func (r *processingStateRepositoryStub) TryClaimFileObjectProcessing(
 
 func (*processingStateRepositoryStub) ResetFileObjectProcessingForRetry(context.Context, uint, string, string) (bool, error) {
 	return true, nil
+}
+
+func (*processingStateRepositoryStub) UpdateFileObjectProcessing(context.Context, uint, string, repository.UpdateFileObjectProcessingInput) error {
+	return nil
+}
+
+func (*processingStateRepositoryStub) CanRemoveExtractStoragePath(context.Context, uint, uint, string) (bool, error) {
+	return true, nil
+}
+
+func (*processingStateRepositoryStub) ReplaceFileObjectContent(context.Context, uint, string, string, string, int64) (repository.ReplaceFileObjectContentResult, error) {
+	return repository.ReplaceFileObjectContentResult{}, nil
+}
+
+func (*processingStateRepositoryStub) ClaimFileProcessingQueue(context.Context, uint, string, string) (bool, error) {
+	return true, nil
+}
+
+func (*processingStateRepositoryStub) ReleaseFileProcessingQueueClaim(context.Context, uint, string, string) error {
+	return nil
+}
+
+func (*processingStateRepositoryStub) ClaimFileProcessingExecution(context.Context, uint, string, string, string, time.Time) (bool, error) {
+	return true, nil
+}
+
+func (*processingStateRepositoryStub) ClaimRecoverableFilesForProcessing(context.Context, time.Time, time.Time, time.Time, int) ([]domainconversation.FileObject, error) {
+	return nil, nil
 }
 
 func (*processingStateRepositoryStub) GetActiveFileProcessingStatusesByIDs(context.Context, uint, []string) ([]domainconversation.FileObject, error) {

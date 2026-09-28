@@ -222,6 +222,9 @@ func artifactFileExtension(mimeType string) string {
 // attachToolArtifacts 将工具结果中的多模态块落库为消息附件。
 // 失败不阻断工具循环（仅记日志）：附件化是增强能力，工具结果仍按原路径回喂模型。
 func (s *Service) attachToolArtifacts(ctx context.Context, input executeAssistantToolCallsInput, outputJSON string) {
+	if input.Ephemeral {
+		return
+	}
 	blocks := extractToolArtifactBlocks(outputJSON)
 	if len(blocks) == 0 {
 		return

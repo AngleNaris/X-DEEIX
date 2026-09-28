@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"go.uber.org/zap"
 )
@@ -1302,3 +1302,4 @@ func platformToolGuidancePrompt() string {
 func traceIDFromContext(ctx context.Context) string {
 	return traceid.FromContext(ctx)
 }
+

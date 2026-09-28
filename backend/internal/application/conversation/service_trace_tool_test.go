@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/toolresult"
 )
 
 func TestSummarizeToolTracePayloadCountsFailedCalls(t *testing.T) {
@@ -44,7 +46,7 @@ func TestBuildToolTraceMarksReusedCallsAsCompleted(t *testing.T) {
 	if !strings.Contains(markdown, "已复用") {
 		t.Fatalf("expected reused status in markdown, got %q", markdown)
 	}
-	items := normalizeTraceToolCalls(payload["tool_calls"])
+	items := toolTraceWireCalls(t, payload)
 	if len(items) != 1 || items[0]["status"] != "reused" {
 		t.Fatalf("expected reused payload status, got %#v", items)
 	}
@@ -60,7 +62,7 @@ func TestBuildToolTraceStoresPreviewMetadataInsteadOfFullOutput(t *testing.T) {
 		OutputJSON: largeOutput,
 	}})
 
-	items := normalizeTraceToolCalls(payload["tool_calls"])
+	items := toolTraceWireCalls(t, payload)
 	if len(items) != 1 {
 		t.Fatalf("expected one tool call, got %#v", items)
 	}
@@ -74,20 +76,20 @@ func TestBuildToolTraceStoresPreviewMetadataInsteadOfFullOutput(t *testing.T) {
 	if _, ok := item["input"]; ok {
 		t.Fatalf("tool trace must not store full input: %#v", item)
 	}
-	if got := traceInt64(item["output_size"]); got != int64(len(largeOutput)) {
-		t.Fatalf("expected output size metadata, got %d", got)
+	if got := item["output_size"]; got != float64(len(largeOutput)) {
+		t.Fatalf("expected output size metadata, got %v", got)
 	}
 	if item["output_truncated"] != true {
 		t.Fatalf("expected truncated output marker, got %#v", item["output_truncated"])
 	}
-	if got := strings.TrimSpace(getTraceString(item["input_detail"])); got != `{"url":"https://example.com/large"}` {
+	if got := strings.TrimSpace(toolTraceWireString(t, item, "input_detail")); got != `{"url":"https://example.com/large"}` {
 		t.Fatalf("expected full small input detail, got %q", got)
 	}
-	detail := strings.TrimSpace(getTraceString(item["output_detail"]))
+	detail := strings.TrimSpace(toolTraceWireString(t, item, "output_detail"))
 	if detail == "" || detail == largeOutput || len([]rune(detail)) > toolTraceDetailMaxChars+3 {
 		t.Fatalf("expected bounded output detail, got len=%d", len([]rune(detail)))
 	}
-	preview := strings.TrimSpace(getTraceString(item["output_preview"]))
+	preview := strings.TrimSpace(toolTraceWireString(t, item, "output_preview"))
 	if preview == "" || strings.Contains(preview, strings.Repeat("x", 512)) {
 		t.Fatalf("expected compact output preview, got %q", preview)
 	}
@@ -110,7 +112,7 @@ func TestToolTracePayloadMergesStreamingPlaceholderWithFinalCall(t *testing.T) {
 	}})
 
 	mergeToolTracePayload(streamingPayload, completedPayload)
-	items := normalizeTraceToolCalls(streamingPayload["tool_calls"])
+	items := toolTraceWireCalls(t, streamingPayload)
 	if len(items) != 1 {
 		t.Fatalf("expected one merged tool call, got %#v", items)
 	}
@@ -191,7 +193,11 @@ func TestBuildMessageProcessTraceDTOReconcilesOnlyMatchingApprovalToolCall(t *te
 
 func TestTracePayloadJSONBoundsOversizedPayload(t *testing.T) {
 	secret := strings.Repeat("x", maxTracePayloadBytes+1)
-	serialized := tracePayloadJSON(map[string]interface{}{"upstream_debug": secret})
+	debugJSON, err := json.Marshal(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serialized := tracePayloadJSON(&tracePayload{UpstreamDebug: debugJSON})
 	if len(serialized) >= maxTracePayloadBytes {
 		t.Fatalf("expected bounded trace payload, got %d bytes", len(serialized))
 	}
@@ -345,7 +351,7 @@ func TestSyncStructuredThinkDeduplicatesOnlyWithinGenerationCall(t *testing.T) {
 	eventCount := len(recorder.events)
 	liveEventCount := len(events)
 
-	recorder.syncStructuredThink("same reasoning", "", map[string]interface{}{"status": "completed"})
+	recorder.syncStructuredThink("same reasoning", "", &tracePayload{Status: "completed"})
 	recorder.completeUpstreamThink()
 
 	if recorder.upstreamThink != completed {
@@ -359,7 +365,7 @@ func TestSyncStructuredThinkDeduplicatesOnlyWithinGenerationCall(t *testing.T) {
 	}
 
 	recorder.beginGenerationCall()
-	recorder.syncStructuredThink("same reasoning", "", map[string]interface{}{"status": "completed"})
+	recorder.syncStructuredThink("same reasoning", "", &tracePayload{Status: "completed"})
 	recorder.completeUpstreamThink()
 	if recorder.upstreamThink == completed || recorder.upstreamThink.roundID == completed.roundID {
 		t.Fatal("expected identical reasoning from a new generation call to start a new round")
@@ -402,7 +408,7 @@ func TestFailedUpstreamThinkingFlushesBufferedContent(t *testing.T) {
 	}
 }
 
-func TestUpstreamThinkingLiveDeltaSkipsOversizedContent(t *testing.T) {
+func TestUpstreamThinkingLiveDeltaChunksOversizedContent(t *testing.T) {
 	var events []map[string]interface{}
 	recorder := &messageTraceRecorder{
 		cfg: config.Config{
@@ -419,17 +425,32 @@ func TestUpstreamThinkingLiveDeltaSkipsOversizedContent(t *testing.T) {
 		},
 	}
 
-	largeDelta := strings.Repeat("x", upstreamThinkLiveReplaceBytes+1)
+	largeDelta := strings.Repeat("思", upstreamThinkLiveReplaceBytes/3+1)
 	recorder.appendUpstreamReasoning(messageTraceThinkKindContent, largeDelta, nil)
 
-	if len(events) != 1 {
-		t.Fatalf("expected one lightweight status event, got %d", len(events))
+	if len(events) != 2 {
+		t.Fatalf("expected two bounded UTF-8 events, got %d", len(events))
 	}
-	if _, ok := events[0]["delta"]; ok {
-		t.Fatalf("oversized thinking delta must not be sent in live event: %#v", events[0])
+	var reconstructed string
+	for _, event := range events {
+		for _, key := range []string{"contentMarkdown", "delta"} {
+			value, exists := event[key]
+			if !exists {
+				continue
+			}
+			text, ok := value.(string)
+			if !ok || !utf8.ValidString(text) || len(text) > upstreamThinkLiveReplaceBytes {
+				t.Fatalf("invalid or oversized %s chunk: %#v", key, value)
+			}
+			if key == "contentMarkdown" {
+				reconstructed = text
+			} else {
+				reconstructed += text
+			}
+		}
 	}
-	if _, ok := events[0]["contentMarkdown"]; ok {
-		t.Fatalf("oversized thinking content must not be sent in live event: %#v", events[0])
+	if reconstructed != largeDelta {
+		t.Fatal("bounded live chunks must preserve the complete reasoning text")
 	}
 	if recorder.upstreamThink == nil || recorder.upstreamThink.contentMarkdown != largeDelta {
 		t.Fatal("expected oversized thinking content to remain available for final trace")
@@ -438,7 +459,7 @@ func TestUpstreamThinkingLiveDeltaSkipsOversizedContent(t *testing.T) {
 
 func TestBuildMessageProcessTraceDTOExtractsPromptTrace(t *testing.T) {
 	payload := map[string]interface{}{
-		"prompt_trace": messagePromptTracePayload(&model.MessagePromptTrace{
+		"prompt_trace": tracePayloadFromPromptTrace(&model.MessagePromptTrace{
 			Mode:                  "stateful",
 			PromptFingerprint:     "fp_1",
 			StatefulUsed:          true,
@@ -612,34 +633,24 @@ func TestBuildCompactionProcessTraceUsesReadableLines(t *testing.T) {
 	if markdown != want {
 		t.Fatalf("unexpected compaction markdown:\n%s", markdown)
 	}
-	stage, ok := payload[processTracePayloadStage].(map[string]interface{})
-	if !ok {
+	stage := payload.TraceStage
+	if stage == nil {
 		t.Fatalf("expected compaction trace stage payload, got %#v", payload)
 	}
-	if stage["kind"] != processTraceKindCompaction || stage["status"] != processTraceStatusCompleted {
+	if stage.Kind != processTraceKindCompaction || stage.Status != processTraceStatusCompleted {
 		t.Fatalf("unexpected compaction trace stage: %#v", stage)
 	}
 }
 
 func TestMergeTracePayloadAppendsProcessTraceStages(t *testing.T) {
-	payload := map[string]interface{}{}
-	mergeTracePayload(payload, map[string]interface{}{
-		processTracePayloadStage: map[string]interface{}{
-			"kind":   processTraceKindFileContext,
-			"status": processTraceStatusReady,
-		},
-	})
-	mergeTracePayload(payload, map[string]interface{}{
-		processTracePayloadStage: map[string]interface{}{
-			"kind":   processTraceKindRetrieval,
-			"status": processTraceStatusCompleted,
-		},
-	})
-	stages := normalizeProcessTraceStagePayloads(payload[processTracePayloadStages])
+	payload := &tracePayload{}
+	mergeTracePayload(payload, &tracePayload{TraceStage: &traceStage{Kind: processTraceKindFileContext, Status: processTraceStatusReady}})
+	mergeTracePayload(payload, &tracePayload{TraceStage: &traceStage{Kind: processTraceKindRetrieval, Status: processTraceStatusCompleted}})
+	stages := payload.Stages
 	if len(stages) != 2 {
 		t.Fatalf("expected two accumulated trace stages, got %#v", payload)
 	}
-	if stages[0]["kind"] != processTraceKindFileContext || stages[1]["kind"] != processTraceKindRetrieval {
+	if stages[0].Kind != processTraceKindFileContext || stages[1].Kind != processTraceKindRetrieval {
 		t.Fatalf("trace stages were not preserved in append order: %#v", stages)
 	}
 }
@@ -651,11 +662,7 @@ func TestSummarizeToolTraceDraftMatchesRenderedRows(t *testing.T) {
 			"**fetch**：执行失败；10581ms；context deadline exceeded",
 			"**fetch**：执行失败；10464ms；context deadline exceeded",
 		}, "\n"),
-		payload: map[string]interface{}{
-			"tool_calls": []map[string]interface{}{
-				{"name": "fetch", "status": "error"},
-			},
-		},
+		payload: &tracePayload{ToolCalls: []traceToolCall{{Name: "fetch", Status: "error"}}},
 	}
 
 	if got := summarizeToolTraceDraft(draft); got != "完成 3 次工具调用，3 次失败" {
@@ -665,28 +672,28 @@ func TestSummarizeToolTraceDraftMatchesRenderedRows(t *testing.T) {
 
 func TestToolOutputPreviewUsesMCPTextContent(t *testing.T) {
 	raw := `{"content":[{"type":"text","text":"找到 3 条相关结果"}]}`
-	if got := toolOutputPreview(raw); got != "找到 3 条相关结果" {
+	if got := toolOutputPreview(raw, toolresult.BuildPresentation(raw)); got != "找到 3 条相关结果" {
 		t.Fatalf("expected MCP text content preview, got %q", got)
 	}
 }
 
 func TestToolOutputPreviewUsesMCPStructuredContent(t *testing.T) {
 	raw := `{"structuredContent":{"results":[{"title":"DEEIX Chat 文档","url":"https://example.com/docs"}]}}`
-	if got := toolOutputPreview(raw); got != "DEEIX Chat 文档 https://example.com/docs" {
+	if got := toolOutputPreview(raw, toolresult.BuildPresentation(raw)); got != "DEEIX Chat 文档 https://example.com/docs" {
 		t.Fatalf("expected MCP structured content preview, got %q", got)
 	}
 }
 
 func TestToolOutputPreviewParsesJSONTextBlock(t *testing.T) {
 	raw := `{"content":[{"type":"text","text":"{\"results\":[{\"title\":\"搜索结果\",\"url\":\"https://example.com\"}]}"}]}`
-	if got := toolOutputPreview(raw); got != "搜索结果 https://example.com" {
+	if got := toolOutputPreview(raw, toolresult.BuildPresentation(raw)); got != "搜索结果 https://example.com" {
 		t.Fatalf("expected JSON text block preview, got %q", got)
 	}
 }
 
 func TestToolOutputPreviewFallsBackForNonMCPJSON(t *testing.T) {
 	raw := `{"items":[{"message":"普通 JSON 结果"}]}`
-	if got := toolOutputPreview(raw); got != "普通 JSON 结果" {
+	if got := toolOutputPreview(raw, toolresult.BuildPresentation(raw)); got != "普通 JSON 结果" {
 		t.Fatalf("expected generic JSON preview fallback, got %q", got)
 	}
 }

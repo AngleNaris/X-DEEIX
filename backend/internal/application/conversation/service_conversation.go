@@ -166,16 +166,11 @@ func (s *Service) CreateConversation(ctx context.Context, userID uint, title str
 // ListConversations 分页查询会话。
 func (s *Service) ListConversations(ctx context.Context, input ListConversationsInput) ([]model.Conversation, int64, error) {
 	offset, limit := pagination.Offset(input.Page, input.PageSize)
-	return s.repo.ListConversationsByUser(ctx, repository.ConversationListInput{
-		UserID:        input.UserID,
-		Offset:        offset,
-		Limit:         limit,
-		StatusFilter:  input.StatusFilter,
-		StarredFilter: input.StarredFilter,
-		ShareFilter:   input.ShareFilter,
-		ProjectFilter: normalizeConversationProjectFilter(input.ProjectFilter),
-		SearchQuery:   input.SearchQuery,
-	})
+	return s.repo.ListConversationsByUser(
+		ctx, input.UserID, offset, limit,
+		input.StatusFilter, input.StarredFilter, input.ShareFilter,
+		normalizeConversationProjectFilter(input.ProjectFilter), input.SearchQuery,
+	)
 }
 
 // SearchConversations 分页搜索当前用户的会话，并通过前瞻记录判断是否还有下一页。
@@ -512,22 +507,6 @@ func (s *Service) UpdateAssistantMessageContent(
 	}
 	updated = &items[0]
 	return updated, nil
-}
-
-// DeleteMessage 软删除当前用户的一条消息，仅删除该条；其子消息上提到父消息以保持分支连续。
-func (s *Service) DeleteMessage(ctx context.Context, userID uint, messagePublicID string) (int64, error) {
-	normalizedPublicID := strings.TrimSpace(messagePublicID)
-	if normalizedPublicID == "" {
-		return 0, ErrMessageNotFound
-	}
-	deleted, err := s.repo.DeleteMessageByPublicID(ctx, userID, normalizedPublicID)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return 0, ErrMessageNotFound
-		}
-		return 0, err
-	}
-	return deleted, nil
 }
 
 // RenameConversation 重命名会话。

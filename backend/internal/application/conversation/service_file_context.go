@@ -247,7 +247,7 @@ func buildConversationFileContextPlan(
 // transcript and dynamic context. Full-text attachments may use at most 40% of
 // the strictest configured model/input budget.
 func fullContextAttachmentTokenBudget(cfg config.Config, capabilityModelName string, capabilitiesJSON string) int64 {
-	budget := int64(llm.EffectiveContextBudgetFromCapabilities(capabilityModelName, capabilitiesJSON))
+	budget := int64(domainchannel.EffectiveContextBudgetFromCapabilitiesWithFallback(capabilityModelName, capabilitiesJSON, cfg.ContextWindowFallbackTokens))
 	if maxInput := int64(cfg.ContextMaxInputTokens); maxInput > 0 && (budget <= 0 || maxInput < budget) {
 		budget = maxInput
 	}
@@ -387,7 +387,7 @@ func shouldUseRAGForAttachment(item AttachmentInput, fileMode string, cfg config
 func canRetrieveAttachment(item AttachmentInput, ragAvailable bool) bool {
 	return ragAvailable &&
 		strings.TrimSpace(item.FileID) != "" &&
-		!item.RAGOptOut &&
+		!item.RagOptOut &&
 		strings.EqualFold(strings.TrimSpace(item.EmbedStatus), "ready")
 }
 
@@ -437,7 +437,7 @@ func (s *Service) resolveKnowledgeBaseRAGFiles(
 	ready := make([]model.FileObject, 0, len(files))
 	seen := make(map[uint]struct{}, len(files))
 	for _, file := range files {
-		if file.ID == 0 || !file.ProcessingReady || file.RAGOptOut || !strings.EqualFold(strings.TrimSpace(file.EmbedStatus), "ready") || file.ChunkCount <= 0 {
+		if file.ID == 0 || !file.ProcessingReady || file.RagOptOut || !strings.EqualFold(strings.TrimSpace(file.EmbedStatus), "ready") || file.ChunkCount <= 0 {
 			continue
 		}
 		if _, exists := seen[file.ID]; exists {

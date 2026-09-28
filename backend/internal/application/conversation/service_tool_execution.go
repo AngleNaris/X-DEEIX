@@ -12,11 +12,13 @@ import (
 	"time"
 
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/mcp"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/mcp"
 )
 
 type executeAssistantToolCallsInput struct {
+	MCPBindings             map[string]mcpToolCallBinding
+	Ephemeral               bool
 	UserID                  uint
 	ConversationID          uint
 	MessageID               uint
@@ -39,6 +41,7 @@ type executeAssistantToolCallsInput struct {
 }
 
 type executeAssistantToolCallsResult struct {
+	MCPToolUsage          []MCPToolUsageItem
 	Rows                  []model.ToolCall
 	ToolResults           []llm.ToolResult
 	ExecutedToolCalls     []llm.ToolCall
@@ -84,6 +87,7 @@ func newToolExecutionLedger() *toolExecutionLedger {
 }
 
 func (s *Service) executeAssistantToolCalls(ctx context.Context, input executeAssistantToolCallsInput) executeAssistantToolCallsResult {
+	var mcpToolUsage []MCPToolUsageItem
 	toolCalls := input.ToolCalls
 	if input.ToolCallLimit > 0 && len(toolCalls) > input.ToolCallLimit {
 		toolCalls = toolCalls[:input.ToolCallLimit]
@@ -138,6 +142,13 @@ func (s *Service) executeAssistantToolCalls(ctx context.Context, input executeAs
 		}
 
 		mcpConfig := resolveMCPConfig(modelToolName, input.MCPConfigs)
+		binding, hasBinding := input.MCPBindings[modelToolName]
+		if !hasBinding && input.ToolRuntime != nil {
+			binding, hasBinding = input.ToolRuntime.mcpBindings[modelToolName]
+		}
+		if hasBinding {
+			mcpConfig = &binding.Config
+		}
 		if modelToolName == systemMultimodalAnalyzeToolName {
 			mappedName, disclosed := input.ToolNameMap[modelToolName]
 			_, hasSchema := input.ToolSchemas[modelToolName]
@@ -362,8 +373,13 @@ func (s *Service) executeAssistantToolCalls(ctx context.Context, input executeAs
 			if row.OutputJSON == "" {
 				row.OutputJSON = "{}"
 			}
-			// MCP 工具多模态产物（image/audio 等 content 块）附件化落库为消息附件。
-			s.attachToolArtifacts(ctx, input, row.OutputJSON)
+			if hasBinding {
+				mcpToolUsage = mergeMCPToolUsage(mcpToolUsage, []MCPToolUsageItem{{ServerID: binding.ServerID, ServerName: binding.ServerName, ToolName: binding.ToolName, PriceNanousd: binding.PriceNanousd, CallCount: 1}})
+			}
+			// Ephemeral executions may be metered, but must not create stored artifacts.
+			if !input.Ephemeral {
+				s.attachToolArtifacts(ctx, input, row.OutputJSON)
+			}
 			// __export__ 标记：从共享卷读取文件落库为用户文件并挂载为消息附件卡片。
 			// 附件卡片已直接展示给用户（可点击预览/下载），无需模型再给出下载链接，
 			// 仅提示模型文件已作为附件发送，避免在回答中重复输出链接。
@@ -427,6 +443,7 @@ func (s *Service) executeAssistantToolCalls(ctx context.Context, input executeAs
 		input.ToolRuntime.destroyCredentialSecretWrites(credentialWrites)
 	}
 	return executeAssistantToolCallsResult{
+		MCPToolUsage:          mcpToolUsage,
 		Rows:                  rows,
 		ToolResults:           toolResults,
 		ExecutedToolCalls:     executedToolCalls,
@@ -493,7 +510,7 @@ func buildRepeatedToolSlot(row model.ToolCall, modelToolName string, previous to
 }
 
 func (s *Service) persistToolCallForInput(ctx context.Context, input executeAssistantToolCallsInput, row *model.ToolCall) bool {
-	if input.SkipPersistence || row == nil {
+	if input.Ephemeral || input.SkipPersistence || row == nil {
 		return false
 	}
 	persistedRows := []model.ToolCall{*row}
@@ -927,3 +944,4 @@ func resolveMCPConfig(toolName string, configs map[string]mcp.CallConfig) *mcp.C
 	}
 	return &cfg
 }
+

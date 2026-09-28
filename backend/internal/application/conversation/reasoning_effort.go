@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
 // 思考强度语义档位（系统级统一语义，按 API 端点类型映射为具体参数）。
@@ -256,3 +256,4 @@ func (s *Service) injectReasoningEffortOptions(
 	}
 	return applyReasoningEffortInjection(route.Protocol, inputLevel, level, base)
 }
+
