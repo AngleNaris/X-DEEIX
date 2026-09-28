@@ -9,6 +9,8 @@ import { SidebarConversationsProvider } from "@/entities/conversation";
 import { AgentGroupFeatureProvider } from "@/features/agent-groups/context/agent-group-feature-context";
 import { AppSidebar } from "@/features/layouts/components/navigation/app-sidebar";
 import { MobileHeader } from "@/features/layouts/components/sections/mobile-header";
+import { LayoutConversationNavigationProvider } from "@/features/layouts/context/layout-conversation-navigation-context";
+import { MobileHeaderActionProvider } from "@/features/layouts/context/mobile-header-action-context";
 import { ChatSessionProvider, useChatSession } from "@/features/chat";
 import { AppearancePreferencesSync, UserTimeZoneSync } from "@/features/settings";
 import { SidebarInset, SidebarProvider, useSidebarActions, useSidebarIsMobile, useSidebarMobileOpen } from "@/components/ui/sidebar";
@@ -90,14 +92,18 @@ export function ProjectLayout({
       <AnnouncementDialogHost />
       <AgentGroupFeatureProvider>
         <SidebarProvider className="h-svh overflow-hidden" defaultOpen={defaultSidebarOpen}>
-          <SidebarConversationsProvider
-            bulkPendingTitle={tRecent("dialogs.bulk.pending")}
-            newConversationTitle={tRecent("newChat")}
-          >
-            <ChatSessionProvider>
-              <ProjectLayoutShell>{children}</ProjectLayoutShell>
-            </ChatSessionProvider>
-          </SidebarConversationsProvider>
+          <LayoutConversationNavigationProvider>
+            <SidebarConversationsProvider
+              bulkPendingTitle={tRecent("dialogs.bulk.pending")}
+              newConversationTitle={tRecent("newChat")}
+            >
+              <ChatSessionProvider>
+                <MobileHeaderActionProvider>
+                  <ProjectLayoutShell>{children}</ProjectLayoutShell>
+                </MobileHeaderActionProvider>
+              </ChatSessionProvider>
+            </SidebarConversationsProvider>
+          </LayoutConversationNavigationProvider>
         </SidebarProvider>
       </AgentGroupFeatureProvider>
     </>

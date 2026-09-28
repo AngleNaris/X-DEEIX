@@ -45,9 +45,11 @@
     "newChat": "New chat",
     "search": "Search",
     "recent": "Recent",
+    "canvasStudio": "Image Canvas",
     "files": "Files",
     "knowledgeBases": "Knowledge bases",
     "skillsPrompt": "Skills & Prompts",
+    "agentGroups": "Agent Groups",
     "searchTitle": "Search",
     "searchDescription": "Search conversation titles, labels, projects, and message content",
     "searchPlaceholder": "Search conversations or message content",
@@ -80,7 +82,9 @@
     "fallbackUser": "User",
     "today": "Today",
     "archived": "Archived",
-    "yesterday": "Yesterday"
+    "yesterday": "Yesterday",
+    "docCards": "Cards",
+    "artifacts": "Artifacts"
   },
   "time": {
     "todayTime": "{time}",
