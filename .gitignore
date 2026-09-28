@@ -166,6 +166,8 @@ data/*
 docs/rules/*
 frontend/public/vendor/lobehub-icons/
 frontend/public/pwa/generated/
+apps/web/public/vendor/
+apps/web/public/pwa/generated/
 docker-compose.local.yml
 
 .DS_Store
@@ -191,3 +193,18 @@ tools/sandbox-mcp/sandbox-mcp
 # SHA256SUMS、manifest.env 仅随发布流程 scp 分发；*.tar 一律不提交，仓库不保留任何 release 豁免。
 /release/
 deployment-result.env
+
+# 本地验证/发布操作产物（整类不进版本库）
+/output/
+.codex-runtime-*/
+/.codex-candidate-config-*.yaml
+/.playwright-cli/
+/.agents/
+/.mancode/
+*.tar
+
+# mancode continuity 自动生成的 bootstrap（团队共享内容请放 docs/）
+/AGENTS.md
+
+# 临时构建错误输出（建议直接删文件，此条仅兜底）
+/backend/conversation_build_errors.txt
