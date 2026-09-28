@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "acceptance": "AC-1",
+      "method": "automated",
+      "result": "pass",
+      "command": "go test ./internal/application/conversation -run 'TestMaybeCompactContextBeforePromptCreatesSnapshotForOversizedHistory' -count=1 (golang:1.27 container, CGO_ENABLED=1)",
+      "exitCode": 0,
+      "evidence": "超过路由有效上下文阈值（ContextMaxInputTokens=1000 低于全局 65536）的历史在请求构造前生成快照，Strategy=token_cap，CoveredUntilMessageID=2，且本轮 PromptScope 使用该快照。"
+    },
+    {
+      "acceptance": "AC-2",
+      "method": "automated",
+      "result": "pass",
+      "command": "go test ./internal/application/conversation -run 'TestMaybeCompactContextBeforePromptSkipsWhenDisabledOrSmall' -count=1 (golang:1.27 container)",
+      "exitCode": 0,
+      "evidence": "小历史不压缩；压缩策略关闭（UserEnabled=false 或 AdminEnabled=false）时完全跳过且不落库；maybeCompactContextBeforePrompt 错误路径仅记录 Warn 日志并返回 nil，不阻断发送。"
+    },
+    {
+      "acceptance": "AC-3",
+      "method": "automated",
+      "result": "pass",
+      "command": "go test ./internal/application/conversation -run 'TestEnforceFullContextAttachmentBudget|TestTrimFullContextAttachmentsKeepsTextWithinBudget' -count=1 (golang:1.27 container)",
+      "exitCode": 0,
+      "evidence": "聚合预算=strictest(model budget, ContextMaxInputTokens)*2/5；超额且可检索的附件降级 RAG，不可检索的跳过并输出 full_context_budget trace；首个全文附件保留既有单文件行为。"
+    },
+    {
+      "acceptance": "AC-4",
+      "method": "automated",
+      "result": "pass",
+      "command": "go test ./internal/application/compact ./internal/application/conversation ./internal/infra/llm -count=1 && go build ./... (golang:1.27 container, CGO_ENABLED=1)",
+      "exitCode": 0,
+      "evidence": "compact/conversation/llm 三包全量测试通过（ok 0.048s / 2.204s / 18.542s），后端整模块 go build 输出 BUILD_OK；改动文件已 gofmt。"
+    }
+  ]
+}

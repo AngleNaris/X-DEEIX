@@ -1,0 +1,588 @@
+diff --git a/.github/workflows/frontend-quality.yml b/.github/workflows/frontend-quality.yml
+index 932fee6a..771d7b5b 100644
+--- a/.github/workflows/frontend-quality.yml
++++ b/.github/workflows/frontend-quality.yml
+@@ -65,6 +65,9 @@ jobs:
+       - name: Install dependencies
+         run: pnpm install --frozen-lockfile
+ 
++      - name: Install image encoder for backend tests
++        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends webp
++
+       - name: Run workspace checks
+         run: pnpm check
+ 
+diff --git a/Dockerfile b/Dockerfile
+index c2140128..69b98826 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -67,18 +67,14 @@ RUN --mount=type=cache,target=/go/pkg/mod \
+ FROM debian:bookworm-slim AS runtime-deps
+ 
+ RUN apt-get update \
+-  && apt-get install -y --no-install-recommends ca-certificates tzdata \
++  && apt-get install -y --no-install-recommends ca-certificates tzdata webp \
+   && rm -rf /var/lib/apt/lists/*
+ 
+ 
+-FROM debian:bookworm-slim AS runtime
++FROM runtime-deps AS runtime
+ 
+ WORKDIR /app
+ 
+-COPY --from=runtime-deps /etc/ssl/certs /etc/ssl/certs
+-COPY --from=runtime-deps /usr/share/zoneinfo /usr/share/zoneinfo
+-COPY --from=runtime-deps /etc/localtime /etc/localtime
+-COPY --from=runtime-deps /etc/timezone /etc/timezone
+ COPY --from=backend-builder /out/deeix-chat /app/deeix-chat
+ COPY --from=frontend-builder /src/frontend/out /app/frontend/out
+ COPY LICENSE NOTICE /app/licenses/DEEIX-Chat/
+diff --git a/backend/internal/application/conversation/errs.go b/backend/internal/application/conversation/errs.go
+index 55a5a439..a3f4aa09 100644
+--- a/backend/internal/application/conversation/errs.go
++++ b/backend/internal/application/conversation/errs.go
+@@ -1,6 +1,10 @@
+ package conversation
+ 
+-import "errors"
++import (
++	"errors"
++
++	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
++)
+ 
+ var (
+ 	// ErrConversationNotFound 会话不存在或无权限。
+@@ -30,7 +34,7 @@ var (
+ 	// ErrFileInUse 文件正在被头像、知识库等资源使用。
+ 	ErrFileInUse = errors.New("file in use")
+ 	// ErrStorageQuotaExceeded 文件配额超限。
+-	ErrStorageQuotaExceeded = errors.New("storage quota exceeded")
++	ErrStorageQuotaExceeded = repository.ErrStorageQuotaExceeded
+ 	// ErrFileTooLarge 文件过大。
+ 	ErrFileTooLarge = errors.New("file too large")
+ 	// ErrMIMEBlocked 文件类型不被允许。
+diff --git a/backend/internal/application/conversation/service_message_context.go b/backend/internal/application/conversation/service_message_context.go
+index bfedf5c3..13b5cf56 100644
+--- a/backend/internal/application/conversation/service_message_context.go
++++ b/backend/internal/application/conversation/service_message_context.go
+@@ -202,7 +202,7 @@ func classifyRunErrorCode(err error) string {
+ 	case errors.Is(err, ErrFileNotFound):
+ 		return "file_not_found"
+ 	case errors.Is(err, ErrStorageQuotaExceeded):
+-		return "storage_quota_exceeded"
++		return "file.storage_quota_exceeded"
+ 	case errors.Is(err, ErrFileTooLarge):
+ 		return "file_too_large"
+ 	case errors.Is(err, ErrInvalidKnowledgeBaseReference):
+diff --git a/backend/internal/application/conversation/service_message_error_code_test.go b/backend/internal/application/conversation/service_message_error_code_test.go
+index 8c6574f0..2ae7e6c7 100644
+--- a/backend/internal/application/conversation/service_message_error_code_test.go
++++ b/backend/internal/application/conversation/service_message_error_code_test.go
+@@ -4,6 +4,8 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"testing"
++
++	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+ )
+ 
+ func TestClassifyRunErrorCodeKnowledgeBaseErrors(t *testing.T) {
+@@ -14,6 +16,7 @@ func TestClassifyRunErrorCodeKnowledgeBaseErrors(t *testing.T) {
+ 		err  error
+ 		want string
+ 	}{
++		{name: "repository storage quota", err: fmt.Errorf("save image: %w", repository.ErrStorageQuotaExceeded), want: "file.storage_quota_exceeded"},
+ 		{name: "invalid reference", err: ErrInvalidKnowledgeBaseReference, want: MessageErrorCodeKnowledgeBaseInvalidReference},
+ 		{name: "unavailable", err: ErrKnowledgeBaseUnavailable, want: MessageErrorCodeKnowledgeBaseUnavailable},
+ 		{name: "not ready", err: ErrKnowledgeBaseNotReady, want: MessageErrorCodeKnowledgeBaseNotReady},
+diff --git a/backend/internal/application/conversation/service_moderation.go b/backend/internal/application/conversation/service_moderation.go
+index 3f4dde21..4ed353a6 100644
+--- a/backend/internal/application/conversation/service_moderation.go
++++ b/backend/internal/application/conversation/service_moderation.go
+@@ -3,9 +3,12 @@ package conversation
+ import (
+ 	"bytes"
+ 	"context"
++	"crypto/sha256"
++	"encoding/hex"
+ 	"encoding/json"
+ 	"errors"
+ 	"io"
++	"net/http"
+ 	"strings"
+ 	"time"
+ 
+@@ -423,11 +426,13 @@ func loadOutputImagesFromFiles(coord *appcm.RunCoordinator, files []model.FileOb
+ 			coord.RecordOutputImageFailure(file.FileID, errEmptyModerationImage)
+ 			continue
+ 		}
++		// Moderation uses the original generated bytes, which can differ from compressed storage.
++		digest := sha256.Sum256(data)
+ 		out = append(out, appcm.OutputImageSource{
+ 			FileID:   file.FileID,
+ 			Data:     data,
+-			MimeType: firstNonEmptyString(file.DetectedMIME, file.MimeType, "image/png"),
+-			SHA256:   file.SHA256,
++			MimeType: http.DetectContentType(data),
++			SHA256:   hex.EncodeToString(digest[:]),
+ 		})
+ 	}
+ 	return out
+diff --git a/backend/internal/application/settings/runtime_settings.go b/backend/internal/application/settings/runtime_settings.go
+index eda77e13..73340eef 100644
+--- a/backend/internal/application/settings/runtime_settings.go
++++ b/backend/internal/application/settings/runtime_settings.go
+@@ -163,6 +163,10 @@ func (r *RuntimeSettings) applyItem(cfg *config.Config, item domainsettings.Syst
+ 		cfg.ModelOptionDeniedPaths = item.Value
+ 
+ 		// 存储配置
++	case "storage:image_format":
++		cfg.ImageStorageFormat = strings.TrimSpace(item.Value)
++	case "storage:image_quality":
++		cfg.ImageStorageQuality = toInt(item.Value, cfg.ImageStorageQuality)
+ 	case "storage:user_storage_quota_bytes":
+ 		cfg.UserStorageQuotaBytes = toInt64(item.Value, cfg.UserStorageQuotaBytes)
+ 	case "storage:max_upload_file_bytes":
+diff --git a/backend/internal/application/settings/seed.go b/backend/internal/application/settings/seed.go
+index 1c27b78a..a68eff85 100644
+--- a/backend/internal/application/settings/seed.go
++++ b/backend/internal/application/settings/seed.go
+@@ -78,6 +78,8 @@ func defaultSettings() []domainsettings.SystemSetting {
+ 		{Namespace: "chat", Key: "model_option_denied_paths", Value: config.DefaultModelOptionDeniedPathsJSON(), ValueType: "json", Description: "模型 options 黑名单路径 JSON，default 对所有协议生效"},
+ 
+ 		// 存储配置
++		{Namespace: "storage", Key: "image_format", Value: "original", ValueType: "string", Description: "新上传和生成图片的保存格式：original/webp_lossless/webp_lossy"},
++		{Namespace: "storage", Key: "image_quality", Value: "85", ValueType: "int", Description: "WebP 有损压缩质量（1-100）"},
+ 		{Namespace: "storage", Key: "user_storage_quota_bytes", Value: "104857600", ValueType: "int", Description: "用户总存储配额（管理页面按 MB 输入，内部以字节保存），0表示不限制"},
+ 		{Namespace: "storage", Key: "max_upload_file_bytes", Value: "20971520", ValueType: "int", Description: "默认附件大小上限（管理页面按 MB 输入，内部以字节保存）"},
+ 		{Namespace: "storage", Key: "max_message_files", Value: "10", ValueType: "int", Description: "单消息附件数"},
+diff --git a/backend/internal/application/settings/service.go b/backend/internal/application/settings/service.go
+index e0acbf65..6a39041d 100644
+--- a/backend/internal/application/settings/service.go
++++ b/backend/internal/application/settings/service.go
+@@ -507,6 +507,15 @@ func validatePatchItem(item PatchItem) error {
+ 		return validateEmailDomainList(value, key)
+ 	case "storage:max_upload_file_bytes":
+ 		return validateInt64Min(value, 1, key)
++	case "storage:image_format":
++		switch value {
++		case "original", "webp_lossless", "webp_lossy":
++			return nil
++		default:
++			return fmt.Errorf("%s must be one of: original, webp_lossless, webp_lossy", key)
++		}
++	case "storage:image_quality":
++		return validateIntMinMax(value, 1, 100, key)
+ 	case "storage:user_storage_quota_bytes":
+ 		return validateInt64Min(value, 0, key)
+ 	case "file:file_full_context_max_bytes":
+diff --git a/backend/internal/application/settings/service_test.go b/backend/internal/application/settings/service_test.go
+index 126e4af2..f4791885 100644
+--- a/backend/internal/application/settings/service_test.go
++++ b/backend/internal/application/settings/service_test.go
+@@ -12,6 +12,36 @@ type testSettingsRepo struct {
+ 	byNamespace map[string][]domainsettings.SystemSetting
+ }
+ 
++func TestImageStorageSettingsValidationAndRuntime(t *testing.T) {
++	for _, value := range []string{"original", "webp_lossless", "webp_lossy"} {
++		if err := validatePatchItem(PatchItem{Namespace: "storage", Key: "image_format", Value: value}); err != nil {
++			t.Fatal(err)
++		}
++	}
++	for _, item := range []PatchItem{
++		{Namespace: "storage", Key: "image_format", Value: "jpeg"},
++		{Namespace: "storage", Key: "image_quality", Value: "0"},
++		{Namespace: "storage", Key: "image_quality", Value: "101"},
++		{Namespace: "storage", Key: "image_quality", Value: "85.5"},
++	} {
++		if validatePatchItem(item) == nil {
++			t.Fatalf("accepted invalid setting: %+v", item)
++		}
++	}
++	for _, quality := range []string{"1", "85", "100"} {
++		if err := validatePatchItem(PatchItem{Namespace: "storage", Key: "image_quality", Value: quality}); err != nil {
++			t.Fatal(err)
++		}
++	}
++	cfg := config.Config{}
++	runtime := &RuntimeSettings{}
++	runtime.applyItem(&cfg, domainsettings.SystemSetting{Namespace: "storage", Key: "image_format", Value: "webp_lossy"})
++	runtime.applyItem(&cfg, domainsettings.SystemSetting{Namespace: "storage", Key: "image_quality", Value: "85"})
++	if cfg.ImageStorageFormat != "webp_lossy" || cfg.ImageStorageQuality != 85 {
++		t.Fatalf("settings not applied: %s %d", cfg.ImageStorageFormat, cfg.ImageStorageQuality)
++	}
++}
++
+ type testVectorStore struct {
+ 	available bool
+ 	err       error
+diff --git a/backend/internal/application/upload/service.go b/backend/internal/application/upload/service.go
+index 66aa5b56..285c5c7f 100644
+--- a/backend/internal/application/upload/service.go
++++ b/backend/internal/application/upload/service.go
+@@ -251,7 +251,7 @@ func (s *Service) UploadFile(ctx context.Context, input UploadFileInput) (*Uploa
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	relativePath, detectedMIME, shaValue, sizeBytes, err := saveUploadedFile(
++	saved, err := s.saveUploadedFile(
+ 		ctx,
+ 		store,
+ 		input.Reader,
+@@ -260,6 +260,7 @@ func (s *Service) UploadFile(ctx context.Context, input UploadFileInput) (*Uploa
+ 		normalizedName,
+ 		maxUploadBytes,
+ 		normalizedMIME,
++		cfg,
+ 	)
+ 	if err != nil {
+ 		if errors.Is(err, errLocalFileTooLarge) {
+@@ -267,6 +268,11 @@ func (s *Service) UploadFile(ctx context.Context, input UploadFileInput) (*Uploa
+ 		}
+ 		return nil, err
+ 	}
++	relativePath, detectedMIME, shaValue, sizeBytes := saved.path, saved.mimeType, saved.sha256, saved.size
++	if saved.mimeType == "image/webp" {
++		normalizedMIME = detectedMIME
++	}
++	normalizedName = saved.fileName
+ 	category := inferFileCategory(detectedMIME, normalizedName)
+ 	logRemoveErr := func(path string, err error) {
+ 		if err != nil && s.logger != nil {
+@@ -913,7 +919,12 @@ func isTextMIMEForEmbed(mimeType, fileName string) bool {
+ 	return false
+ }
+ 
+-func saveUploadedFile(
++type savedUpload struct {
++	path, mimeType, sha256, fileName string
++	size                             int64
++}
++
++func (s *Service) saveUploadedFile(
+ 	ctx context.Context,
+ 	store objectstore.Store,
+ 	reader io.Reader,
+@@ -922,7 +933,8 @@ func saveUploadedFile(
+ 	fileName string,
+ 	maxUploadBytes int64,
+ 	declaredMIME string,
+-) (string, string, string, int64, error) {
++	cfg config.Config,
++) (savedUpload, error) {
+ 	normalizedUserID := strings.TrimSpace(userPublicID)
+ 	if normalizedUserID == "" {
+ 		normalizedUserID = "unknown_user"
+@@ -933,7 +945,7 @@ func saveUploadedFile(
+ 
+ 	tmpFile, err := os.CreateTemp("", fileID+"_*.upload")
+ 	if err != nil {
+-		return "", "", "", 0, err
++		return savedUpload{}, err
+ 	}
+ 	tmpName := tmpFile.Name()
+ 	defer func() {
+@@ -948,10 +960,38 @@ func saveUploadedFile(
+ 	hasher := sha256.New()
+ 	written, err := io.Copy(io.MultiWriter(tmpFile, hasher), io.LimitReader(bufferedReader, maxUploadBytes+1))
+ 	if err != nil {
+-		return "", "", "", 0, err
++		return savedUpload{}, err
+ 	}
+ 	if written > maxUploadBytes {
+-		return "", "", "", 0, errLocalFileTooLarge
++		return savedUpload{}, errLocalFileTooLarge
++	}
++
++	// Validate the original format and size before converting; compression cannot bypass upload policy.
++	if isAllowedMIME(detectedMIME, cfg) && isAllowedMIME("image/webp", cfg) &&
++		(cfg.FileImageMaxBytes <= 0 || written <= cfg.FileImageMaxBytes) {
++		converted, convertErr := convertStoredImage(ctx, tmpName, detectedMIME, cfg.ImageStorageFormat, cfg.ImageStorageQuality)
++		if ctx.Err() != nil {
++			return savedUpload{}, ctx.Err()
++		}
++		if convertErr != nil && s.logger != nil {
++			s.logger.Warn("image_storage_conversion_failed", zap.String("file_id", fileID), zap.Error(convertErr))
++		}
++		if len(converted) > 0 {
++			if err = tmpFile.Truncate(0); err != nil {
++				return savedUpload{}, err
++			}
++			if _, err = tmpFile.Seek(0, io.SeekStart); err != nil {
++				return savedUpload{}, err
++			}
++			hasher.Reset()
++			count, writeErr := io.MultiWriter(tmpFile, hasher).Write(converted)
++			if writeErr != nil {
++				return savedUpload{}, writeErr
++			}
++			written = int64(count)
++			detectedMIME = "image/webp"
++			fileName = strings.TrimSuffix(fileName, filepath.Ext(fileName)) + ".webp"
++		}
+ 	}
+ 
+ 	now := time.Now()
+@@ -963,14 +1003,14 @@ func saveUploadedFile(
+ 	)
+ 	relativePath = filepath.ToSlash(relativePath)
+ 	if _, err = tmpFile.Seek(0, io.SeekStart); err != nil {
+-		return "", "", "", 0, err
++		return savedUpload{}, err
+ 	}
+ 	if _, err = store.Put(ctx, relativePath, tmpFile, objectstore.PutOptions{
+ 		SizeBytes:   written,
+ 		ContentType: detectedMIME,
+ 	}); err != nil {
+-		return "", "", "", 0, err
++		return savedUpload{}, err
+ 	}
+ 
+-	return relativePath, detectedMIME, hex.EncodeToString(hasher.Sum(nil)), written, nil
++	return savedUpload{path: relativePath, mimeType: detectedMIME, sha256: hex.EncodeToString(hasher.Sum(nil)), size: written, fileName: fileName}, nil
+ }
+diff --git a/backend/internal/infra/config/config.go b/backend/internal/infra/config/config.go
+index 914b5d8d..3484ac68 100644
+--- a/backend/internal/infra/config/config.go
++++ b/backend/internal/infra/config/config.go
+@@ -428,6 +428,8 @@ type Config struct {
+ 	UserStorageQuotaBytes int64
+ 	MaxUploadFileBytes    int64
+ 	MaxMessageFiles       int
++	ImageStorageFormat    string
++	ImageStorageQuality   int
+ 	// 文件处理配置
+ 	ImageMaxDimension                 int    // 图片缩放最大边长（像素），0 = 不缩放
+ 	FileFullContextLimitEnabled       bool   // 是否启用全文注入阈值限制
+@@ -664,6 +666,8 @@ func Load() Config {
+ 		UserStorageQuotaBytes:             104857600,
+ 		MaxUploadFileBytes:                20971520,
+ 		MaxMessageFiles:                   10,
++		ImageStorageFormat:                "original",
++		ImageStorageQuality:               85,
+ 		ImageMaxDimension:                 1024,
+ 		FileFullContextLimitEnabled:       true,
+ 		FileFullContextMaxBytes:           DefaultFileFullContextMaxBytes,
+diff --git a/backend/internal/infra/persistence/postgres/conversation/errors_alias.go b/backend/internal/infra/persistence/postgres/conversation/errors_alias.go
+index f93a6d18..a7d40fcd 100644
+--- a/backend/internal/infra/persistence/postgres/conversation/errors_alias.go
++++ b/backend/internal/infra/persistence/postgres/conversation/errors_alias.go
+@@ -1,8 +1,12 @@
+ package conversation
+ 
+-import "errors"
++import (
++	"errors"
++
++	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
++)
+ 
+ var (
+ 	ErrFileNotFound         = errors.New("file not found")
+-	ErrStorageQuotaExceeded = errors.New("storage quota exceeded")
++	ErrStorageQuotaExceeded = repository.ErrStorageQuotaExceeded
+ )
+diff --git a/backend/internal/infra/persistence/postgres/conversation/repository_test.go b/backend/internal/infra/persistence/postgres/conversation/repository_test.go
+index 639f62e3..5beff0b1 100644
+--- a/backend/internal/infra/persistence/postgres/conversation/repository_test.go
++++ b/backend/internal/infra/persistence/postgres/conversation/repository_test.go
+@@ -22,6 +22,19 @@ func TestTranslateErrorAllowsNil(t *testing.T) {
+ 	}
+ }
+ 
++func TestCreateFileObjectRejectsStorageQuotaWithSharedError(t *testing.T) {
++	db := openConversationRepositoryTestDB(t)
++	if err := db.AutoMigrate(&model.UserStorageQuota{}); err != nil {
++		t.Fatal(err)
++	}
++	_, err := NewRepo(db).CreateFileObjectAndConsumeQuota(t.Context(), &domainconversation.FileObject{
++		UserID: 1, SizeBytes: 2,
++	}, 1)
++	if !errors.Is(err, repository.ErrStorageQuotaExceeded) {
++		t.Fatalf("expected shared storage quota error, got %v", err)
++	}
++}
++
+ func TestAttachmentDurationSecondsFromMetaJSON(t *testing.T) {
+ 	if got := attachmentDurationSecondsFromMetaJSON(`{"duration_seconds":6}`); got != 6 {
+ 		t.Fatalf("expected attachment duration 6, got %d", got)
+diff --git a/backend/internal/repository/errors.go b/backend/internal/repository/errors.go
+index 8a2df2fa..5f449c8c 100644
+--- a/backend/internal/repository/errors.go
++++ b/backend/internal/repository/errors.go
+@@ -3,6 +3,8 @@ package repository
+ import "errors"
+ 
+ var (
++	// ErrStorageQuotaExceeded 表示文件存储配额不足。
++	ErrStorageQuotaExceeded = errors.New("storage quota exceeded")
+ 	// ErrNotFound 表示记录不存在。
+ 	ErrNotFound = errors.New("record not found")
+ 	// ErrDuplicate 表示违反唯一约束。
+diff --git a/backend/internal/shared/response/error_code.go b/backend/internal/shared/response/error_code.go
+index f8576873..d433189a 100644
+--- a/backend/internal/shared/response/error_code.go
++++ b/backend/internal/shared/response/error_code.go
+@@ -174,7 +174,7 @@ var exactErrorSpecs = map[string]errorSpec{
+ 	"invalid file stream":                                  {Code: "file.invalid_stream", Message: "invalid file stream"},
+ 	"invalid file reference":                               {Code: "file.invalid_reference", Message: "invalid file reference"},
+ 	"invalid file name":                                    {Code: "file.invalid_name", Message: "invalid file name"},
+-	"storage quota exceeded":                               {Code: CodeQuotaExceeded, Message: "storage quota exceeded"},
++	"storage quota exceeded":                               {Code: "file.storage_quota_exceeded", Message: "storage quota exceeded"},
+ 	"dangerous file type not allowed":                      {Code: CodeFileTypeBlocked, Message: "file type is not allowed"},
+ 	"mime blocked":                                         {Code: CodeFileTypeBlocked, Message: "file type is not allowed"},
+ 	"embedding unavailable":                                {Code: "file.embedding_unavailable", Message: "embedding is unavailable"},
+diff --git a/backend/internal/shared/response/error_code_test.go b/backend/internal/shared/response/error_code_test.go
+index bdc8f7a4..0f651e6b 100644
+--- a/backend/internal/shared/response/error_code_test.go
++++ b/backend/internal/shared/response/error_code_test.go
+@@ -18,7 +18,7 @@ func TestInferErrorCode(t *testing.T) {
+ 		{name: "invalid id", status: http.StatusBadRequest, msg: "invalid conversation id", want: "conversation.invalid_id"},
+ 		{name: "two factor", status: http.StatusUnauthorized, msg: "invalid two factor code", want: CodeAuthInvalidTwoFactorCode},
+ 		{name: "pricing", status: http.StatusPaymentRequired, msg: "model pricing is required", want: CodeBillingPricingRequired},
+-		{name: "quota", status: http.StatusConflict, msg: "storage quota exceeded", want: CodeQuotaExceeded},
++		{name: "storage quota", status: http.StatusConflict, msg: "storage quota exceeded", want: "file.storage_quota_exceeded"},
+ 		{name: "upstream", status: http.StatusBadGateway, msg: "remote models unavailable", want: "llm.remote_models_unavailable"},
+ 		{name: "generation canceled", status: http.StatusBadRequest, msg: "message generation canceled", want: "conversation_run.canceled"},
+ 		{name: "internal", status: http.StatusInternalServerError, msg: "update settings failed: pq: bad column", want: CodeInternal},
+diff --git a/frontend/features/admin/model/files-settings.ts b/frontend/features/admin/model/files-settings.ts
+index 27eeb43b..71f555af 100644
+--- a/frontend/features/admin/model/files-settings.ts
++++ b/frontend/features/admin/model/files-settings.ts
+@@ -193,6 +193,33 @@ export const INITIAL_SERVICE_STATES: Record<ServiceName, ServiceState> = {
+ };
+ 
+ export const SETTINGS_GROUPS: SettingsGroup[] = [
++  {
++    key: "imageStorage",
++    title: "Image storage",
++    description: "Storage format for newly uploaded and generated images.",
++    fields: [
++      {
++        namespace: "storage",
++        key: "image_format",
++        label: "Image storage format",
++        description: "Keep originals or convert new uploads and generated images to smaller WebP files.",
++        type: "select",
++        options: [
++          { label: "Keep original", value: "original" },
++          { label: "WebP lossless", value: "webp_lossless" },
++          { label: "WebP lossy", value: "webp_lossy" },
++        ],
++      },
++      {
++        namespace: "storage",
++        key: "image_quality",
++        label: "WebP quality",
++        description: "1–100; higher values preserve more detail. Default: 85.",
++        type: "int",
++        visibleWhen: { field: "storage.image_format", equals: "webp_lossy" },
++      },
++    ],
++  },
+   {
+     key: "uploadLimits",
+     title: "Upload limits",
+@@ -1153,6 +1180,8 @@ export function isEmbeddingServiceConfigured(settings: Record<string, string>):
+ 
+ export function applySettingsDefaults(next: Record<string, string>): Record<string, string> {
+   const result = { ...next };
++  result["storage.image_format"] ||= "original";
++  result["storage.image_quality"] ||= "85";
+   result["extract.tika_source"] = TIKA_SERVICE_SOURCES.EXTERNAL;
+   result["extract.rapidocr_source"] = TIKA_SERVICE_SOURCES.EXTERNAL;
+   result["extract.ocr_engine"] = resolveOCREngine(result["extract.ocr_engine"] ?? "");
+diff --git a/frontend/i18n/messages/en-US/admin-files.json b/frontend/i18n/messages/en-US/admin-files.json
+index ba7b2f10..a7afeaba 100644
+--- a/frontend/i18n/messages/en-US/admin-files.json
++++ b/frontend/i18n/messages/en-US/admin-files.json
+@@ -1,5 +1,9 @@
+ {
+   "groups": {
++    "imageStorage": {
++      "title": "Image storage",
++      "description": "Choose the storage format for new uploads and generated images. Preserve dimensions and transparency, and use converted files only when smaller. Existing files, animations and WebP stay unchanged. Keep originals if conversion is unavailable."
++    },
+     "uploadLimits": {
+       "title": "Upload limits",
+       "description": "Controls attachment count, MIME allowlist, and file size limits for chat messages."
+@@ -83,6 +87,19 @@
+   },
+   "fields": {
+     "storage": {
++      "image_format": {
++        "label": "Image storage format",
++        "description": "Applies to uploaded and generated static PNG/JPEG images. Storage usage reflects the saved size; lossy mode changes image quality.",
++        "options": {
++          "original": "Keep original",
++          "webp_lossless": "WebP lossless",
++          "webp_lossy": "WebP lossy"
++        }
++      },
++      "image_quality": {
++        "label": "WebP quality",
++        "description": "1–100, default 85. Higher quality preserves more detail and usually creates larger files."
++      },
+       "max_message_files": {
+         "label": "Attachment limit",
+         "description": "Maximum number of attachments allowed in one chat message.",
+diff --git a/frontend/i18n/messages/en-US/errors.json b/frontend/i18n/messages/en-US/errors.json
+index 141113ea..f74ad175 100644
+--- a/frontend/i18n/messages/en-US/errors.json
++++ b/frontend/i18n/messages/en-US/errors.json
+@@ -151,6 +151,7 @@
+     "serviceUnavailable": "Embedding service is unavailable."
+   },
+   "file": {
++    "storageQuotaExceeded": "Not enough storage space to upload files or save generated results. Delete unneeded files in Files, or contact an administrator to increase your storage limit, then try again.",
+     "embeddingUnavailable": "Embedding is unavailable for this file.",
+     "extractNotReady": "File extraction is not ready.",
+     "invalidId": "Invalid file ID.",
+diff --git a/frontend/i18n/messages/zh-CN/admin-files.json b/frontend/i18n/messages/zh-CN/admin-files.json
+index e5ed584e..0deba1db 100644
+--- a/frontend/i18n/messages/zh-CN/admin-files.json
++++ b/frontend/i18n/messages/zh-CN/admin-files.json
+@@ -1,5 +1,9 @@
+ {
+   "groups": {
++    "imageStorage": {
++      "title": "图片存储",
++      "description": "设置新上传及新生成图片的保存格式。保持尺寸和透明背景，仅采用更小的转换结果；已有文件、动图及 WebP 保持原样。转换不可用时保留原图。"
++    },
+     "uploadLimits": {
+       "title": "上传限制",
+       "description": "控制对话附件数量、MIME 白名单和文件大小上限。"
+@@ -83,6 +87,19 @@
+   },
+   "fields": {
+     "storage": {
++      "image_format": {
++        "label": "图片保存格式",
++        "description": "适用于用户上传和模型生成的静态 PNG/JPEG 图片。按实际保存大小计算存储额度；有损模式会改变画质。",
++        "options": {
++          "original": "保留原图",
++          "webp_lossless": "WebP 无损",
++          "webp_lossy": "WebP 有损"
++        }
++      },
++      "image_quality": {
++        "label": "WebP 压缩质量",
++        "description": "范围 1–100，默认 85。数值越高，保留细节越多，文件通常越大。"
++      },
+       "max_message_files": {
+         "label": "附件数量上限",
+         "description": "用于限制单条对话消息可携带的附件数量。",
+diff --git a/frontend/i18n/messages/zh-CN/errors.json b/frontend/i18n/messages/zh-CN/errors.json
+index 85f3d59e..0f1e1487 100644
+--- a/frontend/i18n/messages/zh-CN/errors.json
++++ b/frontend/i18n/messages/zh-CN/errors.json
+@@ -151,6 +151,7 @@
+     "serviceUnavailable": "向量服务不可用。"
+   },
+   "file": {
++    "storageQuotaExceeded": "存储空间不足，无法上传文件或保存生成结果。请在文件管理中删除不再需要的文件，或联系管理员增加存储额度后重试。",
+     "embeddingUnavailable": "当前文件暂不支持向量处理。",
+     "extractNotReady": "文件解析尚未完成。",
+     "invalidId": "文件 ID 无效。",

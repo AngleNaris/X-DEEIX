@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "goal": "在 custom 工作树修复聊天会话达到模型上下文限制时不会在发送前压缩、并可能构造过大上游请求的问题。",
+  "confirmedScope": [
+    "在自动上下文压缩已由管理员和用户启用时，发送上游请求前根据当前路由的模型能力预算检查并同步生成可用的会话快照。",
+    "压缩失败不得阻断用户的正常消息发送；继续使用既有非致命回退和日志语义。",
+    "全文文件上下文必须受单次请求的聚合 Token 预算约束，不能因多个历史附件绕过上下文预算而形成 MB 级请求体。",
+    "保留现有成功后的异步后置压缩，作为非临界路径的持续滚动压缩。",
+    "提供聚焦 Go 单元测试，覆盖模型能力阈值、预发送压缩的触发语义和附件聚合预算。"
+  ],
+  "excludedScope": [
+    "不改变管理员或用户的压缩功能开关含义，也不在未知线上设置状态下静默强制启用压缩。",
+    "不新增外部依赖、数据库表或迁移。",
+    "不实现通用的上游 400 自动重试；本次优先在请求发出前消除可预测的超限。",
+    "不部署或修改 VPS 运行时设置，除非后续能获得可验证的远程执行结果。"
+  ],
+  "technicalDecisions": [
+    "使用路由的 capabilities 计算压缩阈值，并与现有全局阈值取更保守的值。",
+    "只在上下文已达到阈值且压缩策略有效时同步压缩；快照写入成功后立即用于本次 PromptScope。",
+    "附件聚合预算基于现有模型有效上下文预算和 ContextMaxInputTokens，不默默删除当前用户文本；不适合全文的附件按既有 RAG/跳过路径降级。",
+    "body_too_large 调试摘要只作为证据，不将日志省略误判为压缩失败。"
+  ],
+  "defaults": [
+    "运行时 chat.context_compact_enabled 仍由管理员控制，chat.context_compact_auto 仍由用户控制。",
+    "没有可用快照或压缩持久化失败时保留当前请求流程并记录可诊断日志。"
+  ],
+  "blockingUnknowns": [],
+  "coverage": [
+    {
+      "dimension": "platform",
+      "status": "confirmed",
+      "rationale": "目标为 custom 工作树中的 Go 聊天后端与现有模型路由。"
+    },
+    {
+      "dimension": "core_scope",
+      "status": "confirmed",
+      "rationale": "范围限定为发送前上下文压缩和全文附件的请求预算。"
+    },
+    {
+      "dimension": "technical_stack",
+      "status": "confirmed",
+      "rationale": "沿用现有 Go、compact service、模型能力解析和现有测试，无新增依赖。"
+    },
+    {
+      "dimension": "data_and_persistence",
+      "status": "confirmed",
+      "rationale": "复用既有 conversation_context_snapshots 持久化，不新增迁移。"
+    },
+    {
+      "dimension": "performance",
+      "status": "confirmed",
+      "rationale": "仅在超过阈值时同步压缩，保留成功后的异步滚动路径。"
+    },
+    {
+      "dimension": "compatibility",
+      "status": "confirmed",
+      "rationale": "保留管理员和用户开关及现有附件 RAG/跳过语义。"
+    },
+    {
+      "dimension": "security",
+      "status": "confirmed",
+      "rationale": "不扩大数据读取范围，不记录原始超大请求体，不新增外部服务。"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "description": "启用压缩且历史超过当前路由有效上下文阈值时，本轮请求构造前产生快照，并且该轮 PromptScope 使用该快照而非原始已覆盖历史。",
+      "required": true,
+      "method": "automated"
+    },
+    {
+      "id": "AC-2",
+      "description": "当压缩关闭、用户关闭或压缩持久化失败时，现有消息发送行为不被阻断。",
+      "required": true,
+      "method": "automated"
+    },
+    {
+      "id": "AC-3",
+      "description": "多个可全文注入的附件不会合计超过本轮附件上下文预算；能够检索的超额附件按既有 RAG 路径降级，其余按既有跳过路径处理。",
+      "required": true,
+      "method": "automated"
+    },
+    {
+      "id": "AC-4",
+      "description": "compact、conversation 和 llm 相关 Go 单元测试通过，且目标文件格式化后无编译错误。",
+      "required": true,
+      "method": "automated"
+    }
+  ]
+}

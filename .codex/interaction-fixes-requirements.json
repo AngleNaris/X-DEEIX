@@ -1,0 +1,181 @@
+{
+  "version": 1,
+  "goal": "在 custom 分支修正群组标题、召回证据、全局长期记忆召回、会话运行/未读状态、制品展示与操作、文件分享、图片 Vision 提取和群组自动标题，增加知识库 AI 内容工具，并保持普通聊天与既有自定义功能无回归。",
+  "confirmedScope": [
+    "群组会话标题同时、同级显示项目名与群组名，格式为“项目名 + 群组名”，不再以群组名覆盖项目名。",
+    "召回证据排除仅注入模型的系统内置工具定义，只保留实际召回的数据来源和已实际发生且可追溯的工具结果。",
+    "长期记忆只按用户全局归属，不建立 project 或 conversation scope；类别支持 identity、activity、context、preference、capability、experience。",
+    "preference 保持无条件注入并受固定预算限制；capability、experience 经过类别过滤后使用向量检索与关键词回退自动召回。",
+    "identity、activity、context 只向 AI 提供按需读取提示，不注入记忆正文；AI 通过支持 category/query/limit 的 list_memories 主动读取。",
+    "项目、歌曲、制品、任务状态和会话临时决策不得写入长期记忆，应保留在会话历史、项目文件、卡片或知识库中。",
+    "会话运行中与未读回复是两个独立状态：运行中使用从左到右扫光，小圆点只表示已完成但尚未查看的新回复。",
+    "制品从推理轨迹分离并进入 assistant 正文/制品工作区，提供安全的新标签页纯制品查看与下载。",
+    "用户可独立分享文件；公开文件页使用与制品一致的受控预览框架，并支持下载、撤销和可选过期。",
+    "图片文件提取可选择系统 Vision 引擎，复用现有多模态路由、能力检查和适配器，不默认启用未验证 Provider。",
+    "群组会话在首次成功完成有效回复后触发现有自动标题与标签生成，失败、暂停或人工命名后不得误覆盖。",
+    "AI 可通过系统工具列出个人知识库及内容，并创建、修改或移出个人知识库中的文本内容；内置知识库保持只读。",
+    "验证边界为单应用实例加多用户，覆盖用户隔离、同进程并发、应用重启和刷新恢复；普通会话、项目、角色、卡片、文件、制品与 Agent Group 原有流程必须回归。"
+  ],
+  "excludedScope": [
+    "多应用实例、分布式未读同步、跨实例预览令牌和多 Worker 协调。",
+    "照搬 LobeHub 完整记忆图谱、topic memory、时间线、层级推理或 Agent 级记忆系统。",
+    "为长期记忆新增 project/conversation 归属，或为知识库新增与 FileObject/FileChunk 并行的内容表。",
+    "允许普通用户 AI 工具修改内置知识库，或默认删除仍被其他位置引用的源文件。",
+    "为制品或文件引入新的通用对象存储、外部 CDN 或独立渲染集群。",
+    "在未完成受控 canary 前启用生产 Qwen、Gemini、豆包、OCR 或多模态 Provider。",
+    "未经独立发布门禁通过就推送或部署到 VPS。"
+  ],
+  "technicalDecisions": [
+    "群组标题复用会话 DTO 已有 projectName 和 agentGroupName，不新增并行标题 API。",
+    "工具 guidance 继续记录 SourceCount，但工具定义不再写入召回证据 SourceRefs；前端兼容过滤旧 trace 中无真实调用引用的 tool 项。",
+    "记忆 category 是召回策略，不是可见范围；全部长期记忆保持用户级全局归属，不新增 projectID、conversationID 或 visibilityScope。",
+    "preference 保持现有无条件注入；capability、experience 复用 memory embedding、相似度阈值、topK 和关键词回退；identity、activity、context 仅暴露按需读取提示。",
+    "旧 profile 映射 identity，旧 preference 保持 preference，旧 custom/global/未知值映射 context 并只允许按需读取。",
+    "AI save_memory 只允许保存长期稳定的用户事实，默认不得创建自动召回类别；继续受平台写工具 auto/ask 审批。",
+    "未读事实源使用用户自有会话的持久化 read marker 与最新成功 assistant 终态时间比较；运行中继续由流/恢复状态驱动。",
+    "制品新标签页使用短时、一次性、用户隔离的渲染令牌返回顶层文档，并由 HTTP CSP sandbox 隔离；不使用同源 Blob 执行不可信脚本。",
+    "文件分享复用制品分享的随机 token、active/revoked 生命周期和 filecontent 响应头，新增文件快照校验与 nullable expiresAt。",
+    "系统 Vision 作为现有图片提取引擎的一个选项，复用 system_multimodal_analyze 的路由、模型 capability、协议 adapter 和审计语义。",
+    "群组自动标题复用现有 metadata 生成器，但从群组成功终态直接调度，不能依赖顶层 Billable=true 的普通计费路径。",
+    "知识库 AI 工具复用 platform tool 审批审计、个人知识库服务、FileObject 文本写入和既有提取/RAG 索引，不创建第二套知识库内容模型。",
+    "delete_knowledge_base_content 默认只解除个人知识库与文件的关联；删除源文件继续使用现有 delete_file 及其引用检查。"
+  ],
+  "defaults": [
+    "所有长期记忆均为当前用户全局数据；preference 是常驻注入类别，只有 capability、experience 是自动 RAG 候选。",
+    "其他类别仅提供类别/数量提示，未实际调用 list_memories 时不得进入上下文正文或召回证据。",
+    "AI 创建的知识库文本内容默认使用个人知识库；删除知识库内容默认只解除关联并保留源文件。",
+    "文件分享默认不过期但可撤销；API 支持显式 expiresAt，后续产品策略可收紧默认值。",
+    "系统 Vision 提取默认关闭；未配置图片模型、能力不符或 adapter 不支持时返回明确失败并保留原文件，不静默伪造提取结果。",
+    "减少动态效果设置开启时，运行中会话使用静态高亮而非循环扫光。"
+  ],
+  "blockingUnknowns": [],
+  "coverage": [
+    {
+      "dimension": "platform",
+      "status": "confirmed",
+      "rationale": "目标为 DEEIX custom 的 Next.js 前端、Go 后端、SQLite/PostgreSQL 与现有 Docker/VPS 发布链。"
+    },
+    {
+      "dimension": "core_scope",
+      "status": "confirmed",
+      "rationale": "九项用户可见行为均已在当前代码中定位，普通聊天和既有自定义能力列为强制回归范围。"
+    },
+    {
+      "dimension": "technical_stack",
+      "status": "confirmed",
+      "rationale": "沿用现有 React/Next、Go/GORM、生成 API Contract、现有路由/Trace/分享/多模态组件，不新增外部依赖。"
+    },
+    {
+      "dimension": "data_and_persistence",
+      "status": "confirmed",
+      "rationale": "记忆复用现有用户级全局表和向量索引；会话 read marker 与独立文件分享需要向前兼容的新字段/表，知识库工具复用既有 FileObject/FileChunk。"
+    },
+    {
+      "dimension": "performance",
+      "status": "confirmed",
+      "rationale": "制品列表继续只返回静态缩略图且不下发源码；召回先按记忆类别过滤再向量/关键词排序；不引入列表 iframe。"
+    },
+    {
+      "dimension": "compatibility",
+      "status": "confirmed",
+      "rationale": "兼容旧记忆 scope、旧 prompt trace、旧制品和旧会话；新增字段 nullable，功能关闭时维持原有路径。"
+    },
+    {
+      "dimension": "security",
+      "status": "confirmed",
+      "rationale": "公开文件、可执行制品、Vision Provider 和知识库 AI 写入都跨越信任边界，必须保留属主校验、随机 token、撤销/过期、CSP sandbox、MIME 限制、审批、审计和内置库只读。"
+    }
+  ],
+  "acceptanceCriteria": [
+    {
+      "id": "AC-1",
+      "description": "已有和新建群组会话均显示“项目名 + 群组名”，普通项目/角色/无上下文标题行为不变，移动端无溢出。",
+      "required": true,
+      "method": "hybrid"
+    },
+    {
+      "id": "AC-2",
+      "description": "仅启用多个内置工具但未调用时召回证据不显示工具；实际调用并被上下文召回时只显示对应结果。",
+      "required": true,
+      "method": "hybrid"
+    },
+    {
+      "id": "AC-3",
+      "description": "preference 在固定预算内无条件进入上下文；capability、experience 只在通过 RAG 相关性与预算门槛时自动进入；identity、activity、context 未经 list_memories 主动读取时只显示可用提示，跨用户永不读取。",
+      "required": true,
+      "method": "automated"
+    },
+    {
+      "id": "AC-4",
+      "description": "旧 profile/preference/custom/global 数据升级后可读、可编辑、可重新分类；旧 custom/context 不自动召回，同一项目中新任务不得被旧任务事实污染。",
+      "required": true,
+      "method": "automated"
+    },
+    {
+      "id": "AC-5",
+      "description": "运行中标题仅显示横向扫光；后台成功完成后出现未读圆点；进入会话清除未读；刷新和应用重启后 read marker 保持，多用户隔离。",
+      "required": true,
+      "method": "hybrid"
+    },
+    {
+      "id": "AC-6",
+      "description": "支持的制品代码不再留在推理轨迹，而在 assistant 正文/制品工作区出现且不重复；普通推理与普通代码块保持原行为。",
+      "required": true,
+      "method": "hybrid"
+    },
+    {
+      "id": "AC-7",
+      "description": "制品可在无宿主 frame 的新标签页安全打开并可下载；令牌过期/复用/越权失败，CSP、noopener、noreferrer 和 no-store 生效。",
+      "required": true,
+      "method": "hybrid"
+    },
+    {
+      "id": "AC-8",
+      "description": "制品列表仍不返回 code、不渲染 iframe，静态缩略图与懒加载性能边界保持。",
+      "required": true,
+      "method": "automated"
+    },
+    {
+      "id": "AC-9",
+      "description": "用户可创建、访问、撤销文件分享；公开页按 MIME 安全预览并可下载，过期、删除、跨用户和未知 token 均拒绝。",
+      "required": true,
+      "method": "hybrid"
+    },
+    {
+      "id": "AC-10",
+      "description": "系统 Vision 图片提取覆盖关闭、缺模型、能力不符、adapter 不支持、Provider 失败和成功落库；生产未 canary 时保持关闭。",
+      "required": true,
+      "method": "hybrid"
+    },
+    {
+      "id": "AC-11",
+      "description": "群组首次成功回复触发一次自动标题并持久化；失败、暂停、重试重复回调和人工标题均不被误覆盖。",
+      "required": true,
+      "method": "automated"
+    },
+    {
+      "id": "AC-12",
+      "description": "前端 lint/typecheck/tests/build、API Contract、Go test/vet/build、SQLite/PostgreSQL 迁移与目标模块测试全部通过。",
+      "required": true,
+      "method": "automated"
+    },
+    {
+      "id": "AC-13",
+      "description": "桌面、平板和移动端完成普通聊天、项目、角色、群组、记忆、制品、文件分享和图片提取关键旅程，无阻断 console/network 错误。",
+      "required": true,
+      "method": "manual"
+    },
+    {
+      "id": "AC-14",
+      "description": "单实例双用户并发与重启恢复通过，现有 10,000 请求负载门槛无显著回退，临时进程、端口和容器全部按所有权清理。",
+      "required": true,
+      "method": "hybrid"
+    },
+    {
+      "id": "AC-15",
+      "description": "AI 可列出当前用户可见知识库及内容，在个人知识库创建文本、修改可写文本并重建索引、移出内容；跨用户、内置库写入、二进制修改和越权 ID 均拒绝，写操作保留审批与审计。",
+      "required": true,
+      "method": "hybrid"
+    }
+  ]
+}

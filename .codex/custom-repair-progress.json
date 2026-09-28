@@ -1,0 +1,26 @@
+{
+  "objective": "Repair merged custom, retain custom and upstream behavior, no VPS changes",
+  "baseline": "f9bb7d1b",
+  "protectedChanges": "C:\\Users\\Admin\\AppData\\Local\\Temp\\custom-repair-20260927-095928",
+  "completed": [
+    "Restored dberror.Translate and typed SQLite constraint recognition; Linux CGO package tests passed using Go 1.26.8 auto toolchain",
+    "Added custom media fields to ports/llm: audio, URL, progress and task callbacks, stripped-text-tool metadata, fallback video URL",
+    "Extended ports media protocols without removing upstream OpenRouter Images; added coexistence regression tests",
+    "Moved OpenAI video option normalization authority to ports, infra public function delegates"
+  ],
+  "next": [
+    "Unify infra shared types with ports aliases; move private chatTextBuffer to stream-local state first",
+    "Preserve shared error identity and custom media gates",
+    "Restore upstream OpenRouter Images implementation and tests from clean upstream c4e3514f, not dev 8f42db3d containing conflict markers",
+    "Implement and test Ephemeral provider no-store semantics; do not weaken contract comments",
+    "Fix application compile errors hunk-by-hunk without whole-file baseline restoration",
+    "Restore artifacts route and replace existsSync skip tests with real current component tests",
+    "Validate complete Go suite with CGO and cwebp, frontend checks and production build"
+  ],
+  "warnings": [
+    "Full project not yet passing",
+    "Prior production deployment used old baseline; unrelated to this repair and must not be touched",
+    "Local mancode status unavailable due to MANCODE_ADAPTER_CONTENT_STALE; no governed session created",
+    "Subagent recommendations are leads: rejected disabling OpenRouter Images and weakening Ephemeral semantics"
+  ]
+}
