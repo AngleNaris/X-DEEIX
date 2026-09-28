@@ -179,7 +179,20 @@
       "downloadDiagram": "Download diagram",
       "downloadDiagramAsSvg": "Download diagram as SVG",
       "downloadDiagramAsPng": "Download diagram as PNG",
-      "downloadDiagramAsMmd": "Download diagram as MMD"
+      "downloadDiagramAsMmd": "Download diagram as MMD",
+      "copyDiagram": "Copy diagram",
+      "viewFullscreen": "View fullscreen",
+      "exitFullscreen": "Exit fullscreen",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "resetView": "Reset view"
+    },
+    "table": {
+      "download": "Download table",
+      "downloadAsCsv": "Download as CSV",
+      "downloadAsMarkdown": "Download as Markdown",
+      "formatCsv": "Format CSV",
+      "formatMarkdown": "Format Markdown"
     }
   },
   "artifacts": {

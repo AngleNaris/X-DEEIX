@@ -179,7 +179,20 @@
       "downloadDiagram": "下载图表",
       "downloadDiagramAsSvg": "导出为 SVG",
       "downloadDiagramAsPng": "导出为 PNG",
-      "downloadDiagramAsMmd": "导出为 MMD 源码"
+      "downloadDiagramAsMmd": "导出为 MMD 源码",
+      "copyDiagram": "复制图表",
+      "viewFullscreen": "全屏查看",
+      "exitFullscreen": "退出全屏",
+      "zoomIn": "放大",
+      "zoomOut": "缩小",
+      "resetView": "重置视图"
+    },
+    "table": {
+      "download": "下载表格",
+      "downloadAsCsv": "下载为 CSV",
+      "downloadAsMarkdown": "下载为 Markdown",
+      "formatCsv": "格式化 CSV",
+      "formatMarkdown": "格式化 Markdown"
     }
   },
   "artifacts": {
