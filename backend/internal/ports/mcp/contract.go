@@ -18,6 +18,7 @@ type CallInput struct {
 	UserID         uint
 	ConversationID uint
 	RequestID      string
+	CallID         string
 }
 
 // Tool 定义 MCP 工具元数据。

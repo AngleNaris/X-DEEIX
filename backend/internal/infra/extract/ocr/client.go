@@ -15,14 +15,11 @@ import (
 	"time"
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	extractinfra "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/extract"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/extract/pdfrender"
-	llminfra "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
 	platformtracing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/observability/tracing"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/outboundhttp"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
 	extractport "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/extract"
-	portllm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
 )
 
@@ -47,13 +44,11 @@ type ClientConfig struct {
 	OutboundPolicy security.OutboundPolicy
 }
 
-// OCR 请求/响应数据契约定义在 ports/extract，此处保留同名引用供实现使用。
-type (
-	Request   = extractport.OCRRequest
-	Response  = extractport.OCRResponse
-	PageRange = extractport.PageRange
-	PageText  = extractport.PageText
-)
+// OCR transport uses the shared extraction port without duplicating wire types.
+type Request = extractport.OCRRequest
+type Response = extractport.OCRResponse
+type PageRange = extractport.PageRange
+type PageText = extractport.PageText
 
 // Client 封装 PDF OCR 回退能力。
 type Client struct {
@@ -63,7 +58,7 @@ type Client struct {
 	prompt         string
 	timeoutSeconds int
 	httpClient     *http.Client
-	llmClient      *llminfra.Client
+	llmClient      *llm.Client
 	pdfRenderer    *pdfrender.Renderer
 	mistral        bool
 }
@@ -95,7 +90,7 @@ func NewLLM(cfg ClientConfig) *Client {
 		model:          strings.TrimSpace(cfg.Model),
 		prompt:         strings.TrimSpace(cfg.Prompt),
 		timeoutSeconds: cfg.TimeoutSeconds,
-		llmClient:      llminfra.NewClient(cfg.OutboundPolicy),
+		llmClient:      llm.NewClient(cfg.OutboundPolicy),
 		pdfRenderer:    pdfrender.New(),
 	}
 }
@@ -205,7 +200,7 @@ func probeOCREndpoint(ctx context.Context, baseURL string, authToken string, htt
 	if err != nil {
 		return false, "服务地址格式不正确。"
 	}
-	extractinfra.ApplyAuthHeaders(req, authToken)
+	applyAuthHeaders(req, authToken)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return false, err.Error()
@@ -229,6 +224,19 @@ func resolveOCRHealthURL(baseURL string) string {
 		return strings.TrimSuffix(baseURL, "/ocr") + rapidOCRHealthEndpoint
 	}
 	return baseURL + rapidOCRHealthEndpoint
+}
+
+func applyAuthHeaders(req *http.Request, authToken string) {
+	if req == nil {
+		return
+	}
+	token := strings.TrimSpace(authToken)
+	if token == "" {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-API-Key", token)
+	req.Header.Set("token", token)
 }
 
 // ExtractText 对文档或图片做 OCR，返回识别文本。
@@ -265,7 +273,7 @@ func (c *Client) extractTextWithLLM(ctx context.Context, req Request) (Response,
 			return Response{}, err
 		}
 		if text == "" {
-			return Response{}, errors.New(errOCREmptyContent)
+			return Response{}, fmt.Errorf(errOCREmptyContent)
 		}
 		return Response{Text: text}, nil
 	}
@@ -313,7 +321,7 @@ func (c *Client) extractTextWithLLM(ctx context.Context, req Request) (Response,
 		if len(pageErrors) > 0 {
 			return Response{}, fmt.Errorf("ocr_failed: %s", strings.Join(pageErrors, "; "))
 		}
-		return Response{}, errors.New(errOCREmptyContent)
+		return Response{}, fmt.Errorf(errOCREmptyContent)
 	}
 
 	parts := make([]string, 0, len(pageTexts))
@@ -343,27 +351,27 @@ func (c *Client) extractImageTextWithLLM(ctx context.Context, imageData []byte, 
 		instruction = "Perform OCR strictly. Return only the recognized body text. Preserve the original language of the image text. Do not explain, summarize, or add Markdown."
 	}
 
-	parts := make([]portllm.ContentPart, 0, 2)
-	parts = append(parts, portllm.ContentPart{
-		Kind: portllm.ContentPartText,
+	parts := make([]llm.ContentPart, 0, 2)
+	parts = append(parts, llm.ContentPart{
+		Kind: llm.ContentPartText,
 		Text: instruction,
 	})
-	parts = append(parts, portllm.ContentPart{
-		Kind:     portllm.ContentPartImage,
+	parts = append(parts, llm.ContentPart{
+		Kind:     llm.ContentPartImage,
 		MimeType: mimeType,
 		Data:     imageData,
 	})
 
-	output, err := c.llmClient.Generate(ctx, portllm.RouteConfig{
-		Protocol:         portllm.AdapterOpenAIChatCompletions,
+	output, err := c.llmClient.Generate(ctx, llm.RouteConfig{
+		Protocol:         llm.AdapterOpenAIChatCompletions,
 		BaseURL:          c.baseURL,
 		APIKey:           c.authToken,
 		ReadTimeoutMS:    max(c.timeoutSeconds, 60) * 1000,
 		ConnectTimeoutMS: 10000,
-		Endpoint:         portllm.EndpointChatCompletions,
+		Endpoint:         llm.EndpointChatCompletions,
 		UpstreamModel:    c.model,
-	}, portllm.GenerateInput{
-		Messages: []portllm.Message{
+	}, llm.GenerateInput{
+		Messages: []llm.Message{
 			{Role: "system", Content: prompt},
 			{Role: "user", Parts: parts},
 		},
@@ -412,23 +420,23 @@ func (c *Client) extractTextRemote(ctx context.Context, req Request) (Response, 
 	}
 	httpReq.Header.Set("Content-Type", contentType)
 	httpReq.Header.Set("Accept", "application/json, text/plain")
-	extractinfra.ApplyAuthHeaders(httpReq, c.authToken)
+	applyAuthHeaders(httpReq, c.authToken)
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
 		_ = bodyReader.Close()
-		if writeErr := extractinfra.AwaitMultipartWriteError(writeErrCh); writeErr != nil {
+		if writeErr := awaitMultipartWriteError(writeErrCh); writeErr != nil {
 			return Response{}, writeErr
 		}
 		return Response{}, err
 	}
 	defer resp.Body.Close()
-	if writeErr := extractinfra.AwaitMultipartWriteError(writeErrCh); writeErr != nil {
+	if writeErr := awaitMultipartWriteError(writeErrCh); writeErr != nil {
 		return Response{}, writeErr
 	}
 
 	if resp.StatusCode == http.StatusNoContent {
-		return Response{}, errors.New(errOCREmptyContent)
+		return Response{}, fmt.Errorf(errOCREmptyContent)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
@@ -486,7 +494,7 @@ func parseRemoteOCRResponse(body io.Reader, contentType string) (Response, error
 				text = strings.Join(pageParts, "\n\n")
 			}
 			if text == "" {
-				return Response{}, errors.New(errOCREmptyContent)
+				return Response{}, fmt.Errorf(errOCREmptyContent)
 			}
 			return Response{
 				Text:          text,
@@ -502,7 +510,7 @@ func parseRemoteOCRResponse(body io.Reader, contentType string) (Response, error
 	textBody := strings.TrimSpace(string(bodyBytes))
 	text := normalizeOCRText(textBody)
 	if text == "" {
-		return Response{}, errors.New(errOCREmptyContent)
+		return Response{}, fmt.Errorf(errOCREmptyContent)
 	}
 	return Response{Text: text}, nil
 }
@@ -570,12 +578,33 @@ func buildMultipartOCRBody(file *os.File, fileName string, mimeType string, page
 	return bodyReader, writer.FormDataContentType(), errCh
 }
 
+func awaitMultipartWriteError(errCh <-chan error) error {
+	if errCh == nil {
+		return nil
+	}
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func resolveHTTPTimeout(raw int, fallback time.Duration) time.Duration {
 	timeout := time.Duration(raw) * time.Second
 	if timeout <= 0 {
 		return fallback
 	}
 	return timeout
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func firstPositive(values ...int) int {
@@ -625,7 +654,7 @@ func mapLLMOCRError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var upstreamErr *portllm.UpstreamError
+	var upstreamErr *llm.UpstreamError
 	if errors.As(err, &upstreamErr) {
 		switch upstreamErr.StatusCode {
 		case http.StatusUnauthorized:
@@ -735,7 +764,7 @@ func (v *traditionalOCRPagesValue) UnmarshalJSON(data []byte) error {
 }
 
 func (p traditionalOCRPayload) ExtractedText() string {
-	return textutil.FirstNonBlank(
+	return firstNonEmpty(
 		p.Text,
 		p.FullText,
 		p.Content,
@@ -841,7 +870,7 @@ func joinTraditionalOCRPages(groups ...[]traditionalOCRPage) string {
 	parts := make([]string, 0)
 	for _, group := range groups {
 		for _, page := range group {
-			value := normalizeOCRText(textutil.FirstNonBlank(page.Text, page.Content, page.Markdown))
+			value := normalizeOCRText(firstNonEmpty(page.Text, page.Content, page.Markdown))
 			if value == "" {
 				continue
 			}
@@ -854,7 +883,7 @@ func joinTraditionalOCRPages(groups ...[]traditionalOCRPage) string {
 func convertTraditionalOCRPages(pages []traditionalOCRPage) []PageText {
 	result := make([]PageText, 0, len(pages))
 	for idx, page := range pages {
-		text := normalizeOCRText(textutil.FirstNonBlank(page.Text, page.Content, page.Markdown))
+		text := normalizeOCRText(firstNonEmpty(page.Text, page.Content, page.Markdown))
 		if text == "" {
 			continue
 		}

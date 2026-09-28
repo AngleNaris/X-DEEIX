@@ -19,6 +19,7 @@ import (
 
 	platformtracing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/observability/tracing"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/outboundhttp"
+	portmcp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/mcp"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
 	"github.com/google/uuid"
 )
@@ -37,31 +38,12 @@ type Client struct {
 	metaHMACKey string
 }
 
-// CallConfig 定义 MCP 调用配置。
-type CallConfig struct {
-	BaseURL   string
-	AuthToken string
-	TimeoutMS int
-	Headers   map[string]string
-}
-
-// CallInput 定义 MCP 工具调用入参。
-type CallInput struct {
-	ToolName       string
-	ArgumentsJSON  string
-	UserID         uint
-	ConversationID uint
-	RequestID      string
-	CallID         string
-}
-
-// Tool 定义 MCP 工具元数据。
-type Tool struct {
-	Name        string          `json:"name"`
-	Title       string          `json:"title,omitempty"`
-	Description string          `json:"description,omitempty"`
-	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
-}
+// 数据契约定义在 ports/mcp，此处保留同名引用供实现使用。
+type (
+	CallConfig = portmcp.CallConfig
+	CallInput  = portmcp.CallInput
+	Tool       = portmcp.Tool
+)
 
 // NewClient 创建带出站安全策略的 MCP 客户端。
 // metaHMACKey 非空时对每次 tools/call 的 _meta 做 HMAC 签名（供沙箱 MCP 校验身份）。
@@ -243,7 +225,7 @@ func (c *Client) rpcWithSession(
 		return nil, sessionID, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, sessionID, fmt.Errorf("mcp request failed: status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, sessionID, fmt.Errorf("mcp request failed: status=%d", resp.StatusCode)
 	}
 	if notification {
 		return nil, sessionID, nil

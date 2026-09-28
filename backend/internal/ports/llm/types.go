@@ -44,6 +44,7 @@ type RouteConfig struct {
 
 // ContentPart 类型常量。
 const (
+	ContentPartAudio = "audio" // 音频原始字节
 	ContentPartText  = "text"  // 纯文本
 	ContentPartImage = "image" // 图片（原始字节，序列化时 base64 编码）
 	ContentPartVideo = "video" // 视频（原始字节，仅供支持视频输入的 adapter 使用）
@@ -52,6 +53,7 @@ const (
 
 // ContentPart 表示多模态消息中的一个内容片段。
 type ContentPart struct {
+	URL          string        // 媒体 URL 引用；不要求同时提供原始字节
 	Kind         string        // text | image | video | file
 	Text         string        // Kind=text 或 Kind=file 时的文本内容
 	MimeType     string        // Kind=image 时的 MIME 类型（如 "image/jpeg"）
@@ -80,6 +82,8 @@ type Message struct {
 
 // GenerateInput 定义上游推理请求入参。
 type GenerateInput struct {
+	OnProgress             func(percent int)
+	OnTaskStarted          func(upstreamTaskID string)
 	RequestID              string
 	ConversationID         uint
 	ConversationPublicID   string
@@ -228,18 +232,19 @@ type ReasoningOutput struct {
 
 // GenerateOutput 定义上游推理结果。
 type GenerateOutput struct {
-	ResponseID          string
-	Text                string
-	Reasoning           *ReasoningOutput
-	Usage               Usage
-	ToolCalls           []ToolCall
-	ServerToolCalls     []ToolCall
-	ServerSideToolUsage map[string]int64
-	Citations           []string
-	GeneratedImages     []GeneratedImage
-	GeneratedVideos     []GeneratedVideo
-	RawJSON             string
-	Debug               *UpstreamDebugSnapshot `json:"-"`
+	TextToolCallsStripped bool
+	ResponseID            string
+	Text                  string
+	Reasoning             *ReasoningOutput
+	Usage                 Usage
+	ToolCalls             []ToolCall
+	ServerToolCalls       []ToolCall
+	ServerSideToolUsage   map[string]int64
+	Citations             []string
+	GeneratedImages       []GeneratedImage
+	GeneratedVideos       []GeneratedVideo
+	RawJSON               string
+	Debug                 *UpstreamDebugSnapshot `json:"-"`
 }
 
 // GeneratedImage 表示图片生成/编辑接口返回的一张图片。
@@ -252,11 +257,19 @@ type GeneratedImage struct {
 
 // GeneratedVideo 表示视频生成接口返回的一个视频结果。
 type GeneratedVideo struct {
+	FallbackURL     string
 	URL             string
 	B64JSON         string
 	MIMEType        string
 	FileName        string
 	DurationSeconds int64
+}
+
+// VideoTaskRetrieval 表示延迟视频任务的一次回查结果。
+type VideoTaskRetrieval struct {
+	Status  string
+	Output  *GenerateOutput
+	Message string
 }
 
 // ReasoningDelta 定义流式 reasoning 增量。

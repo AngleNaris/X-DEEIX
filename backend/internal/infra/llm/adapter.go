@@ -2,14 +2,14 @@ package llm
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	portllm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"strings"
 )
 
 // 已支持的协议常量。每个协议固定对应一个 HTTP 端点，任务能力由模型类别和路由规则约束。
 const (
- AdapterOpenAIVideo = "openai_video_generations"
+	AdapterOpenAIVideo            = "openai_video_generations"
 	AdapterOpenAIResponses        = "openai_responses"            // POST /v1/responses
 	AdapterOpenRouterChat         = "openrouter_chat_completions" // POST /v1/chat/completions（OpenRouter）
 	AdapterOpenRouterResponses    = "openrouter_responses"        // POST /v1/responses（OpenRouter Responses Beta）
@@ -22,17 +22,17 @@ const (
 	AdapterGeminiInteractions     = "gemini_interactions"         // POST /v1beta/interactions
 	AdapterXAIResponses           = "xai_responses"               // POST /v1/responses（OpenAI 兼容）
 	AdapterXAIImage               = "xai_image"                   // POST /v1/images/generations
-	AdapterImageEditsJSON = "image_edits_json"
-	AdapterXAIImageEdits          = "xai_image_edits"             // POST /v1/images/edits
-	AdapterXAIVideo               = "xai_video"                   // POST /v1/videos/generations + GET /v1/videos/{request_id}
-	AdapterXAIVideoExtensions     = "xai_video_extensions"        // POST /v1/videos/extensions + GET /v1/videos/{request_id}
+	AdapterImageEditsJSON         = "image_edits_json"
+	AdapterXAIImageEdits          = "xai_image_edits"      // POST /v1/images/edits
+	AdapterXAIVideo               = "xai_video"            // POST /v1/videos/generations + GET /v1/videos/{request_id}
+	AdapterXAIVideoExtensions     = "xai_video_extensions" // POST /v1/videos/extensions + GET /v1/videos/{request_id}
 )
 
 var (
 	// ErrUnsupportedAdapter 表示协议没有可用适配器实现。
-	ErrUnsupportedAdapter = errors.New("unsupported llm adapter")
+	ErrUnsupportedAdapter = portllm.ErrUnsupportedAdapter
 	// ErrUnsupportedStream 表示协议存在但不支持真实流式输出。
-	ErrUnsupportedStream = errors.New("unsupported llm stream")
+	ErrUnsupportedStream = portllm.ErrUnsupportedStream
 )
 
 type transportAdapter interface {
@@ -52,97 +52,24 @@ func NormalizeAdapter(raw string) string {
 }
 
 // IsKnownAdapter 返回协议是否为已知值（含未实现的）。
-func IsKnownAdapter(raw string) bool {
-	switch NormalizeAdapter(raw) {
-	case AdapterOpenAIResponses,
-		AdapterOpenRouterChat,
-		AdapterOpenRouterResponses,
-		AdapterOpenAIChatCompletions,
-		AdapterOpenAIImageGenerations,
-		AdapterOpenAIImageEdits,
-		AdapterAnthropicMessages,
-		AdapterGoogleGenerateContent,
-		AdapterGoogleImageGeneration,
-		AdapterGeminiInteractions,
-		AdapterXAIResponses,
-		AdapterXAIImage,
-		AdapterXAIImageEdits, AdapterImageEditsJSON,
-		AdapterXAIVideo, AdapterOpenAIVideo,
-		AdapterXAIVideoExtensions:
-		return true
-	default:
-		return false
-	}
-}
+func IsKnownAdapter(raw string) bool { return portllm.IsImplementedAdapter(raw) }
 
 // IsImplementedAdapter 返回协议是否已有可用的传输层实现。
-func IsImplementedAdapter(raw string) bool {
-	switch NormalizeAdapter(raw) {
-	case AdapterOpenAIResponses, AdapterOpenRouterChat, AdapterOpenRouterResponses, AdapterOpenAIChatCompletions, AdapterOpenAIImageGenerations, AdapterOpenAIImageEdits, AdapterXAIResponses,
-		AdapterAnthropicMessages, AdapterGoogleGenerateContent, AdapterGoogleImageGeneration, AdapterGeminiInteractions, AdapterXAIImage, AdapterXAIImageEdits, AdapterImageEditsJSON, AdapterXAIVideo, AdapterOpenAIVideo, AdapterXAIVideoExtensions:
-		return true
-	default:
-		return false
-	}
-}
+func IsImplementedAdapter(raw string) bool { return portllm.IsImplementedAdapter(raw) }
 
 // SupportsStreamingAdapter 返回协议是否有真实的上游流式传输。
-func SupportsStreamingAdapter(raw string) bool {
-	switch NormalizeAdapter(raw) {
-	case AdapterOpenAIResponses,
-		AdapterOpenRouterChat,
-		AdapterOpenRouterResponses,
-		AdapterOpenAIChatCompletions,
-		AdapterOpenAIImageGenerations,
-		AdapterOpenAIImageEdits,
-		AdapterAnthropicMessages,
-		AdapterGoogleGenerateContent,
-		AdapterGoogleImageGeneration,
-		AdapterGeminiInteractions,
-		AdapterXAIResponses:
-		return true
-	default:
-		return false
-	}
-}
+func SupportsStreamingAdapter(raw string) bool { return portllm.SupportsStreamingAdapter(raw) }
 
-// SupportsMediaInputAdapter reports whether an adapter can serialize the
-// requested media kind into a chat request without dropping it.
+// SupportsMediaInputAdapter 委托 ports/llm 的同名纯函数（数据契约唯一真相在 ports）。
 func SupportsMediaInputAdapter(raw string, modality string) bool {
-	modality = strings.ToLower(strings.TrimSpace(modality))
-	switch modality {
-	case "image":
-		switch NormalizeAdapter(raw) {
-		case AdapterOpenAIResponses,
-			AdapterOpenRouterChat,
-			AdapterOpenRouterResponses,
-			AdapterOpenAIChatCompletions,
-			AdapterAnthropicMessages,
-			AdapterGoogleGenerateContent,
-			AdapterGeminiInteractions,
-			AdapterXAIResponses:
-			return true
-		default:
-			return false
-		}
-	case "audio", "video":
-		switch NormalizeAdapter(raw) {
-		case AdapterOpenRouterChat,
-			AdapterOpenAIChatCompletions,
-			AdapterGoogleGenerateContent,
-			AdapterGeminiInteractions:
-			return true
-		default:
-			return false
-		}
-	default:
-		return false
-	}
+	return portllm.SupportsMediaInputAdapter(raw, modality)
 }
 
 // SupportsImageGenerationStream 返回图片媒体协议和模型是否支持真实上游流式。
 func SupportsImageGenerationStream(protocol string, model string) bool {
 	switch NormalizeAdapter(protocol) {
+	case portllm.AdapterOpenRouterImages:
+		return true
 	case AdapterOpenAIImageGenerations:
 		return openAIImageGenerationModelSupportsStream(model)
 	case AdapterGoogleImageGeneration:
@@ -157,57 +84,20 @@ func SupportsImageGenerationStream(protocol string, model string) bool {
 }
 
 // IsImageGenerationAdapter 返回协议是否属于独立图片生成链路。
-func IsImageGenerationAdapter(raw string) bool {
-	switch NormalizeAdapter(raw) {
-	case AdapterOpenAIImageGenerations, AdapterGoogleImageGeneration, AdapterGeminiInteractions, AdapterXAIImage:
-		return true
-	default:
-		return false
-	}
-}
+func IsImageGenerationAdapter(raw string) bool { return portllm.IsImageGenerationAdapter(raw) }
 
 // IsImageEditAdapter 返回协议是否属于独立图片编辑链路。
 // openai_image_generations 按任务切换到 edits 端点执行编辑请求（见 openAIImageGenerationsAdapter），
 // 且路由层已允许 image_edit 能力绑定该协议，因此此处必须将其视为编辑链路协议，
 // 否则编辑任务路由命中后会被 StreamMediaImage 的协议门禁误杀（media.route_protocol_mismatch）。
-func IsImageEditAdapter(raw string) bool {
-	switch NormalizeAdapter(raw) {
-	case AdapterOpenAIImageGenerations, AdapterOpenAIImageEdits, AdapterGoogleImageGeneration, AdapterGeminiInteractions, AdapterXAIImageEdits, AdapterImageEditsJSON:
-		return true
-	default:
-		return false
-	}
-}
+func IsImageEditAdapter(raw string) bool { return portllm.IsImageEditAdapter(raw) }
 
 // IsVideoGenerationAdapter 返回协议是否属于独立视频生成链路。
-func IsVideoGenerationAdapter(raw string) bool {
-	switch NormalizeAdapter(raw) {
-	case AdapterGeminiInteractions, AdapterXAIVideo, AdapterOpenAIVideo, AdapterXAIVideoExtensions:
-		return true
-	default:
-		return false
-	}
-}
+func IsVideoGenerationAdapter(raw string) bool { return portllm.IsVideoGenerationAdapter(raw) }
 
 // DefaultEndpointForAdapter 返回协议对应的固定端点标识。
 func DefaultEndpointForAdapter(adapter string) string {
-	switch NormalizeAdapter(adapter) {
-	case AdapterOpenAIChatCompletions, AdapterOpenRouterChat:
-		return EndpointChatCompletions
-	case AdapterOpenAIImageGenerations, AdapterGoogleImageGeneration, AdapterXAIImage:
-		return EndpointImageGenerations
-	case AdapterOpenAIImageEdits, AdapterXAIImageEdits, AdapterImageEditsJSON:
-		return EndpointImageEdits
-	case AdapterXAIVideo, AdapterOpenAIVideo:
-		return EndpointVideoGenerations
-	case AdapterXAIVideoExtensions:
-		return EndpointVideoExtensions
-	case AdapterGeminiInteractions:
-		return EndpointInteractions
-	default:
-		// openai_responses、openrouter_responses、xai_responses 及所有未知值均使用 Responses 端点。
-		return EndpointResponses
-	}
+	return portllm.DefaultEndpointForAdapter(adapter)
 }
 
 // SupportsPreviousResponseID 返回协议是否明确支持 previous_response_id 有状态续接。

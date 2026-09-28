@@ -9,6 +9,8 @@ import (
 
 // 已支持的协议常量。每个协议固定对应一个 HTTP 端点，任务能力由模型类别和路由规则约束。
 const (
+	AdapterOpenAIVideo            = "openai_video_generations"    // custom Sora-compatible video endpoint
+	AdapterImageEditsJSON         = "image_edits_json"            // custom JSON image edit endpoint
 	AdapterOpenAIResponses        = "openai_responses"            // POST /v1/responses
 	AdapterOpenRouterChat         = "openrouter_chat_completions" // POST /v1/chat/completions（OpenRouter）
 	AdapterOpenRouterResponses    = "openrouter_responses"        // POST /v1/responses（OpenRouter Responses Beta）
@@ -47,8 +49,41 @@ func NormalizeAdapter(raw string) string {
 func IsImplementedAdapter(raw string) bool {
 	switch NormalizeAdapter(raw) {
 	case AdapterOpenAIResponses, AdapterOpenRouterChat, AdapterOpenRouterResponses, AdapterOpenRouterImages, AdapterOpenAIChatCompletions, AdapterOpenAIImageGenerations, AdapterOpenAIImageEdits, AdapterXAIResponses,
-		AdapterAnthropicMessages, AdapterGoogleGenerateContent, AdapterGoogleImageGeneration, AdapterGeminiInteractions, AdapterXAIImage, AdapterXAIImageEdits, AdapterXAIVideo, AdapterXAIVideoExtensions:
+		AdapterAnthropicMessages, AdapterGoogleGenerateContent, AdapterGoogleImageGeneration, AdapterGeminiInteractions, AdapterXAIImage, AdapterXAIImageEdits, AdapterXAIVideo, AdapterXAIVideoExtensions, AdapterOpenAIVideo, AdapterImageEditsJSON:
 		return true
+	default:
+		return false
+	}
+}
+
+// SupportsMediaInputAdapter 报告协议是否能在聊天请求中序列化指定媒体种类而不丢弃。
+func SupportsMediaInputAdapter(raw string, modality string) bool {
+	modality = strings.ToLower(strings.TrimSpace(modality))
+	switch modality {
+	case "image":
+		switch NormalizeAdapter(raw) {
+		case AdapterOpenAIResponses,
+			AdapterOpenRouterChat,
+			AdapterOpenRouterResponses,
+			AdapterOpenAIChatCompletions,
+			AdapterAnthropicMessages,
+			AdapterGoogleGenerateContent,
+			AdapterGeminiInteractions,
+			AdapterXAIResponses:
+			return true
+		default:
+			return false
+		}
+	case "audio", "video":
+		switch NormalizeAdapter(raw) {
+		case AdapterOpenRouterChat,
+			AdapterOpenAIChatCompletions,
+			AdapterGoogleGenerateContent,
+			AdapterGeminiInteractions:
+			return true
+		default:
+			return false
+		}
 	default:
 		return false
 	}
@@ -117,7 +152,7 @@ func IsImageGenerationAdapter(raw string) bool {
 // IsImageEditAdapter 返回协议是否属于独立图片编辑链路。
 func IsImageEditAdapter(raw string) bool {
 	switch NormalizeAdapter(raw) {
-	case AdapterOpenAIImageEdits, AdapterGoogleImageGeneration, AdapterGeminiInteractions, AdapterXAIImageEdits, AdapterOpenRouterImages:
+	case AdapterOpenAIImageGenerations, AdapterOpenAIImageEdits, AdapterImageEditsJSON, AdapterGoogleImageGeneration, AdapterGeminiInteractions, AdapterXAIImageEdits, AdapterOpenRouterImages:
 		return true
 	default:
 		return false
@@ -127,7 +162,7 @@ func IsImageEditAdapter(raw string) bool {
 // IsVideoGenerationAdapter 返回协议是否属于独立视频生成链路。
 func IsVideoGenerationAdapter(raw string) bool {
 	switch NormalizeAdapter(raw) {
-	case AdapterGeminiInteractions, AdapterXAIVideo, AdapterXAIVideoExtensions:
+	case AdapterGeminiInteractions, AdapterXAIVideo, AdapterXAIVideoExtensions, AdapterOpenAIVideo:
 		return true
 	default:
 		return false
@@ -141,11 +176,11 @@ func DefaultEndpointForAdapter(adapter string) string {
 		return EndpointChatCompletions
 	case AdapterOpenAIImageGenerations, AdapterGoogleImageGeneration, AdapterXAIImage:
 		return EndpointImageGenerations
-	case AdapterOpenAIImageEdits, AdapterXAIImageEdits:
+	case AdapterOpenAIImageEdits, AdapterXAIImageEdits, AdapterImageEditsJSON:
 		return EndpointImageEdits
 	case AdapterOpenRouterImages:
 		return EndpointImages
-	case AdapterXAIVideo:
+	case AdapterXAIVideo, AdapterOpenAIVideo:
 		return EndpointVideoGenerations
 	case AdapterXAIVideoExtensions:
 		return EndpointVideoExtensions

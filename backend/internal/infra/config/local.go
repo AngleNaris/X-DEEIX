@@ -109,8 +109,14 @@ func loadOrCreateLocalSecrets(path string) (*LocalSecrets, error) {
 		if err := os.WriteFile(tmp, body, 0o600); err != nil {
 			return nil, fmt.Errorf("local mode: write secrets: %w", err)
 		}
+		if err := os.Chmod(tmp, 0o600); err != nil {
+			return nil, fmt.Errorf("local mode: chmod secrets: %w", err)
+		}
 		if err := os.Rename(tmp, path); err != nil {
 			return nil, fmt.Errorf("local mode: commit secrets: %w", err)
+		}
+		if err := os.Chmod(path, 0o600); err != nil {
+			return nil, fmt.Errorf("local mode: chmod committed secrets: %w", err)
 		}
 		return secrets, nil
 	default:

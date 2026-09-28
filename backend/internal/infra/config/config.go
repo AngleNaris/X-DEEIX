@@ -33,6 +33,9 @@ const (
 	defaultHTTPReadTimeoutSeconds       = 120
 	defaultHTTPIdleTimeoutSeconds       = 120
 	defaultHTTPMaxHeaderBytes           = 1 << 20
+	// defaultHTTPShutdownTimeoutSeconds 是优雅关停排空 in-flight 请求的默认窗口。
+	// 容器编排下应小于 terminationGracePeriodSeconds，为强断兜底与资源释放留余量。
+	defaultHTTPShutdownTimeoutSeconds = 10
 	// DefaultFileFullContextMaxBytes 是全文注入的默认提取文本大小上限（2 MiB）。
 	DefaultFileFullContextMaxBytes int64 = 2 * 1024 * 1024
 )
@@ -87,6 +90,11 @@ func DefaultModelOptionAllowedPathsJSON() string {
   "openrouter_responses": [
     "reasoning.effort",
     "reasoning.summary"
+  ],
+  "openrouter_images": [
+    "aspect_ratio", "background", "n", "output_compression", "output_format",
+    "provider.allow_fallbacks", "provider.ignore", "provider.only", "provider.order", "provider.sort",
+    "quality", "resolution", "seed", "size", "user"
   ],
   "openai_image_generations": [
     "background",
@@ -246,6 +254,7 @@ type yamlConfig struct {
 		ReadTimeoutSeconds       int    `yaml:"read_timeout_seconds"`
 		IdleTimeoutSeconds       int    `yaml:"idle_timeout_seconds"`
 		MaxHeaderBytes           int    `yaml:"max_header_bytes"`
+		ShutdownTimeoutSeconds   int    `yaml:"shutdown_timeout_seconds"`
 	} `yaml:"server"`
 	Security struct {
 		JWTSecret              string `yaml:"jwt_secret"`
@@ -327,18 +336,23 @@ type yamlConfig struct {
 // 静态字段由 YAML/ENV 加载；动态字段由 settings.RuntimeSettings.ApplyTo 从数据库覆盖。
 type Config struct {
 	// ── 静态配置（YAML/ENV） ──
-	AppName                      string
-	Env                          string
-	BrandTitle                   string
-	BrandShortName               string
-	BrandDescription             string
-	BrandLogoURL                 string
-	BrandFaviconURL              string
-	BrandPWAIcon192URL           string
-	BrandPWAIcon512URL           string
-	BrandPWAMaskableIcon512URL   string
-	BrandAppleTouchIcon180URL    string
-	HTTPPort                     string
+	AppName                    string
+	Env                        string
+	BrandTitle                 string
+	BrandShortName             string
+	BrandDescription           string
+	BrandLogoURL               string
+	BrandFaviconURL            string
+	BrandPWAIcon192URL         string
+	BrandPWAIcon512URL         string
+	BrandPWAMaskableIcon512URL string
+	BrandAppleTouchIcon180URL  string
+	HTTPPort                   string
+	// HTTPListenAddr 非空时优先于 HTTPPort，支持本地 sidecar 的回环随机端口。
+	HTTPListenAddr string
+	// LocalMode 表示作为桌面 sidecar 运行；LocalDataDir 是其数据目录。
+	LocalMode                    bool
+	LocalDataDir                 string
 	CORSAllowOrigin              string
 	TrustedProxies               string
 	PublicAPIBaseURL             string
@@ -348,6 +362,7 @@ type Config struct {
 	HTTPReadTimeoutSeconds       int
 	HTTPIdleTimeoutSeconds       int
 	HTTPMaxHeaderBytes           int
+	HTTPShutdownTimeoutSeconds   int
 	JWTSecret                    string
 	DataEncryptionKey            string
 	SSRFProtectionEnabled        bool
@@ -428,18 +443,23 @@ type Config struct {
 	TurnstileSiteKey             string
 	TurnstileSecretKey           string
 	// 对话配置
-	MaxContextMessages       int
-	ContextMaxTurns          int
-	ContextMaxInputTokens    int
-	ContextCompactEnabled    bool
-	ContextCompactTrigger    int
-	ContextCompactPreserve   int
-	ConversationDefaultModel string
-	ConversationTaskModel    string
-	ConversationTitlePrompt  string
-	ConversationLabelsPrompt string
-	DefaultSystemPrompt      string
-	SkillsPrompt             string
+	MaxContextMessages           int
+	ContextMaxTurns              int
+	UIComponentsEnabled          bool
+	KnowledgeBaseEnabled         bool
+	ContextCompactTriggerPercent int
+	EmbeddingDimensionsPolicy    string
+	ContextWindowFallbackTokens  int
+	ContextMaxInputTokens        int
+	ContextCompactEnabled        bool
+	ContextCompactTrigger        int
+	ContextCompactPreserve       int
+	ConversationDefaultModel     string
+	ConversationTaskModel        string
+	ConversationTitlePrompt      string
+	ConversationLabelsPrompt     string
+	DefaultSystemPrompt          string
+	SkillsPrompt                 string
 
 	MultimodalDelegationEnabled        bool
 	MultimodalDelegationModel          string
@@ -618,6 +638,7 @@ func Load() Config {
 		HTTPReadTimeoutSeconds:       envOrInt("HTTP_READ_TIMEOUT_SECONDS", yc.Server.ReadTimeoutSeconds, defaultHTTPReadTimeoutSeconds),
 		HTTPIdleTimeoutSeconds:       envOrInt("HTTP_IDLE_TIMEOUT_SECONDS", yc.Server.IdleTimeoutSeconds, defaultHTTPIdleTimeoutSeconds),
 		HTTPMaxHeaderBytes:           envOrInt("HTTP_MAX_HEADER_BYTES", yc.Server.MaxHeaderBytes, defaultHTTPMaxHeaderBytes),
+		HTTPShutdownTimeoutSeconds:   envOrInt("HTTP_SHUTDOWN_TIMEOUT_SECONDS", yc.Server.ShutdownTimeoutSeconds, defaultHTTPShutdownTimeoutSeconds),
 		JWTSecret:                    envOr("JWT_SECRET", yc.Security.JWTSecret, defaultJWTSecret),
 		DataEncryptionKey:            envOr("DATA_ENCRYPTION_KEY", yc.Security.DataEncryptionKey, defaultDataEncryptionKey),
 		SSRFProtectionEnabled:        envOrBoolPtr("SSRF_PROTECTION_ENABLED", yc.Security.SSRFProtectionEnabled, false),
@@ -698,6 +719,11 @@ func Load() Config {
 		TurnstileSecretKey:           "",
 		MaxContextMessages:           20,
 		ContextMaxTurns:              48,
+		UIComponentsEnabled:          true,
+		KnowledgeBaseEnabled:         true,
+		ContextCompactTriggerPercent: DefaultContextCompactTriggerPercent,
+		EmbeddingDimensionsPolicy:    EmbeddingDimensionsPolicySend,
+		ContextWindowFallbackTokens:  DefaultContextWindowFallbackTokens,
 		ContextMaxInputTokens:        32000,
 		ContextCompactEnabled:        false,
 		ContextCompactTrigger:        65536,
@@ -825,6 +851,11 @@ func Load() Config {
 	}
 }
 
+// IsProduction reports whether production validation rules apply.
+func (c Config) IsProduction() bool {
+	return normalizeEnv(c.Env) == "prod"
+}
+
 // Validate 检查关键配置是否合法。
 func (c Config) Validate() error {
 	if err := c.validateDatabase(); err != nil {
@@ -869,11 +900,13 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.CORSAllowOrigin) == "" || strings.TrimSpace(c.CORSAllowOrigin) == "*" {
 		return errors.New("invalid production config: CORS_ALLOW_ORIGIN must be explicitly set (wildcard * is not allowed)")
 	}
-	if err := validatePublicURL(c.PublicAPIBaseURL, "PUBLIC_API_BASE_URL"); err != nil {
-		return err
-	}
-	if err := validatePublicURL(c.PublicWebBaseURL, "PUBLIC_WEB_BASE_URL"); err != nil {
-		return err
+	if !c.LocalMode {
+		if err := validatePublicURL(c.PublicAPIBaseURL, "PUBLIC_API_BASE_URL"); err != nil {
+			return err
+		}
+		if err := validatePublicURL(c.PublicWebBaseURL, "PUBLIC_WEB_BASE_URL"); err != nil {
+			return err
+		}
 	}
 
 	return nil

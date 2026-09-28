@@ -221,7 +221,7 @@ func TestClientListToolsDoesNotExposeHTTPResponseBody(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewClient(security.OutboundPolicy{})
+	client := NewClient(security.OutboundPolicy{}, "")
 	_, err := client.ListTools(context.Background(), CallConfig{BaseURL: server.URL})
 	if err == nil {
 		t.Fatal("expected list tools to fail")
