@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/objectstore"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/objectstore"
 )
 
 // PurgeResult reports object deletion counts without retaining storage keys.

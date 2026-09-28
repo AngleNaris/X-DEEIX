@@ -9,13 +9,14 @@ import (
 )
 
 var validModelOptionProtocolKeys = map[string]struct{}{
+	"openrouter_images":           {},
 	"default":                     {},
 	"openai_chat_completions":     {},
 	"openrouter_chat_completions": {},
 	"openrouter_responses":        {},
- 	"openai_image_generations":    {},
- 	"openai_image_edits":          {},
- 	"image_edits_json":            {},
+	"openai_image_generations":    {},
+	"openai_image_edits":          {},
+	"image_edits_json":            {},
 	"openai_responses":            {},
 	"anthropic_messages":          {},
 	"xai_responses":               {},

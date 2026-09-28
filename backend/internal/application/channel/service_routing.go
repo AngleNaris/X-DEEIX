@@ -12,7 +12,7 @@ import (
 	"time"
 
 	domainchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/channel"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"go.uber.org/zap"
 )
@@ -37,7 +37,7 @@ func (s *Service) ResolveRoute(ctx context.Context, input ResolveRouteInput) (*R
 			row := available[start]
 			start++
 
-			if s.isUpstreamRateLimited(ctx, row.UpstreamID) {
+			if s.isRouteRateLimited(ctx, row.UpstreamID, row.RouteID) {
 				continue
 			}
 
@@ -152,14 +152,14 @@ func (s *Service) resolveRouteReferences(ctx context.Context, input ResolveRoute
 		if _, excluded := excludedRouteIDs[row.RouteID]; excluded {
 			continue
 		}
- 		if !IsRouteAllowedForTask(input.TaskType, row.ModelKindsJSON, row.Protocol) {
- 			continue
- 		}
- 		if NormalizeTaskType(input.TaskType) == TaskTypeChat && isMediaOnlyRouteProtocol(row.Protocol) {
- 			// chat 任务按设计仅校验协议已知（IsRouteAllowedForTask 不看 kinds），历史/手工绑定可能把 chat 指到纯媒体协议。
- 			// 保持行为兼容（画布 chat 路由图像模型依赖此路径），仅打 warn 供审计，不拦截。
- 			s.warn("chat_task_routed_to_media_protocol", zap.String("protocol", strings.TrimSpace(row.Protocol)), zap.String("model", strings.TrimSpace(row.PlatformModelName)))
- 		}
+		if !IsRouteAllowedForTask(input.TaskType, row.ModelKindsJSON, row.Protocol) {
+			continue
+		}
+		if NormalizeTaskType(input.TaskType) == TaskTypeChat && isMediaOnlyRouteProtocol(row.Protocol) {
+			// chat 任务按设计仅校验协议已知（IsRouteAllowedForTask 不看 kinds），历史/手工绑定可能把 chat 指到纯媒体协议。
+			// 保持行为兼容（画布 chat 路由图像模型依赖此路径），仅打 warn 供审计，不拦截。
+			s.warn("chat_task_routed_to_media_protocol", zap.String("protocol", strings.TrimSpace(row.Protocol)), zap.String("model", strings.TrimSpace(row.PlatformModelName)))
+		}
 		if row.UpstreamModelID == 0 || row.UpstreamID == 0 || strings.TrimSpace(row.BindingCode) == "" || strings.TrimSpace(row.UpstreamModelName) == "" {
 			continue
 		}
@@ -223,7 +223,7 @@ func routeScopeAllowsModelAccess(routeScope string, modelAccessScope string) boo
 
 // MarkRouteSuccess 标记上游调用成功，清除失败计数。
 func (s *Service) MarkRouteSuccess(ctx context.Context, route *ResolvedRoute) {
-	if route == nil || route.UpstreamID == 0 {
+	if route == nil || route.UpstreamID == 0 || s.cache == nil {
 		return
 	}
 	metaCtx := bookkeepingContext(ctx)
@@ -242,12 +242,15 @@ func (s *Service) MarkRouteSuccess(ctx context.Context, route *ResolvedRoute) {
 			)
 		}
 	}
+	if err := s.cache.ClearRateLimitBackoff(metaCtx, route.UpstreamID, route.RouteID); err != nil {
+		s.warn("clear_rate_limit_backoff_failed", zap.Uint("upstream_id", route.UpstreamID), zap.Uint("route_id", route.RouteID), zap.Error(err))
+	}
 	s.cache.RecordSuccessMetadata(metaCtx, route.UpstreamID)
 }
 
 // MarkRouteFailure 标记上游调用失败，按照错误分类执行熔断或退避。
 func (s *Service) MarkRouteFailure(ctx context.Context, route *ResolvedRoute, cause error) {
-	if route == nil || route.UpstreamID == 0 {
+	if route == nil || route.UpstreamID == 0 || s.cache == nil {
 		return
 	}
 
@@ -261,7 +264,7 @@ func (s *Service) MarkRouteFailure(ctx context.Context, route *ResolvedRoute, ca
 		return
 	case routeFailureRateLimit:
 		s.releaseGrantedRouteProbes(metaCtx, route)
-		s.recordRateLimitBackoff(metaCtx, route.UpstreamID)
+		s.recordRateLimitBackoff(metaCtx, route)
 	default:
 		if s.cache == nil {
 			return
@@ -355,11 +358,15 @@ func (s *Service) recordCircuitFailure(ctx context.Context, route *ResolvedRoute
 	}
 }
 
-func (s *Service) isUpstreamRateLimited(ctx context.Context, upstreamID uint) bool {
+func (s *Service) isRouteRateLimited(ctx context.Context, upstreamID uint, routeID uint) bool {
 	if upstreamID == 0 || s.cache == nil {
 		return false
 	}
-	return s.cache.IsRateLimited(ctx, upstreamID)
+	remaining, err := s.cache.GetRateLimitBackoff(ctx, upstreamID, routeID)
+	if err != nil {
+		s.warn("get_rate_limit_backoff_failed", zap.Uint("upstream_id", upstreamID), zap.Uint("route_id", routeID), zap.Error(err))
+	}
+	return remaining > 0
 }
 
 func (s *Service) checkUpstreamCircuitState(ctx context.Context, upstreamID uint) (string, error) {
@@ -377,7 +384,7 @@ func (s *Service) releaseUpstreamProbe(ctx context.Context, upstreamID uint) {
 }
 
 func (s *Service) releaseGrantedRouteProbes(ctx context.Context, route *ResolvedRoute) {
-	if route == nil || route.UpstreamID == 0 {
+	if route == nil || route.UpstreamID == 0 || s.cache == nil {
 		return
 	}
 	if route.UpstreamProbeGranted {
@@ -559,11 +566,11 @@ func (s *Service) nextAPIKeyIndex(ctx context.Context, upstreamID uint) uint64 {
 			return uint64(idx)
 		}
 	}
-	return nextLocalAPIKeyIndex(upstreamID)
+	return s.nextLocalAPIKeyIndex(upstreamID)
 }
 
-func nextLocalAPIKeyIndex(upstreamID uint) uint64 {
-	counter, _ := localAPIKeyCounters.LoadOrStore(upstreamID, &atomic.Uint64{})
+func (s *Service) nextLocalAPIKeyIndex(upstreamID uint) uint64 {
+	counter, _ := s.localAPIKeyCounters.LoadOrStore(upstreamID, &atomic.Uint64{})
 	return counter.(*atomic.Uint64).Add(1) - 1
 }
 
@@ -660,12 +667,15 @@ func matchesFailureRule(rules []string, target string) bool {
 	return false
 }
 
-func (s *Service) recordRateLimitBackoff(ctx context.Context, upstreamID uint) {
-	if upstreamID == 0 {
+func (s *Service) recordRateLimitBackoff(ctx context.Context, route *ResolvedRoute) {
+	if route == nil || route.UpstreamID == 0 || s.cache == nil {
 		return
 	}
+	upstreamID := route.UpstreamID
 	defaults := s.loadRateLimitDefaults(ctx)
-	if err := s.cache.RecordRateLimitBackoff(ctx, upstreamID, repository.RateLimitBackoffParams{
+	if err := s.cache.RecordRateLimitBackoff(ctx, repository.RateLimitBackoffParams{
+		UpstreamID:        upstreamID,
+		RouteID:           route.RouteID,
 		BackoffBaseSec:    defaults.BackoffBaseSec,
 		BackoffMaxSec:     defaults.BackoffMaxSec,
 		BackoffMultiplier: defaults.BackoffMultiplier,
@@ -781,14 +791,14 @@ func (s *Service) BuildRouteForUpstream(ctx context.Context, upstreamID uint, pr
 		UpstreamModel:       strings.TrimSpace(upstreamModel),
 	}, nil
 }
- 
- // isMediaOnlyRouteProtocol 判断协议是否为纯媒体协议（chat/audio 允许集之外）。
- // 仅用于 chat 任务路由到媒体协议时的 warn 审计，不改变路由行为。
- func isMediaOnlyRouteProtocol(protocol string) bool {
- 	switch llm.NormalizeAdapter(protocol) {
- 	case llm.AdapterOpenAIImageGenerations, llm.AdapterOpenAIImageEdits, llm.AdapterImageEditsJSON, llm.AdapterGoogleImageGeneration, llm.AdapterXAIImage, llm.AdapterXAIImageEdits, llm.AdapterOpenAIVideo, llm.AdapterXAIVideo, llm.AdapterXAIVideoExtensions:
- 		return true
- 	default:
- 		return false
- 	}
- }
+
+// isMediaOnlyRouteProtocol 判断协议是否为纯媒体协议（chat/audio 允许集之外）。
+// 仅用于 chat 任务路由到媒体协议时的 warn 审计，不改变路由行为。
+func isMediaOnlyRouteProtocol(protocol string) bool {
+	switch llm.NormalizeAdapter(protocol) {
+	case llm.AdapterOpenAIImageGenerations, llm.AdapterOpenAIImageEdits, llm.AdapterImageEditsJSON, llm.AdapterGoogleImageGeneration, llm.AdapterXAIImage, llm.AdapterXAIImageEdits, llm.AdapterOpenAIVideo, llm.AdapterXAIVideo, llm.AdapterXAIVideoExtensions:
+		return true
+	default:
+		return false
+	}
+}

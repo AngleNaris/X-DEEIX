@@ -11,6 +11,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/channelconfig"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/nativetool"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/pagination"
 	"go.uber.org/zap"
 )
 
@@ -34,7 +35,7 @@ type ListModelsInput struct {
 
 // ListModels 分页查询模型目录。
 func (s *Service) ListModels(ctx context.Context, page int, pageSize int, input ListModelsInput) ([]ModelView, int64, error) {
-	offset, limit := normalizePage(page, pageSize)
+	offset, limit := pagination.Offset(page, pageSize)
 	items, total, err := s.repo.ListModels(ctx, repository.ListChannelModelsInput{
 		Offset:        offset,
 		Limit:         limit,
@@ -52,7 +53,7 @@ func (s *Service) ListModels(ctx context.Context, page int, pageSize int, input 
 	}
 	views := make([]ModelView, 0, len(items))
 	for _, item := range items {
-		views = append(views, toModelView(item))
+		views = append(views, s.toModelView(item))
 	}
 	if err := s.normalizeModelAvailability(ctx, views); err != nil {
 		return nil, 0, err
@@ -83,7 +84,7 @@ func (s *Service) listActiveModelViews(ctx context.Context) ([]ModelView, error)
 		if err != nil {
 			return nil, err
 		}
-		return filterPublicRoutableModels(items), nil
+		return s.filterPublicRoutableModels(items), nil
 	}
 	mode, err := s.modelPricingFilter.GetBillingMode(ctx)
 	if err != nil {
@@ -94,7 +95,7 @@ func (s *Service) listActiveModelViews(ctx context.Context) ([]ModelView, error)
 		if err != nil {
 			return nil, err
 		}
-		return filterPublicRoutableModels(items), nil
+		return s.filterPublicRoutableModels(items), nil
 	}
 
 	s.modelCatalogMu.RLock()
@@ -109,7 +110,7 @@ func (s *Service) listActiveModelViews(ctx context.Context) ([]ModelView, error)
 	if err != nil {
 		return nil, err
 	}
-	views := filterPublicRoutableModels(items)
+	views := s.filterPublicRoutableModels(items)
 	pricingByPlatformModelName, err := s.modelPricingFilter.ListPublicModelPricing(ctx)
 	if err != nil {
 		return nil, err
@@ -232,7 +233,7 @@ func cloneModelViews(items []ModelView) []ModelView {
 }
 
 // filterPublicRoutableModels 过滤出公开接口可展示的有效可路由模型。
-func filterPublicRoutableModels(items []repository.ChannelModelListRow) []ModelView {
+func (s *Service) filterPublicRoutableModels(items []repository.ChannelModelListRow) []ModelView {
 	results := make([]ModelView, 0, len(items))
 	for _, item := range items {
 		if item.ActiveSourceCount <= 0 {
@@ -241,7 +242,7 @@ func filterPublicRoutableModels(items []repository.ChannelModelListRow) []ModelV
 		if normalizeModelAccessScopeValue(item.AccessScope) != ModelAccessScopePublic {
 			continue
 		}
-		results = append(results, toModelView(item))
+		results = append(results, s.toModelView(item))
 	}
 	return results
 }
@@ -374,6 +375,9 @@ func (s *Service) CreateModel(ctx context.Context, input CreateModelInput) (*Mod
 	if err := validateOptionalJSON(strings.TrimSpace(input.CapabilitiesJSON)); err != nil {
 		return nil, ErrInvalidJSONConfig
 	}
+	if err := domainchannel.ValidateModelCapsOverrides(input.CapabilitiesJSON); err != nil {
+		return nil, ErrInvalidModelCapsConfig
+	}
 	systemPrompt := strings.TrimSpace(input.SystemPrompt)
 	if len([]rune(systemPrompt)) > maxSystemPromptChars {
 		return nil, ErrSystemPromptTooLong
@@ -441,7 +445,7 @@ func (s *Service) CreateModel(ctx context.Context, input CreateModelInput) (*Mod
 		setting.Value = marshalDefaultTaskRoutes(routes)
 		return txRepo.UpsertLLMSetting(ctx, setting)
 	}); err != nil {
-		if isDuplicateKeyError(err) {
+		if errors.Is(err, repository.ErrDuplicate) {
 			return nil, ErrDuplicatePlatformModelName
 		}
 		if errors.Is(err, repository.ErrModelVendorNotFound) {
@@ -467,6 +471,7 @@ func (s *Service) UpdateModel(ctx context.Context, modelID uint, input UpdateMod
 	if err != nil {
 		return nil, err
 	}
+	currentVendor := nextVendor
 	nextPlatformModelName := current.PlatformModelName
 
 	update := repository.UpdateChannelModelInput{}
@@ -510,6 +515,9 @@ func (s *Service) UpdateModel(ctx context.Context, modelID uint, input UpdateMod
 		normalized := strings.TrimSpace(*input.CapabilitiesJSON)
 		if err := validateOptionalJSON(normalized); err != nil {
 			return nil, ErrInvalidJSONConfig
+		}
+		if err := domainchannel.ValidateModelCapsOverrides(normalized); err != nil {
+			return nil, ErrInvalidModelCapsConfig
 		}
 		update.CapabilitiesJSON = &normalized
 	}
@@ -559,6 +567,11 @@ func (s *Service) UpdateModel(ctx context.Context, modelID uint, input UpdateMod
 		if autoVendor != nextVendor {
 			update.Vendor = &autoVendor
 			nextVendor = autoVendor
+		}
+	}
+	if (nextPlatformModelName != current.PlatformModelName || nextVendor != currentVendor) && input.CapabilitiesJSON == nil {
+		if capabilitiesJSON, changed := clearAutomaticContextWindow(current.CapabilitiesJSON); changed {
+			update.CapabilitiesJSON = &capabilitiesJSON
 		}
 	}
 	if input.Icon == nil && (input.PlatformModelName != nil || input.Vendor != nil) && shouldRefreshAutoIcon(current) {
@@ -650,7 +663,7 @@ func (s *Service) getModelViewByID(ctx context.Context, modelID uint) (*ModelVie
 	if err != nil {
 		return nil, err
 	}
-	view := toModelView(*item)
+	view := s.toModelView(*item)
 	views := []ModelView{view}
 	if err := s.normalizeModelAvailability(ctx, views); err != nil {
 		return nil, err
@@ -774,7 +787,7 @@ func (s *Service) ListModelUpstreamSources(ctx context.Context, modelID uint, pa
 	if err != nil {
 		return nil, 0, err
 	}
-	offset, limit := normalizePage(page, pageSize)
+	offset, limit := pagination.Offset(page, pageSize)
 	items, total, err := s.repo.ListModelUpstreamSources(ctx, modelItem.PlatformModelName, offset, limit)
 	if err != nil {
 		return nil, 0, err
@@ -837,7 +850,7 @@ func (s *Service) BindModelUpstreamSource(ctx context.Context, modelID uint, inp
 		CbWindowMin:        normalizeNonNegative(input.CbWindowMin),
 	}
 	if err := s.repo.UpsertPlatformModelRoute(ctx, route); err != nil {
-		if isDuplicateKeyError(err) {
+		if errors.Is(err, repository.ErrDuplicate) {
 			return nil, ErrUpstreamModelConflict
 		}
 		return nil, err
@@ -927,7 +940,7 @@ func (s *Service) bindOpenAIDualImageRoutes(
 		return nil
 	})
 	if err != nil {
-		if isDuplicateKeyError(err) {
+		if errors.Is(err, repository.ErrDuplicate) {
 			return nil, ErrUpstreamModelConflict
 		}
 		return nil, err
@@ -999,7 +1012,7 @@ func (s *Service) UpdateModelUpstreamSource(ctx context.Context, modelID uint, r
 	}
 
 	if err := s.repo.UpdatePlatformModelRouteByID(ctx, routeID, source.UpstreamID, updateInput); err != nil {
-		if isDuplicateKeyError(err) {
+		if errors.Is(err, repository.ErrDuplicate) {
 			return nil, ErrUpstreamModelConflict
 		}
 		return nil, err

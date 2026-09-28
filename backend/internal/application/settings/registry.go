@@ -42,7 +42,9 @@ func (s settingSpec) seedSetting() domainsettings.SystemSetting {
 	}
 }
 
-var settingSpecs = []settingSpec{
+var settingSpecs = mergeCustomSettingSpecs(coreSettingSpecs)
+
+var coreSettingSpecs = []settingSpec{
 	// 认证配置
 	{Namespace: "auth", Key: "token_ttl_hours", ValueType: "int", Default: "24", Description: "Access Token 有效期(小时)",
 		Validate: intRange(1, 168), Apply: applyField(func(c *config.Config) *int { return &c.TokenTTLHours }, toInt)},
@@ -193,7 +195,7 @@ var settingSpecs = []settingSpec{
 	{Namespace: "extract", Key: "engine", ValueType: "string", Default: "builtin", Description: "提取主引擎枚举(builtin/tika/docling/mineru)",
 		Validate: oneOf(extraction.EngineBuiltin, extraction.EngineTika, extraction.EngineDocling, extraction.EngineMinerU), Apply: applyField(func(c *config.Config) *string { return &c.ExtractEngine }, rawText)},
 	{Namespace: "extract", Key: "ocr_engine", ValueType: "string", Default: "rapidocr", Description: "OCR 引擎枚举(rapidocr/tesseract/paddle/tencent/aliyun/mistral/llm)",
-		Validate: oneOf(extraction.OCREngineRapidOCR, extraction.OCREngineTesseract, extraction.OCREnginePaddle, extraction.OCREngineTencent, extraction.OCREngineAliyun, extraction.OCREngineMistral, extraction.OCREngineLLM), Apply: applyField(func(c *config.Config) *string { return &c.ExtractOCREngine }, rawText)},
+		Validate: oneOf(extraction.OCREngineRapidOCR, extraction.OCREngineTesseract, extraction.OCREnginePaddle, extraction.OCREngineTencent, extraction.OCREngineAliyun, extraction.OCREngineMistral, extraction.OCREngineLLM, "system_vision"), Apply: applyField(func(c *config.Config) *string { return &c.ExtractOCREngine }, rawText)},
 	{Namespace: "extract", Key: "image_ocr_enabled", ValueType: "bool", Default: "false", Description: "是否对图片附件执行 OCR",
 		Validate: boolValue(), Apply: applyField(func(c *config.Config) *bool { return &c.ExtractImageOCREnabled }, toBool)},
 	{Namespace: "extract", Key: "pdf_ocr_fallback_enabled", ValueType: "bool", Default: "false", Description: "PDF 原生文本提取失败或质量较差时是否启用 OCR 回退",
@@ -405,6 +407,9 @@ func lookupSettingSpec(namespace string, key string) (settingSpec, bool) {
 
 // IsValidNamespace 判断 namespace 是否允许被动态配置。
 func IsValidNamespace(namespace string) bool {
+	if validNamespaces[namespace] {
+		return true
+	}
 	for _, spec := range settingSpecs {
 		if spec.Namespace == namespace {
 			return true

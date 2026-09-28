@@ -806,28 +806,28 @@ func TestUpdateDefaultTaskRoutesForModelReassignsAndRenames(t *testing.T) {
 }
 
 func TestDefaultRouteModelMatchesTaskFiltersByKind(t *testing.T) {
-	if !ModelSupportsTask(`["chat"]`, TaskTypeChat) {
+	if !defaultRouteModelMatchesTask(`["chat"]`, TaskTypeChat) {
 		t.Fatal("expected chat default route to accept chat model")
 	}
-	if ModelSupportsTask(`["image_gen","image_edit"]`, TaskTypeChat) {
+	if defaultRouteModelMatchesTask(`["image_gen","image_edit"]`, TaskTypeChat) {
 		t.Fatal("expected chat default route to reject image-only model")
 	}
-	if !ModelSupportsTask(`["image_gen","image_edit"]`, TaskTypeImageGeneration) {
+	if !defaultRouteModelMatchesTask(`["image_gen","image_edit"]`, TaskTypeImageGeneration) {
 		t.Fatal("expected image generation default route to accept image generation model")
 	}
-	if ModelSupportsTask(`["chat"]`, TaskTypeImageGeneration) {
+	if defaultRouteModelMatchesTask(`["chat"]`, TaskTypeImageGeneration) {
 		t.Fatal("expected image generation default route to reject chat model")
 	}
-	if !ModelSupportsTask(`["video_gen"]`, TaskTypeVideoGeneration) {
+	if !defaultRouteModelMatchesTask(`["video_gen"]`, TaskTypeVideoGeneration) {
 		t.Fatal("expected video generation default route to accept video generation model")
 	}
-	if ModelSupportsTask(`["chat"]`, TaskTypeVideoGeneration) {
+	if defaultRouteModelMatchesTask(`["chat"]`, TaskTypeVideoGeneration) {
 		t.Fatal("expected video generation default route to reject chat model")
 	}
-	if !ModelSupportsTask(`["video_gen","video_extension"]`, TaskTypeVideoExtension) {
+	if !defaultRouteModelMatchesTask(`["video_gen","video_extension"]`, TaskTypeVideoExtension) {
 		t.Fatal("expected video extension default route to accept video extension model")
 	}
-	if ModelSupportsTask(`["video_gen"]`, TaskTypeVideoExtension) {
+	if defaultRouteModelMatchesTask(`["video_gen"]`, TaskTypeVideoExtension) {
 		t.Fatal("expected video extension default route to reject generation-only model")
 	}
 }

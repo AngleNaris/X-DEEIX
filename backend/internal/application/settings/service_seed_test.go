@@ -135,8 +135,10 @@ func TestSeedReplacesLegacyCompactTokenThresholdWithModelAwareDefaults(t *testin
 	if _, exists := repo.items["chat:context_compact_trigger_tokens"]; exists {
 		t.Fatal("expected obsolete fixed token threshold to be removed")
 	}
-	if _, exists := repo.items["chat:context_max_input_tokens"]; exists {
-		t.Fatal("expected obsolete fixed input cap to be removed")
+	// Custom still uses this value for optional context and attachment budgets,
+	// independently of the upstream percentage-based compaction threshold.
+	if got := repo.items["chat:context_max_input_tokens"].Value; got != "32000" {
+		t.Fatalf("custom attachment budget must survive migration, got %q", got)
 	}
 	if got := repo.items["chat:context_window_fallback_tokens"].Value; got != strconv.Itoa(config.DefaultContextWindowFallbackTokens) {
 		t.Fatalf("fallback window = %q, want %d", got, config.DefaultContextWindowFallbackTokens)

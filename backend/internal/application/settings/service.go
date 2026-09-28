@@ -7,11 +7,12 @@ import (
 	"strconv"
 	"strings"
 
+	appaudit "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/audit"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/extraction"
 	domainbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/billing"
 	domainsettings "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/settings"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	mineruextract "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/extract/mineru"
+	extractport "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/extract"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
 )
@@ -34,7 +35,7 @@ type vectorStoreAvailabilityService interface {
 }
 
 type auditWriter interface {
-	Write(ctx context.Context, requestID string, actorUserID uint, action string, resource string, resourceID string, ip string, userAgent string, detail interface{})
+	Write(ctx context.Context, input appaudit.WriteInput)
 }
 
 // NewService 创建服务。
@@ -70,27 +71,25 @@ func (s *Service) RecordAudit(ctx context.Context, input AuditInput) {
 	if s.auditWriter == nil {
 		return
 	}
-	s.auditWriter.Write(
-		ctx,
-		strings.TrimSpace(input.RequestID),
-		input.UserID,
-		strings.TrimSpace(input.Action),
-		"system_settings",
-		"",
-		strings.TrimSpace(input.ClientIP),
-		strings.TrimSpace(input.UserAgent),
-		input.Detail,
-	)
+	s.auditWriter.Write(ctx, appaudit.WriteInput{
+		RequestID:   input.RequestID,
+		ActorUserID: input.UserID,
+		Action:      input.Action,
+		Resource:    "system_settings",
+		IP:          input.ClientIP,
+		UserAgent:   input.UserAgent,
+		Detail:      input.Detail,
+	})
 }
 
 // Seed 将默认配置写入数据库（仅插入不存在的 key）。
-func (s *Service) Seed(ctx context.Context, cfg config.Config) error {
+func (s *Service) Seed(ctx context.Context, _ ...config.Config) error {
 	for _, item := range obsoleteSettings() {
 		if err := s.repo.Delete(ctx, item.Namespace, item.Key); err != nil {
 			return err
 		}
 	}
-	items, err := s.encryptSettingsForStorage(defaultSettingsWithConfig(cfg))
+	items, err := s.encryptSettingsForStorage(defaultSettings())
 	if err != nil {
 		return err
 	}
@@ -351,18 +350,13 @@ var validNamespaces = map[string]bool{
 	"platform_tools": true,
 }
 
-// IsValidNamespace 判断 namespace 是否允许被动态配置。
-func IsValidNamespace(namespace string) bool {
-	return validNamespaces[namespace]
-}
-
 var validSettingKeys = buildValidSettingKeys()
 
 // BatchUpdate 批量更新配置项。
 func (s *Service) BatchUpdate(ctx context.Context, patches []PatchItem) (map[string][]SettingItem, error) {
 	// 校验 namespace
 	for _, p := range patches {
-		if !validNamespaces[p.Namespace] {
+		if !IsValidNamespace(p.Namespace) {
 			return nil, fmt.Errorf("%w: invalid namespace: %s", ErrInvalidSetting, p.Namespace)
 		}
 		if err := validatePatchItem(p); err != nil {
@@ -411,16 +405,20 @@ func (s *Service) groupByNamespace(items []domainsettings.SystemSetting) map[str
 }
 
 func validatePatchItem(item PatchItem) error {
+	if spec, ok := lookupSettingSpec(item.Namespace, item.Key); ok {
+		if item.Clear {
+			if !spec.Sensitive {
+				return newSettingValidationError(settingValidationCode(item.Namespace, item.Key), SettingValidationDetails{Field: spec.fullKey(), Rule: "clear_not_allowed"})
+			}
+			return nil
+		}
+		return validateSettingValue(item.Namespace, item.Key, item.Value)
+	}
+	return newSettingValidationError(settingCodeInvalidKey, SettingValidationDetails{Rule: "invalid_key"})
+}
+
+func validateLegacyCustomPatchItem(item PatchItem) error {
 	key := item.Namespace + ":" + item.Key
-	if _, ok := validSettingKeys[key]; !ok {
-		return fmt.Errorf("invalid setting key: %s", key)
-	}
-	if item.Clear && !isSensitiveSetting(item.Namespace, item.Key) {
-		return fmt.Errorf("clear is only supported for sensitive setting: %s", key)
-	}
-	if item.Clear {
-		return nil
-	}
 	value := strings.TrimSpace(item.Value)
 	switch key {
 	case "billing:mode":
@@ -607,10 +605,10 @@ func validatePatchItem(item PatchItem) error {
 		}
 	case "extract:mineru_source":
 		switch value {
-		case mineruextract.SourceCloud, mineruextract.SourceSelfHosted:
+		case extractport.MinerUSourceCloud, extractport.MinerUSourceSelfHosted:
 			return nil
 		default:
-			return fmt.Errorf("%s must be one of: %s, %s", key, mineruextract.SourceCloud, mineruextract.SourceSelfHosted)
+			return fmt.Errorf("%s must be one of: %s, %s", key, extractport.MinerUSourceCloud, extractport.MinerUSourceSelfHosted)
 		}
 	case "extract:mineru_file_types":
 		return validateMinerUFileTypes(value, key)
@@ -751,25 +749,6 @@ func validateImageGenChannelsJSON(value string, key string) error {
 			return fmt.Errorf("%s contains duplicate model %q", key, model)
 		}
 		seen[model] = struct{}{}
-	}
-	return nil
-}
-
-func validateMinerUFileTypes(value string, key string) error {
-	allowed := map[string]struct{}{
-		"pdf":          {},
-		"word":         {},
-		"presentation": {},
-		"excel":        {},
-	}
-	for _, part := range strings.Split(value, ",") {
-		item := strings.ToLower(strings.TrimSpace(part))
-		if item == "" {
-			continue
-		}
-		if _, ok := allowed[item]; !ok {
-			return fmt.Errorf("%s contains invalid file type: %s", key, item)
-		}
 	}
 	return nil
 }
@@ -1164,72 +1143,6 @@ func (s *Service) validateBillingPaymentSettings(ctx context.Context, patches []
 	return nil
 }
 
-func normalizePaymentProvidersSetting(raw string) []string {
-	parts := strings.Split(raw, ",")
-	results := make([]string, 0, len(parts))
-	seen := make(map[string]struct{}, len(parts))
-	for _, part := range parts {
-		provider := strings.ToLower(strings.TrimSpace(part))
-		if provider == "" || provider == "disabled" {
-			continue
-		}
-		if _, ok := seen[provider]; ok {
-			continue
-		}
-		seen[provider] = struct{}{}
-		results = append(results, provider)
-	}
-	return results
-}
-
-type epayTypeSetting struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
-}
-
-func validateEPayTypesJSON(value string, key string) error {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return fmt.Errorf("%s is required", key)
-	}
-	var items []epayTypeSetting
-	if err := json.Unmarshal([]byte(value), &items); err != nil {
-		return fmt.Errorf("%s must be a JSON array", key)
-	}
-	if len(items) == 0 || len(items) > 10 {
-		return fmt.Errorf("%s must contain 1-10 payment types", key)
-	}
-	seen := make(map[string]struct{}, len(items))
-	for _, item := range items {
-		name := strings.TrimSpace(item.Name)
-		paymentType := strings.TrimSpace(item.Type)
-		if name == "" || paymentType == "" {
-			return fmt.Errorf("%s items require name and type", key)
-		}
-		if len(name) > 64 || len(paymentType) > 32 {
-			return fmt.Errorf("%s item is too long", key)
-		}
-		if !validPaymentSettingToken(paymentType) {
-			return fmt.Errorf("%s type contains invalid characters", key)
-		}
-		if _, ok := seen[paymentType]; ok {
-			return fmt.Errorf("%s type must be unique", key)
-		}
-		seen[paymentType] = struct{}{}
-	}
-	return nil
-}
-
-func validPaymentSettingToken(value string) bool {
-	for _, char := range value {
-		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || (char >= '0' && char <= '9') || char == '_' || char == '-' {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
 type requiredSettingField struct {
 	key   string
 	label string
@@ -1316,25 +1229,6 @@ func validateOptionalHTTPURL(value string, key string) error {
 		return fmt.Errorf("%s must start with http:// or https://", key)
 	}
 	return nil
-}
-
-func validateEmailDomainList(value string, key string) error {
-	if len([]rune(value)) > 1024 {
-		return fmt.Errorf("%s length must be <= 1024", key)
-	}
-	for _, domain := range splitList(value) {
-		domain = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(domain)), "@")
-		if strings.Contains(domain, "@") || strings.Contains(domain, "://") || !strings.Contains(domain, ".") {
-			return fmt.Errorf("%s contains invalid domain: %s", key, domain)
-		}
-	}
-	return nil
-}
-
-func splitList(value string) []string {
-	return strings.FieldsFunc(value, func(r rune) bool {
-		return r == ',' || r == '\n' || r == '\r' || r == '\t' || r == ' '
-	})
 }
 
 func buildValidSettingKeys() map[string]struct{} {

@@ -254,6 +254,7 @@ type epayTypeSetting struct {
 }
 
 func validateEPayTypesJSON(value string, key string) error {
+	value = strings.TrimSpace(value)
 	if value == "" {
 		return settingRule("required", "")
 	}

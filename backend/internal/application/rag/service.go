@@ -15,7 +15,6 @@ import (
 	portembedding "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/embedding"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/embeddingutil"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/tokenestimate"
 )
 
 // Service 封装 RAG 检索能力。
@@ -33,20 +32,10 @@ type EmbeddingClient interface {
 
 // RetrieveInput 定义 RAG 检索输入。
 type RetrieveInput struct {
+	Ephemeral bool
 	UserID    uint
 	Query     string
 	FileObjs  []domainconversation.FileObject
-	Ephemeral bool
-}
-
-type hybridRetrieveInput struct {
-	UserID              uint
-	FileObjectIDs       []uint
-	Query               string
-	Embedding           []float32
-	EmbeddingSignature  string
-	TopK                int
-	MinVectorSimilarity float32
 }
 
 // RetrieveStatus 表示一次文件 RAG 检索的稳定结果状态。
@@ -77,6 +66,11 @@ const ragCacheVersion = "v3"
 const ragInitialPerFileLimit = 2
 
 const ragDiversityMinScoreRatio float32 = 0.75
+
+// NewService 创建服务。
+func NewService(cfg config.Config, repo repository.RAGRepository, cache repository.RAGCacheRepository, embedClient EmbeddingClient) *Service {
+	return NewServiceWithRuntime(config.NewRuntime(cfg), repo, cache, embedClient)
+}
 
 // NewServiceWithRuntime 创建使用运行时配置容器的服务。
 func NewServiceWithRuntime(cfg *config.Runtime, repo repository.RAGRepository, cache repository.RAGCacheRepository, embedClient EmbeddingClient) *Service {
@@ -115,8 +109,8 @@ func (s *Service) RetrieveWithStatus(ctx context.Context, input RetrieveInput) (
 				Cached:         true,
 			}, nil
 		}
-	}
 
+	}
 	fileObjIDs := make([]uint, 0, len(input.FileObjs))
 	idToName := make(map[uint]string, len(input.FileObjs))
 	idToFileID := make(map[uint]string, len(input.FileObjs))
@@ -157,13 +151,9 @@ func (s *Service) RetrieveWithStatus(ctx context.Context, input RetrieveInput) (
 	var searchErr error
 	if cfg.RAGHybridEnabled {
 		chunks, searchErr = s.hybridRetrieve(ctx, hybridRetrieveInput{
-			UserID:              input.UserID,
-			FileObjectIDs:       fileObjIDs,
-			Query:               input.Query,
-			Embedding:           embeddings[0],
-			EmbeddingSignature:  embeddingSignature,
-			TopK:                fetchK,
-			MinVectorSimilarity: float32(minSimilarity),
+			UserID: input.UserID, FileObjectIDs: fileObjIDs, Query: input.Query,
+			Embedding: embeddings[0], EmbeddingSignature: embeddingSignature,
+			TopK: fetchK, MinVectorSimilarity: float32(minSimilarity),
 		})
 	} else {
 		chunks, searchErr = s.repo.SearchFileChunks(ctx, input.UserID, fileObjIDs, embeddings[0], embeddingSignature, fetchK)
@@ -395,7 +385,7 @@ func ragChunkTokenEstimate(candidate domainconversation.FileChunkSearchResult) i
 	if candidate.TokenCount > 0 {
 		return int64(candidate.TokenCount)
 	}
-	return tokenestimate.Estimate(candidate.Content)
+	return estimateTokens(candidate.Content)
 }
 
 func maxRAGChunkScore(chunks []domainconversation.RAGChunk) float32 {
@@ -450,15 +440,7 @@ func (s *Service) embedTexts(ctx context.Context, texts []string, cfg config.Con
 		if end > len(texts) {
 			end = len(texts)
 		}
-		batchEmbeddings, batchErr := s.embedClient.CallAPI(ctx, portembedding.Request{
-			APIBase:        apiBase,
-			APIKey:         apiKey,
-			Model:          model,
-			Texts:          texts[start:end],
-			Dimensions:     cfg.EmbeddingOutputDimensions,
-			OmitDimensions: cfg.EmbeddingDimensionsPolicy == config.EmbeddingDimensionsPolicyOmit,
-			TimeoutSeconds: cfg.EmbeddingTimeoutSeconds,
-		})
+		batchEmbeddings, batchErr := s.embedClient.CallAPI(ctx, portembedding.Request{APIBase: apiBase, APIKey: apiKey, Model: model, Texts: texts[start:end], Dimensions: cfg.EmbeddingOutputDimensions, OmitDimensions: cfg.EmbeddingDimensionsPolicy == config.EmbeddingDimensionsPolicyOmit, TimeoutSeconds: cfg.EmbeddingTimeoutSeconds})
 		if batchErr != nil {
 			return nil, batchErr
 		}
@@ -477,9 +459,48 @@ func resolveEmbeddingUpstream(cfg config.Config) (string, string, error) {
 	return strings.TrimRight(strings.TrimSpace(cfg.EmbeddingHost), "/"), strings.TrimSpace(cfg.EmbeddingKey), nil
 }
 
+func estimateTokens(content string) int64 {
+	if len(content) == 0 {
+		return 0
+	}
+	var cjk, other int64
+	for _, r := range content {
+		if isCJKRune(r) {
+			cjk++
+		} else {
+			other++
+		}
+	}
+	tokens := (cjk*2+2)/3 + (other+3)/4
+	if tokens == 0 {
+		return 1
+	}
+	return tokens
+}
+
+func isCJKRune(r rune) bool {
+	return (r >= 0x2E80 && r <= 0x9FFF) ||
+		(r >= 0xAC00 && r <= 0xD7AF) ||
+		(r >= 0xF900 && r <= 0xFAFF) ||
+		(r >= 0x20000 && r <= 0x2A6DF)
+}
+
 // hybridRetrieve 并行执行向量检索与 BM25 全文检索，使用 RRF（Reciprocal Rank Fusion）合并结果。
 // k=60 为 RRF 平滑系数，参考 Cormack et al. 2009 推荐值。
+type hybridRetrieveInput struct {
+	UserID              uint
+	FileObjectIDs       []uint
+	Query               string
+	Embedding           []float32
+	EmbeddingSignature  string
+	TopK                int
+	MinVectorSimilarity float32
+}
+
 func (s *Service) hybridRetrieve(ctx context.Context, input hybridRetrieveInput) ([]domainconversation.FileChunkSearchResult, error) {
+	userID, fileObjIDs, query := input.UserID, input.FileObjectIDs, input.Query
+	embedding, embeddingSignature := input.Embedding, input.EmbeddingSignature
+	topK, minVectorSimilarity := input.TopK, input.MinVectorSimilarity
 	type result struct {
 		chunks []domainconversation.FileChunkSearchResult
 		err    error
@@ -488,11 +509,11 @@ func (s *Service) hybridRetrieve(ctx context.Context, input hybridRetrieveInput)
 	bm25Ch := make(chan result, 1)
 
 	go func() {
-		chunks, err := s.repo.SearchFileChunks(ctx, input.UserID, input.FileObjectIDs, input.Embedding, input.EmbeddingSignature, input.TopK)
+		chunks, err := s.repo.SearchFileChunks(ctx, userID, fileObjIDs, embedding, embeddingSignature, topK)
 		vecCh <- result{chunks, err}
 	}()
 	go func() {
-		chunks, err := s.repo.BM25SearchFileChunks(ctx, input.UserID, input.FileObjectIDs, input.Query, input.TopK)
+		chunks, err := s.repo.BM25SearchFileChunks(ctx, userID, fileObjIDs, query, topK)
 		bm25Ch <- result{chunks, err}
 	}()
 
@@ -510,7 +531,7 @@ func (s *Service) hybridRetrieve(ctx context.Context, input hybridRetrieveInput)
 	bestChunk := make(map[uint]domainconversation.FileChunkSearchResult)
 
 	for rank, c := range vecResult.chunks {
-		if c.Similarity < input.MinVectorSimilarity {
+		if c.Similarity < minVectorSimilarity {
 			continue
 		}
 		scores[c.ID] += 1.0 / float32(rrfK+rank+1)
@@ -541,8 +562,8 @@ func (s *Service) hybridRetrieve(ctx context.Context, input hybridRetrieveInput)
 		}
 		merged[j+1] = key
 	}
-	if len(merged) > input.TopK {
-		merged = merged[:input.TopK]
+	if len(merged) > topK {
+		merged = merged[:topK]
 	}
 	return merged, nil
 }

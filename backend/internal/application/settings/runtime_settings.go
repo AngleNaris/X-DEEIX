@@ -79,6 +79,14 @@ func (r *RuntimeSettings) cacheSet(ctx context.Context, item domainsettings.Syst
 }
 
 func (r *RuntimeSettings) applyItem(cfg *config.Config, item domainsettings.SystemSetting) {
+	if spec, ok := lookupSettingSpec(item.Namespace, item.Key); ok {
+		if spec.Apply != nil {
+			spec.Apply(cfg, item.Value)
+		}
+	}
+}
+
+func applyLegacyCustomItem(cfg *config.Config, item domainsettings.SystemSetting) {
 	switch item.Namespace + ":" + item.Key {
 	// 认证配置
 	case "auth:token_ttl_hours":
@@ -453,6 +461,13 @@ func (r *RuntimeSettings) normalizeConfig(cfg *config.Config) {
 	}
 	if strings.TrimSpace(cfg.ModelOptionDeniedPaths) == "" {
 		cfg.ModelOptionDeniedPaths = config.DefaultModelOptionDeniedPathsJSON()
+	}
+	if cfg.ContextWindowFallbackTokens < config.MinContextWindowFallbackTokens || cfg.ContextWindowFallbackTokens > config.MaxContextWindowFallbackTokens {
+		cfg.ContextWindowFallbackTokens = config.DefaultContextWindowFallbackTokens
+	}
+	if cfg.ContextCompactTriggerPercent < 0 || cfg.ContextCompactTriggerPercent > config.MaxContextCompactTriggerPercent ||
+		(cfg.ContextCompactTriggerPercent > 0 && cfg.ContextCompactTriggerPercent < config.MinContextCompactTriggerPercent) {
+		cfg.ContextCompactTriggerPercent = config.DefaultContextCompactTriggerPercent
 	}
 	if cfg.MCPMaxSelectedToolsPerMessage <= 0 {
 		cfg.MCPMaxSelectedToolsPerMessage = config.DefaultMCPMaxSelectedToolsPerMessage

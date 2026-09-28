@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
 const (
@@ -35,8 +35,8 @@ const (
 
 	protocolOpenAIImageGenerations = llm.AdapterOpenAIImageGenerations
 	protocolOpenAIImageEdits       = llm.AdapterOpenAIImageEdits
- 	protocolOpenAIVideoGenerations = llm.AdapterOpenAIVideo
-	protocolImageEditsJSON    = llm.AdapterImageEditsJSON
+	protocolOpenAIVideoGenerations = llm.AdapterOpenAIVideo
+	protocolImageEditsJSON         = llm.AdapterImageEditsJSON
 	protocolGoogleImageGeneration  = llm.AdapterGoogleImageGeneration
 	protocolGeminiInteractions     = llm.AdapterGeminiInteractions
 	protocolXAIImage               = llm.AdapterXAIImage
@@ -151,8 +151,8 @@ func systemFallbackProtocols(compatible string) map[string]string {
 		return map[string]string{
 			modelKindChat:      llm.AdapterOpenRouterResponses,
 			modelKindAudio:     llm.AdapterOpenRouterResponses,
-			modelKindImageGen:  protocolOpenAIImageGenerations,
-			modelKindImageEdit: protocolOpenAIImageEdits,
+			modelKindImageGen:  "openrouter_images",
+			modelKindImageEdit: "openrouter_images",
 			modelKindVideoGen:  protocolOpenAIVideoGenerations,
 		}
 	case compatibleCustom:
@@ -167,10 +167,10 @@ func systemFallbackProtocols(compatible string) map[string]string {
 	}
 }
 
- func isKnownProtocol(raw string) bool {
- 	// 协议清单唯一真相在 llm.IsKnownAdapter；此处直接委托，避免两份手工 switch 漂移。
- 	return llm.IsKnownAdapter(raw)
- }
+func isKnownProtocol(raw string) bool {
+	// 协议清单唯一真相在 ports/llm；此处直接委托，避免两份手工 switch 漂移。
+	return llm.IsImplementedAdapter(raw)
+}
 
 func resolveRouteProtocol(explicit string, upCompatible string, defaultsJSON string, kindsJSON string) (string, error) {
 	kind := primaryKindFromKinds(kindsJSON)
@@ -399,6 +399,8 @@ func isProtocolAllowedForKind(kind string, protocol string) bool {
 		}
 	case modelKindImageGen:
 		switch protocol {
+		case "openrouter_images":
+			return true
 		case protocolOpenAIImageGenerations,
 			protocolGoogleImageGeneration,
 			protocolGeminiInteractions,
@@ -409,6 +411,8 @@ func isProtocolAllowedForKind(kind string, protocol string) bool {
 		}
 	case modelKindImageEdit:
 		switch protocol {
+		case "openrouter_images":
+			return true
 		case protocolOpenAIImageEdits,
 			// generations 协议适配器可按任务切换到 edits 端点执行编辑请求，
 			// 因此模型标注 image_edit 能力时允许绑定在 generations 协议上。

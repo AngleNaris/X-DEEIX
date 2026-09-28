@@ -14,8 +14,8 @@ const (
 	defaultRAGModel               = "sentence-transformers/all-MiniLM-L6-v2"
 )
 
-// defaultSettings 返回所有动态配置的默认种子数据。
-func defaultSettings() []domainsettings.SystemSetting {
+// legacyCustomSettings 保留尚未迁入注册表的定制种子；公共项由注册表优先定义。
+func legacyCustomSettings() []domainsettings.SystemSetting {
 	return []domainsettings.SystemSetting{
 		// 认证配置
 		{Namespace: "auth", Key: "token_ttl_hours", Value: "24", ValueType: "int", Description: "Access Token 有效期(小时)"},
@@ -63,9 +63,10 @@ func defaultSettings() []domainsettings.SystemSetting {
 		// 对话配置
 		{Namespace: "chat", Key: "max_context_messages", Value: "20", ValueType: "int", Description: "上下文消息数"},
 		{Namespace: "chat", Key: "context_max_turns", Value: "48", ValueType: "int", Description: "最大对话轮次"},
-		{Namespace: "chat", Key: "context_max_input_tokens", Value: "32000", ValueType: "int", Description: "最大输入 token"},
+		{Namespace: "chat", Key: "context_max_input_tokens", Value: "32000", ValueType: "int", Description: "可选系统上下文与附件预算上限；不作为压缩触发阈值"},
 		{Namespace: "chat", Key: "context_compact_enabled", Value: "false", ValueType: "bool", Description: "是否允许上下文压缩功能"},
-		{Namespace: "chat", Key: "context_compact_trigger_tokens", Value: "65536", ValueType: "int", Description: "压缩触发阈值"},
+		{Namespace: "chat", Key: "context_compact_trigger_percent", Value: strconv.Itoa(config.DefaultContextCompactTriggerPercent), ValueType: "int", Description: "模型有效上下文预算压缩触发百分比；0 禁用 token 触发"},
+		{Namespace: "chat", Key: "context_window_fallback_tokens", Value: strconv.Itoa(config.DefaultContextWindowFallbackTokens), ValueType: "int", Description: "未知模型上下文窗口回退值"},
 		{Namespace: "chat", Key: "context_compact_preserve_recent_turns", Value: "8", ValueType: "int", Description: "压缩保留轮次"},
 		{Namespace: "chat", Key: "conversation_default_model", Value: "", ValueType: "string", Description: "新会话系统推荐模型；留空时回退到第一个可用模型"},
 		{Namespace: "chat", Key: "conversation_task_model", Value: "follow", ValueType: "string", Description: "会话标题/标签生成任务使用的聊天模型，follow 表示跟随当前会话模型；图片模型不会用于标题/标签生成"},
@@ -233,6 +234,7 @@ func defaultSettingsWithConfig(cfg config.Config) []domainsettings.SystemSetting
 
 func obsoleteSettings() []domainsettings.SystemSetting {
 	return []domainsettings.SystemSetting{
+		{Namespace: "chat", Key: "context_compact_trigger_tokens"},
 		{Namespace: "mcp", Key: "mcp_connect_timeout_ms"},
 		{Namespace: "mcp", Key: "mcp_tool_timeout_ms"},
 	}

@@ -9,7 +9,7 @@ import (
 	appstorage "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/objectstorage"
 	domainchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/channel"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"go.uber.org/zap"
 )
@@ -93,15 +93,21 @@ func (s *Service) isModelAccessible(ctx context.Context, platformModelID uint, u
 	return false, nil
 }
 
+type llmGateway interface {
+	Generate(context.Context, llm.RouteConfig, llm.GenerateInput) (*llm.GenerateOutput, error)
+	ListModels(context.Context, llm.RouteConfig) ([]llm.ModelItem, error)
+}
+
 // Service 封装上游、平台模型与路由绑定业务能力。
 type Service struct {
+	localAPIKeyCounters sync.Map
 	cfg                 *config.Runtime
 	repo                repository.ChannelRepository
 	userModelRepo       repository.UserModelRepository
 	presentationRepo    repository.ModelPresentationRepository
 	iconAssetRepo       repository.ModelIconAssetRepository
 	cache               repository.ChannelCacheRepository
-	llmClient           *llm.Client
+	llmClient           llmGateway
 	modelPricingFilter  billingModelPricingFilter
 	permGroupRepo       permissionGroupRepo
 	subGroupResolver    subscriptionGroupResolver
@@ -217,16 +223,13 @@ const (
 	RouteScopeInternal = "internal"
 )
 
-// localAPIKeyCounters 存储各上游的本地 round-robin 计数器（Redis 不可用时的降级实现）。
-var localAPIKeyCounters sync.Map
-
 // NewService 创建服务。
-func NewService(cfg config.Config, repo repository.ChannelRepository, presentationRepo repository.ModelPresentationRepository, cache repository.ChannelCacheRepository, llmClient *llm.Client) *Service {
+func NewService(cfg config.Config, repo repository.ChannelRepository, presentationRepo repository.ModelPresentationRepository, cache repository.ChannelCacheRepository, llmClient llmGateway) *Service {
 	return NewServiceWithRuntime(config.NewRuntime(cfg), repo, presentationRepo, cache, llmClient)
 }
 
 // NewServiceWithRuntime 创建使用运行时配置容器的服务。
-func NewServiceWithRuntime(cfg *config.Runtime, repo repository.ChannelRepository, presentationRepo repository.ModelPresentationRepository, cache repository.ChannelCacheRepository, llmClient *llm.Client) *Service {
+func NewServiceWithRuntime(cfg *config.Runtime, repo repository.ChannelRepository, presentationRepo repository.ModelPresentationRepository, cache repository.ChannelCacheRepository, llmClient llmGateway) *Service {
 	userModelRepo, _ := repo.(repository.UserModelRepository)
 	return &Service{
 		cfg:              cfg,
