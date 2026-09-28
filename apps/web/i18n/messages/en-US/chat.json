@@ -17,6 +17,19 @@
   "time": "Time",
   "tokens": "Tokens",
   "details": "Details",
+  "temporary": {
+    "title": "Temporary chat",
+    "historyChat": "Normal chat",
+    "notice": "This chat won't appear in your history. Its data will be cleared when you leave the page.",
+    "exitTitle": "Exit temporary chat",
+    "exitDescription": "All messages and generated content in this temporary chat will be cleared and cannot be recovered.",
+    "continue": "Cancel",
+    "exitAction": "Exit",
+    "stopped": "Generation stopped",
+    "blocked": "Content withdrawn by the safety policy",
+    "failed": "Temporary message generation failed. Please try again.",
+    "sessionExpired": "Your session has expired. Please sign in again."
+  },
   "greeting": {
     "morning": "Good morning",
     "afternoon": "Good afternoon",
@@ -107,6 +120,7 @@
     "generating": "Generating screenshot…",
     "ready": "Screenshot ready",
     "failed": "Failed to generate screenshot",
+    "selectionLimitReached": "You can select up to 100 messages",
     "loadLimitReached": "The conversation is too long. Please select a portion of the messages to take a screenshot.",
     "tooLarge": "The conversation content is too large. Please select a portion of the messages to take a screenshot.",
     "emptySelection": "Select at least one message",
@@ -656,7 +670,19 @@
     "viewGrouped": "Grouped",
     "viewCustom": "Custom order",
     "sortHint": "Drag to reorder models, saved automatically",
-    "sortTitle": "Model order"
+    "sortTitle": "Model order",
+    "schedule": {
+      "title": "Time-of-day rates",
+      "now": "now",
+      "mon": "Mon",
+      "tue": "Tue",
+      "wed": "Wed",
+      "thu": "Thu",
+      "fri": "Fri",
+      "sat": "Sat",
+      "sun": "Sun",
+      "everyDay": "Every day"
+    }
   },
   "processTrace": {
     "fileBadges": {

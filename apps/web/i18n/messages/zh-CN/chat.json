@@ -17,6 +17,19 @@
   "time": "时间",
   "tokens": "Token",
   "details": "详情",
+  "temporary": {
+    "title": "临时对话",
+    "historyChat": "正常对话",
+    "notice": "此对话不会出现在你的历史记录中，离开页面后数据将被清除。",
+    "exitTitle": "退出临时对话",
+    "exitDescription": "离开后，此临时对话中的所有消息和生成内容都将被清除，且无法恢复。",
+    "continue": "取消",
+    "exitAction": "退出",
+    "stopped": "生成已停止",
+    "blocked": "内容因安全策略已撤回",
+    "failed": "临时消息生成失败，请重试",
+    "sessionExpired": "登录状态已失效，请重新登录"
+  },
   "greeting": {
     "morning": "上午好",
     "afternoon": "下午好",
@@ -107,6 +120,7 @@
     "generating": "正在生成截图…",
     "ready": "截图已生成",
     "failed": "截图生成失败",
+    "selectionLimitReached": "最多选择 100 条消息",
     "loadLimitReached": "会话过长，请选择部分消息进行截图。",
     "tooLarge": "会话内容过大，请选择部分消息进行截图。",
     "emptySelection": "请至少选择一条消息",
@@ -656,7 +670,19 @@
     "viewGrouped": "按厂商分组",
     "viewCustom": "自定义排序",
     "sortHint": "拖拽调整模型顺序，自动保存",
-    "sortTitle": "模型顺序"
+    "sortTitle": "模型顺序",
+    "schedule": {
+      "title": "时段倍率",
+      "now": "当前",
+      "mon": "周一",
+      "tue": "周二",
+      "wed": "周三",
+      "thu": "周四",
+      "fri": "周五",
+      "sat": "周六",
+      "sun": "周日",
+      "everyDay": "每天"
+    }
   },
   "processTrace": {
     "fileBadges": {
