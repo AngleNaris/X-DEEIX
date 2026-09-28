@@ -34,14 +34,14 @@ import { ChatScreenshotSelectionBar } from "@/features/chat/components/sections/
 import { useChatMessageFeedback } from "@/features/chat/hooks/use-chat-message-feedback";
 import type { OpenCodeArtifactInput } from "@/features/chat/model/chat-artifacts";
 import { areChatAreaMessagesRenderEqual } from "@/features/chat/model/chat-message-render";
+import { MAX_SCREENSHOT_MESSAGES } from "@/features/chat/model/conversation-screenshot";
 import type { ChatModelOption } from "@/features/chat/types/chat-runtime";
 import type { ChatAreaMessage, MessageAttachment } from "@/features/chat/types/messages";
 import { cn } from "@/lib/utils";
-import type { FileContentResult } from "@/shared/api/file";
 import { AppLogo, DeeixLogo } from "@/shared/components/app-logo";
 import { ConversationShareExportIconDropdown } from "@/shared/components/conversation-share-export-menu";
 import { useCopyAction } from "@/shared/components/copy-action";
-import type { PreviewDialogFile } from "@/shared/components/file-preview/preview-dialog";
+import type { FileContentLoader } from "@/shared/components/file-preview/preview-dialog";
 import { StreamdownRender } from "@/shared/components/markdown/streamdown-render";
 import { PoweredByDeeix } from "@/shared/components/powered-by-deeix";
 import { useBranding } from "@/shared/config/branding-provider";
@@ -169,6 +169,8 @@ type ChatAreaProps = {
   starred: boolean;
   canOperateConversation: boolean;
   messages: ChatAreaMessage[];
+  messagesReadOnly?: boolean;
+  persistMessageFeedback?: boolean;
   busy: boolean;
   messageContentRef: React.RefObject<HTMLDivElement | null>;
   onScroll: (event: React.UIEvent<HTMLDivElement>) => void;
@@ -188,7 +190,7 @@ type ChatAreaProps = {
     name?: string;
     contextLabel?: string;
   } | null;
-  attachmentContentLoader?: (file: PreviewDialogFile) => Promise<FileContentResult>;
+  attachmentContentLoader?: FileContentLoader;
   onEditImageAttachment?: (attachment: MessageAttachment, sourceModelName?: string) => void;
   onExtendVideoAttachment?: (attachment: MessageAttachment, sourceModelName?: string) => void;
   onOpenCodeArtifact?: (message: ChatAreaMessage, artifact: OpenCodeArtifactInput) => void;
@@ -206,6 +208,9 @@ type ChatAreaProps = {
   onExport?: () => void | Promise<void>;
   onDelete?: () => void | Promise<void>;
   markdownRender?: boolean;
+  autoExpandThinking?: boolean;
+  autoExpandToolCalls?: boolean;
+  allowFullToolResults?: boolean;
   showModelInfo?: boolean;
   showLatency?: boolean;
   showTokenUsage?: boolean;
@@ -215,6 +220,7 @@ type ChatAreaProps = {
   splitRightInset?: boolean;
   contentWidthClassName?: string;
   onScreenshotFull?: () => void;
+  onScreenshotLatest?: () => void;
   onScreenshotSelect?: () => void;
   screenshot?: {
     selectionMode: boolean;
@@ -392,7 +398,7 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
   onModelChange: (platformModelName: string) => void;
   onModelCatalogRefresh?: () => void | Promise<void>;
   modelMenuDisabled?: boolean;
-  attachmentContentLoader?: (file: PreviewDialogFile) => Promise<FileContentResult>;
+  attachmentContentLoader?: FileContentLoader;
   onEditImageAttachment?: (attachment: MessageAttachment, sourceModelName?: string) => void;
   onExtendVideoAttachment?: (attachment: MessageAttachment, sourceModelName?: string) => void;
   onCycleMessageBranch: (parentPublicID: string | null, direction: "previous" | "next") => void;
@@ -561,6 +567,8 @@ export function ChatArea({
   starred,
   canOperateConversation,
   messages,
+  messagesReadOnly,
+  persistMessageFeedback = true,
   busy,
   messageContentRef,
   onScroll,
@@ -594,6 +602,9 @@ export function ChatArea({
   onExport,
   onDelete,
   markdownRender = true,
+  autoExpandThinking = true,
+  autoExpandToolCalls = true,
+  allowFullToolResults = false,
   showModelInfo = true,
   showLatency = true,
   showTokenUsage = true,
@@ -603,11 +614,13 @@ export function ChatArea({
   splitRightInset = false,
   contentWidthClassName = "max-w-[1080px]",
   onScreenshotFull,
+  onScreenshotLatest,
   onScreenshotSelect,
   screenshot,
 }: ChatAreaProps) {
   const t = useTranslations("chat");
-  const { getReaction, onReactAssistantMessage } = useChatMessageFeedback(messages);
+  const resolvedScreenshotAction = onScreenshotLatest ?? onScreenshotFull;
+  const { getReaction, onReactAssistantMessage } = useChatMessageFeedback(messages, { persist: persistMessageFeedback });
   const stableOnRetryUserMessage = useStableEvent(onRetryUserMessage);
   const stableOnRetryAssistantMessage = useStableEvent(onRetryAssistantMessage);
   const stableOnContinueAssistantMessage = useStableEvent(onContinueAssistantMessage ?? (() => undefined));
@@ -695,9 +708,9 @@ export function ChatArea({
               shareActive={shareActive}
               onExport={canOperateConversation ? onExport : undefined}
               onDelete={canOperateConversation ? onDelete : undefined}
-              screenshotFullLabel={tScreenshot("captureFull")}
+              screenshotLatestLabel={tScreenshot("captureLatest")}
               screenshotSelectLabel={tScreenshot("captureSelect")}
-              onScreenshotFull={onScreenshotFull}
+              onScreenshotLatest={resolvedScreenshotAction}
               onScreenshotSelect={onScreenshotSelect}
             />
             {agentGroup?.name ? (
@@ -736,9 +749,9 @@ export function ChatArea({
                 active={shareActive}
                 onShare={onShare}
                 onExport={onExport}
-                screenshotFullLabel={tScreenshot("captureFull")}
+                screenshotLatestLabel={tScreenshot("captureLatest")}
                 screenshotSelectLabel={tScreenshot("captureSelect")}
-                onScreenshotFull={onScreenshotFull}
+                onScreenshotLatest={resolvedScreenshotAction}
                 onScreenshotSelect={onScreenshotSelect}
               />
             ) : null}
@@ -752,6 +765,7 @@ export function ChatArea({
             <ChatScreenshotSelectionBar
               selectedCount={screenshot.selectedCount}
               totalCount={selectableMessagePublicIDs.length}
+              maxSelectionCount={MAX_SCREENSHOT_MESSAGES}
               capturing={screenshot.capturing}
               onSelectAll={onSelectAllMessages}
               onClearSelection={screenshot.onClearSelection}

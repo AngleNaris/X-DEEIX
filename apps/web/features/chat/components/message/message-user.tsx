@@ -18,8 +18,7 @@ import {
 } from "@/features/chat/hooks/use-chat-mention-menu";
 import type { ChatModelOption } from "@/features/chat/types/chat-runtime";
 import type { ChatAreaMessage } from "@/features/chat/types/messages";
-import type { FileContentResult } from "@/shared/api/file";
-import type { PreviewDialogFile } from "@/shared/components/file-preview/preview-dialog";
+import type { FileContentLoader } from "@/shared/components/file-preview/preview-dialog";
 import { StreamdownRender } from "@/shared/components/markdown/streamdown-render";
 
 const USER_MESSAGE_COLLAPSED_LINES = 6;
@@ -32,9 +31,10 @@ const USER_MESSAGE_EXPAND_TRANSITION = {
 const EDIT_MESSAGE_MENTION_KINDS: readonly ChatMentionMenuKind[] = ["model", "prompt"];
 /** 群组会话中编辑用户消息：禁止请求级模型覆盖，仅保留提示词引用。 */
 const EDIT_MESSAGE_PROMPT_ONLY_KINDS: readonly ChatMentionMenuKind[] = ["prompt"];
-const EDIT_MESSAGE_EMPTY_ATTACHMENTS = [];
-const EDIT_MESSAGE_EMPTY_TOOLS = [];
-const EDIT_MESSAGE_EMPTY_TOOL_IDS = [];
+type EditMessageMentionArgs = Parameters<typeof useChatMentionMenu>[0];
+const EDIT_MESSAGE_EMPTY_ATTACHMENTS: EditMessageMentionArgs["attachments"] = [];
+const EDIT_MESSAGE_EMPTY_TOOLS: EditMessageMentionArgs["availableTools"] = [];
+const EDIT_MESSAGE_EMPTY_TOOL_IDS: EditMessageMentionArgs["selectedToolIDs"] = [];
 
 type ChatMessageUserProps = {
   item: ChatAreaMessage;
@@ -51,7 +51,7 @@ type ChatMessageUserProps = {
   onCopy: () => void;
   copySucceeded?: boolean;
   readOnly?: boolean;
-  attachmentContentLoader?: (file: PreviewDialogFile) => Promise<FileContentResult>;
+  attachmentContentLoader?: FileContentLoader;
   showBranchNavigator?: boolean;
   screenshotMeta?: React.ReactNode;
 };
@@ -160,7 +160,12 @@ export function ChatMessageUser({
     }
   }, [editingValue, item, onEditUserMessage]);
   const {
-    activeIndex: mentionActiveIndex,
+    activeRowKey: mentionActiveRowKey,
+    activeTab: mentionActiveTab,
+    handleListScroll: handleMentionListScroll,
+    selectTab: selectMentionTab,
+    showTabBar: showMentionTabBar,
+    tabs: mentionTabs,
     handleBlur: handleMentionBlur,
     handleChange: handleMentionChange,
     handleFocus: handleMentionFocus,
@@ -171,7 +176,7 @@ export function ChatMessageUser({
     menuRef: mentionMenuRef,
     menuReady: mentionMenuReady,
     open: showMentionMenu,
-    sections: mentionSections,
+    rows: mentionRows,
     select: selectMentionItem,
   } = useChatMentionMenu({
     attachments: EDIT_MESSAGE_EMPTY_ATTACHMENTS,
@@ -196,15 +201,6 @@ export function ChatMessageUser({
     placementPreference: "bottom",
     onSelectedToolsChange: () => undefined,
   });
-  const mentionSectionOffsets = React.useMemo(() => {
-    const offsets = new Map<ChatMentionMenuKind, number>();
-    let offset = 0;
-    for (const section of mentionSections) {
-      offsets.set(section.kind, offset);
-      offset += section.items.length;
-    }
-    return offsets;
-  }, [mentionSections]);
 
   if (!readOnly && isEditing) {
     const nextContent = editingValue.trim();
@@ -215,14 +211,18 @@ export function ChatMessageUser({
         <div className="w-full max-w-[640px] rounded-lg bg-muted/60 p-3 text-foreground">
           <div ref={editInputGroupRef}>
             <ChatMentionMenuPortal
-              activeIndex={mentionActiveIndex}
+              activeRowKey={mentionActiveRowKey}
+              activeTab={mentionActiveTab}
+              tabs={mentionTabs}
+              showTabBar={showMentionTabBar}
+              onSelectTab={selectMentionTab}
+              onListScroll={handleMentionListScroll}
               menuID={mentionMenuID}
               menuLayout={mentionMenuLayout}
               menuRef={mentionMenuRef}
               menuReady={mentionMenuReady}
               open={showMentionMenu}
-              sectionOffsets={mentionSectionOffsets}
-              sections={mentionSections}
+              rows={mentionRows}
               t={tComposer}
               onSelect={selectMentionItem}
             />

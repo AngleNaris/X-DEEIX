@@ -566,7 +566,7 @@ export function SettingsChat() {
             ) : (
               <Select
                 value={settings.defaultReasoningEffort}
-                onValueChange={handleEnum("chat.default_reasoning_effort", "defaultReasoningEffort")}
+                onValueChange={handleEnum("chat.default_reasoning_effort")}
                 disabled={loading}
               >
                 <SelectTrigger size="sm" className="text-left md:text-right *:data-[slot=select-value]:flex-1 *:data-[slot=select-value]:justify-start md:*:data-[slot=select-value]:justify-end">
@@ -903,7 +903,7 @@ export function SettingsChat() {
           >
             <Select
               value={settings.platformToolsWriteApproval}
-              onValueChange={handleEnum("platform_tools.write_approval", "platformToolsWriteApproval")}
+              onValueChange={handleEnum("platform_tools.write_approval")}
               disabled={loading}
             >
               <SelectTrigger size="sm" className="text-left md:text-right *:data-[slot=select-value]:flex-1 *:data-[slot=select-value]:justify-start md:*:data-[slot=select-value]:justify-end">

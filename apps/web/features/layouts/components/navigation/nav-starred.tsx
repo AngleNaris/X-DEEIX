@@ -24,7 +24,8 @@ import {
   SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
-  useSidebar,
+  useSidebarActions,
+  useSidebarIsMobile,
 } from "@/components/ui/sidebar";
 import {
   ConversationLabelsManagerDialog,
@@ -32,7 +33,7 @@ import {
   sharePatchFromDTO,
   type ConversationLabelsTarget,
   useConversationExport,
-  useSidebarConversations,
+  useSidebarConversationField,
 } from "@/entities/conversation";
 import { LoadingReveal } from "@/shared/components/loading-reveal";
 import { NavigationSearch } from "@/features/layouts/components/navigation/navigation-search";
@@ -61,29 +62,28 @@ const STARRED_OPEN_STORAGE_KEY = "deeix.sidebar.starred.open";
 
 export function NavStarred() {
   const t = useTranslations("recent");
-  const { isMobile, setOpenMobile } = useSidebar();
+  const isMobile = useSidebarIsMobile();
+  const { setOpenMobile } = useSidebarActions();
   const router = useRouter();
   const onNavigate = useSidebarConversationNavigation();
   const activeConversationID = useLayoutActiveConversation();
   const { deleteFilesByDefault } = useSettingsChatPreferences();
 
-  const {
-    starredItems,
-    projects,
-    starredTotal,
-    loadingInitial,
-    transferringStarPublicID,
-    setStarByPublicID,
-    renameByPublicID,
-    regenerateTitleByPublicID,
-    updateLabelsByPublicID,
-    loadAllStarred,
-    archiveByPublicID,
-    deleteByPublicID,
-    touchByPublicID,
-    setProjectByPublicID,
-    streamingPublicIDs,
-  } = useSidebarConversations();
+  const starredItems = useSidebarConversationField("starredItems");
+  const projects = useSidebarConversationField("projects");
+  const starredTotal = useSidebarConversationField("starredTotal");
+  const loadingInitial = useSidebarConversationField("loadingInitial");
+  const transferringStarPublicID = useSidebarConversationField("transferringStarPublicID");
+  const setStarByPublicID = useSidebarConversationField("setStarByPublicID");
+  const renameByPublicID = useSidebarConversationField("renameByPublicID");
+  const regenerateTitleByPublicID = useSidebarConversationField("regenerateTitleByPublicID");
+  const updateLabelsByPublicID = useSidebarConversationField("updateLabelsByPublicID");
+  const loadAllStarred = useSidebarConversationField("loadAllStarred");
+  const archiveByPublicID = useSidebarConversationField("archiveByPublicID");
+  const deleteByPublicID = useSidebarConversationField("deleteByPublicID");
+  const touchByPublicID = useSidebarConversationField("touchByPublicID");
+  const setProjectByPublicID = useSidebarConversationField("setProjectByPublicID");
+  const streamingPublicIDs = useSidebarConversationField("streamingPublicIDs");
 
   const [showAllStarredDialog, setShowAllStarredDialog] = React.useState(false);
   const [dialogStarredItems, setDialogStarredItems] = React.useState<ConversationDTO[] | null>(null);

@@ -3,6 +3,7 @@ import type {
   ChatFilePolicyDTO,
   DeleteFileResult,
   FileExtractDTO,
+  FileEmbeddingSubmissionDTO,
   FileListResult,
   FileObjectDTO,
   FileProcessingStatusDTO,
@@ -11,6 +12,7 @@ import type {
 import { apiRequest, pathParam, resolveApiBaseURL } from "@/shared/api/http-client";
 
 type UploadFileOptions = {
+  signal?: AbortSignal;
   purpose?: string;
 };
 
@@ -81,6 +83,7 @@ export async function uploadFile(
       method: "POST",
       accessToken,
       body: formData,
+      signal: options.signal,
     },
     true,
   );
@@ -90,6 +93,7 @@ export async function uploadFile(
 export async function listFiles(
   accessToken: string,
   params: ListFilesParams = {},
+  signal?: AbortSignal,
 ): Promise<FileListResult> {
   const searchParams = new URLSearchParams();
 
@@ -115,6 +119,7 @@ export async function listFiles(
     {
       method: "GET",
       accessToken,
+      signal,
     },
     true,
   );
@@ -167,12 +172,13 @@ export async function updateFileFavorite(accessToken: string, fileID: string, fa
   return authedRequest<FileObjectDTO>(`/api/v1/files/${pathParam(fileID)}`, { method: "PATCH", accessToken, body: { favorite } }, true);
 }
 
-export async function fetchFileContent(accessToken: string, fileID: string): Promise<FileContentResult> {
+export async function fetchFileContent(accessToken: string, fileID: string, signal?: AbortSignal): Promise<FileContentResult> {
   const response = await authedFetch(
     `/api/v1/files/${pathParam(fileID)}/content`,
     {
       method: "GET",
       accessToken,
+      signal,
     },
     true,
   );
@@ -248,13 +254,42 @@ export function fileShareURL(shareID: string): string {
   return typeof window === "undefined" ? path : `${window.location.origin}${path}`;
 }
 
-export async function fetchFileExtract(accessToken: string, fileID: string): Promise<FileExtractDTO> {
+export async function fetchFileExtract(accessToken: string, fileID: string, signal?: AbortSignal): Promise<FileExtractDTO> {
   return authedRequest<FileExtractDTO>(
     `/api/v1/files/${pathParam(fileID)}/extract`,
     {
       method: "GET",
       accessToken,
+      signal,
     },
+    true,
+  );
+}
+
+export async function getFileProcessingStatuses(
+  accessToken: string,
+  fileIDs: string[],
+  signal?: AbortSignal,
+): Promise<FileProcessingStatusDTO[]> {
+  const requests: Promise<FileProcessingStatusDTO[]>[] = [];
+  for (let index = 0; index < fileIDs.length; index += 100) {
+    requests.push(authedRequest<FileProcessingStatusDTO[]>(
+      "/api/v1/files/processing/statuses",
+      { method: "POST", accessToken, body: { fileIDs: fileIDs.slice(index, index + 100) }, signal },
+      true,
+    ));
+  }
+  return (await Promise.all(requests)).flat();
+}
+
+export async function submitFileEmbeddings(
+  accessToken: string,
+  fileIDs: string[],
+  signal?: AbortSignal,
+): Promise<FileEmbeddingSubmissionDTO> {
+  return authedRequest<FileEmbeddingSubmissionDTO>(
+    "/api/v1/files/embeddings",
+    { method: "POST", accessToken, body: { fileIDs }, signal },
     true,
   );
 }
@@ -263,23 +298,26 @@ export async function fetchFileExtract(accessToken: string, fileID: string): Pro
 export async function getFileProcessingStatus(
   accessToken: string,
   fileID: string,
+  signal?: AbortSignal,
 ): Promise<FileProcessingStatusDTO> {
   return authedRequest<FileProcessingStatusDTO>(
     `/api/v1/files/${pathParam(fileID)}/processing`,
     {
       method: "GET",
       accessToken,
+      signal,
     },
     true,
   );
 }
 
-export async function getChatFilePolicy(accessToken: string): Promise<ChatFilePolicyDTO> {
+export async function getChatFilePolicy(accessToken: string, signal?: AbortSignal): Promise<ChatFilePolicyDTO> {
   return authedRequest<ChatFilePolicyDTO>(
     "/api/v1/runtime/chat-file-policy",
     {
       method: "GET",
       accessToken,
+      signal,
     },
     true,
   );

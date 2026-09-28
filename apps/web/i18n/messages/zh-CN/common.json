@@ -45,11 +45,9 @@
     "newChat": "新对话",
     "search": "搜索",
     "recent": "对话",
-    "canvasStudio": "创作画布",
     "files": "文件",
     "knowledgeBases": "知识库",
-    "skillsPrompt": "技能",
-    "agentGroups": "群组",
+    "skillsPrompt": "Skills & Prompts",
     "searchTitle": "搜索",
     "searchDescription": "搜索对话标题、标签、项目和消息正文",
     "searchPlaceholder": "搜索对话或消息内容",
@@ -82,9 +80,7 @@
     "fallbackUser": "用户",
     "today": "今天",
     "archived": "已归档",
-    "yesterday": "昨天",
-    "docCards": "卡片",
-    "artifacts": "制品"
+    "yesterday": "昨天"
   },
   "time": {
     "todayTime": "{time}",
@@ -154,13 +150,8 @@
   },
   "appVersion": {
     "title": "检测到新版本",
-    "description": "刷新网页后即可使用最新版本。"
-  },
-  "errorPage": {
-    "title": "页面出错了",
-    "prefix": "页面渲染出错，您可以",
-    "retry": "重试",
-    "or": "或",
-    "backToChat": "回到会话"
+    "description": "刷新网页后即可使用最新版本。",
+    "prerelease": "预览版",
+    "stable": "正式版"
   }
 }

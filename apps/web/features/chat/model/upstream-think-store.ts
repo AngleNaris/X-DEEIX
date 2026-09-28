@@ -6,6 +6,8 @@ import type { ChatMessageProcessTrace, ChatTraceBlock, ChatTraceEvent } from "@/
 import { toPendingProcessTrace } from "@/features/chat/model/message-submit";
 import type { StreamMessageEvent } from "@/shared/api/conversation.types";
 
+export { shouldClearLiveUpstreamThinkTrace } from "@/features/chat/model/upstream-think-trace";
+
 type UpstreamThinkDeltaEvent = Extract<StreamMessageEvent, { type: "upstream_think_delta" }>;
 type Listener = () => void;
 
@@ -36,7 +38,7 @@ function mergeContent(previous: string, event: UpstreamThinkDeltaEvent) {
   return previous;
 }
 
-function mergeUpstreamThinkBlock(current: ChatTraceBlock | undefined, event: UpstreamThinkDeltaEvent): ChatTraceBlock {
+export function mergeUpstreamThinkBlock(current: ChatTraceBlock | undefined, event: UpstreamThinkDeltaEvent): ChatTraceBlock {
   const roundID = event.roundID || current?.roundID;
   const roundChanged = Boolean(roundID && current?.roundID && roundID !== current.roundID);
   const contentMarkdown = mergeContent(roundChanged ? "" : (current?.contentMarkdown ?? ""), event);

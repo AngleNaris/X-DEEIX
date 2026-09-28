@@ -13,6 +13,7 @@ import {
 import { apiRequest, ApiError, ApiNetworkError, pathParam } from "@/shared/api/http-client";
 import type { PagePayload } from "@/shared/api/common.types";
 import type {
+  ActiveConversationRunEvent,
   BatchSetConversationProjectRequest,
   BatchSetConversationProjectResult,
   ContextArtifactDTO,
@@ -24,6 +25,8 @@ import type {
   ConversationProjectFilter,
   ConversationProjectStatusFilter,
   ConversationRunDTO,
+  ConversationRunStatusDTO,
+  ConversationToolCallDetailDTO,
   ConversationSearchPageDTO,
   ConversationShareDTO,
   ConversationShareFilter,
@@ -52,6 +55,7 @@ import type {
   SetConversationStarRequest,
   SetMessageFeedbackRequest,
   StreamMessageEvent,
+  TemporaryChatMessageRequest,
   GroupStreamEvent,
   TraceBlockDTO,
   UpdateConversationLabelsRequest,
@@ -163,6 +167,7 @@ function normalizeTraceBlock(block: unknown): TraceBlockDTO | undefined {
     stage: raw.stage,
     roundID: raw.roundID,
     parentEventID: raw.parentEventID,
+    startedAt: raw.startedAt,
     updatedAt: raw.updatedAt ?? "",
     payloadJSON: raw.payloadJSON,
   };
@@ -340,6 +345,7 @@ function handleStreamEvent(event: StreamMessageEvent, options: ConversationStrea
 
   if (event.type === "moderation_blocked") {
     options.onModerationBlocked?.(event);
+    options.onTerminal?.(event);
     throw new ApiError(
       "content blocked by moderation",
       responseStatus,
@@ -353,14 +359,17 @@ function handleStreamEvent(event: StreamMessageEvent, options: ConversationStrea
   }
 
   if (event.type === "completed") {
+    options.onTerminal?.(event);
     return event.data;
   }
 
   if (event.type === "error" && event.data) {
     options.onInterrupted?.(event);
+    options.onTerminal?.(event);
     return event.data;
   }
 
+  options.onTerminal?.(event);
   throw new ApiError(event.message || "stream failed", responseStatus, event.debug, event.errorCode);
 }
 
@@ -677,12 +686,43 @@ export async function renameConversation(
   );
 }
 
-export async function deleteMessage(
+export async function getConversationRunStatuses(
   accessToken: string,
+  runIDs: string[],
+  signal?: AbortSignal,
+): Promise<ConversationRunStatusDTO[]> {
+  const ids = Array.from(new Set(runIDs.map((id) => id.trim()).filter(Boolean)));
+  const requests: Promise<ConversationRunStatusDTO[]>[] = [];
+  for (let index = 0; index < ids.length; index += 100) {
+    requests.push(authedRequest<ConversationRunStatusDTO[]>(
+      "/api/v1/conversation-runs/statuses",
+      { method: "POST", accessToken, body: { runIDs: ids.slice(index, index + 100) }, signal },
+      true,
+    ));
+  }
+  return (await Promise.all(requests)).flat();
+}
+
+export async function getConversationToolCallDetail(
+  accessToken: string,
+  runID: string,
+  toolCallID: string,
+  signal?: AbortSignal,
+): Promise<ConversationToolCallDetailDTO> {
+  return authedRequest<ConversationToolCallDetailDTO>(
+    `/api/v1/conversation-runs/${pathParam(runID)}/tool-calls/${pathParam(toolCallID)}`,
+    { accessToken, signal },
+    true,
+  );
+}
+
+export async function deleteConversationMessage(
+  accessToken: string,
+  conversationPublicID: string,
   messagePublicID: string,
 ): Promise<DeleteMessageResult> {
   return authedRequest<DeleteMessageResult>(
-    `/api/v1/messages/${pathParam(messagePublicID)}`,
+    `/api/v1/conversations/${pathParam(conversationPublicID)}/messages/${pathParam(messagePublicID)}`,
     {
       method: "DELETE",
       accessToken,
@@ -1121,6 +1161,7 @@ export type CompactDoneEvent = {
 export type ConversationStreamOptions = {
   signal?: AbortSignal;
   afterSeq?: number;
+  onTerminal?: (event: Extract<StreamMessageEvent, { type: "completed" | "error" | "moderation_blocked" }>) => void;
   onEventSeq?: (seq: number) => void;
   onDelta?: (delta: string) => void;
   onTextSnapshot?: (content: string) => void;
@@ -1259,6 +1300,139 @@ export async function streamMessage(
   options: ConversationStreamOptions = {},
 ): Promise<SendMessageResult> {
   return postConversationStream(accessToken, conversationPublicID, "/messages/stream", payload, options);
+}
+
+// 临时对话/活跃运行由上游 c4e3514f 引入；custom 后端已实现临时对话路由，活跃运行路由随后补齐。
+export const TEMPORARY_CHAT_MAX_ATTACHMENTS = 20;
+export const TEMPORARY_CHAT_MAX_IMAGE_ATTACHMENTS = 10;
+
+export type TemporaryChatRequestAttachment = {
+  file: File;
+  messageIndex: number;
+  kind: "file" | "image";
+};
+
+async function postTemporaryChatStream(
+  accessToken: string,
+  payload: TemporaryChatMessageRequest,
+  options: ConversationStreamOptions,
+  attachments: TemporaryChatRequestAttachment[],
+): Promise<SendMessageResult> {
+  if (attachments.length > TEMPORARY_CHAT_MAX_ATTACHMENTS) {
+    throw new ApiError(`temporary chat supports at most ${TEMPORARY_CHAT_MAX_ATTACHMENTS} attachments`, 400);
+  }
+  if (attachments.filter((item) => item.kind === "image").length > TEMPORARY_CHAT_MAX_IMAGE_ATTACHMENTS) {
+    throw new ApiError(`temporary chat supports at most ${TEMPORARY_CHAT_MAX_IMAGE_ATTACHMENTS} image attachments`, 400);
+  }
+  if (attachments.length > 0) {
+    const body = new FormData();
+    body.append("payload", JSON.stringify(payload));
+    body.append("attachmentMessageIndexes", JSON.stringify(attachments.map((item) => item.messageIndex)));
+    for (const attachment of attachments) {
+      body.append("attachments", attachment.file, attachment.file.name);
+    }
+    const response = await authedFetch(
+      "/api/v1/temporary-chat/messages/stream",
+      { method: "POST", accessToken, body, signal: options.signal },
+      true,
+    );
+    if (!response.body) {
+      throw new ApiError("stream body is empty", response.status);
+    }
+    const completed = await readConversationStream(response, options);
+    if (completed) {
+      return completed;
+    }
+    throw new ApiError("stream completed without final payload", response.status);
+  }
+  const response = await authedFetch(
+    "/api/v1/temporary-chat/messages/stream",
+    {
+      method: "POST",
+      accessToken,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: options.signal,
+    },
+    true,
+  );
+  if (!response.body) {
+    throw new ApiError("stream body is empty", response.status);
+  }
+  const completed = await readConversationStream(response, options);
+  if (completed) {
+    return completed;
+  }
+  throw new ApiError("stream completed without final payload", response.status);
+}
+
+export async function streamTemporaryChatMessage(
+  accessToken: string,
+  payload: TemporaryChatMessageRequest,
+  options: ConversationStreamOptions = {},
+  attachments: TemporaryChatRequestAttachment[] = [],
+): Promise<SendMessageResult> {
+  return postTemporaryChatStream(accessToken, payload, options, attachments);
+}
+
+export async function streamActiveConversationRuns(
+  accessToken: string,
+  options: {
+    signal?: AbortSignal;
+    onEvent: (event: ActiveConversationRunEvent) => void;
+  },
+): Promise<void> {
+  const response = await authedFetch(
+    "/api/v1/conversation-runs/stream",
+    {
+      accessToken,
+      headers: { Accept: "text/event-stream" },
+      signal: options.signal,
+    },
+    true,
+  );
+  if (!response.body) {
+    throw new ApiError("active conversation run stream is unavailable", response.status);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const consumeFrames = (flush: boolean) => {
+    buffer += flush ? decoder.decode() : "";
+    const frames = buffer.split(/\r?\n\r?\n/);
+    buffer = flush ? "" : (frames.pop() ?? "");
+    for (const frame of frames) {
+      const data = frame
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart())
+        .join("\n")
+        .trim();
+      if (!data) {
+        continue;
+      }
+      try {
+        options.onEvent(JSON.parse(data) as ActiveConversationRunEvent);
+      } catch {
+        // Ignore malformed events and keep the long-lived connection healthy.
+      }
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        consumeFrames(true);
+        return;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      consumeFrames(false);
+    }
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 export async function streamImageGeneration(

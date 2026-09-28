@@ -8,33 +8,39 @@ import type { ConversationRunStore } from "@/features/chat/model/conversation-ru
 type ChatSessionContextValue = {
   newConversationRevision: number;
   newConversationProjectID: string;
+  newConversationRoleID: string;
+  newConversationAgentGroupID: string;
   detachConversationRun: (runID: string) => void;
   finishConversationRun: (runID: string) => void;
   registerConversationRun: (runID: string, conversationPublicID: string) => void;
-  requestNewConversation: (options?: { projectID?: string }) => void;
+  requestNewConversation: (options?: { projectID?: string; roleID?: string; agentGroupID?: string }) => void;
 };
 
 const ChatSessionContext = React.createContext<ChatSessionContextValue | null>(null);
 const ConversationRunStoreContext = React.createContext<ConversationRunStore | null>(null);
 
 export function ChatSessionProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = React.useState({ revision: 0, projectID: "" });
+  const [state, setState] = React.useState({ revision: 0, projectID: "", roleID: "", agentGroupID: "" });
   const {
     detachConversationRun,
     finishConversationRun,
     registerConversationRun,
     store,
   } = useChatRunState();
-  const requestNewConversation = React.useCallback((options?: { projectID?: string }) => {
+  const requestNewConversation = React.useCallback((options?: { projectID?: string; roleID?: string; agentGroupID?: string }) => {
     setState((prev) => ({
       revision: prev.revision + 1,
       projectID: options?.projectID?.trim() ?? "",
+      roleID: options?.roleID?.trim() ?? "",
+      agentGroupID: options?.agentGroupID?.trim() ?? "",
     }));
   }, []);
   const value = React.useMemo(
     () => ({
       newConversationRevision: state.revision,
       newConversationProjectID: state.projectID,
+      newConversationRoleID: state.roleID,
+      newConversationAgentGroupID: state.agentGroupID,
       detachConversationRun,
       finishConversationRun,
       registerConversationRun,
@@ -46,6 +52,8 @@ export function ChatSessionProvider({ children }: { children: React.ReactNode })
       registerConversationRun,
       requestNewConversation,
       state.projectID,
+      state.roleID,
+      state.agentGroupID,
       state.revision,
     ],
   );

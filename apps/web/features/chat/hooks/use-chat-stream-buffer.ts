@@ -222,6 +222,50 @@ export function useChatStreamBuffer({
     flushStreamText(exchangeKey);
   }, [flushStreamText]);
 
+  const setStreamTextSnapshot = React.useCallback((exchangeKey: string, content: string) => {
+    const buffer = buffersRef.current.get(exchangeKey);
+    if (!buffer) {
+      return;
+    }
+    if (buffer.textFrame !== null) {
+      window.cancelAnimationFrame(buffer.textFrame);
+      buffer.textFrame = null;
+    }
+    if (buffer.textTimeout !== null) {
+      window.clearTimeout(buffer.textTimeout);
+      buffer.textTimeout = null;
+    }
+    buffer.pendingText = "";
+    buffer.lastTextFlushAt = performance.now();
+
+    setPendingExchanges((current) => {
+      const exchange = current[exchangeKey];
+      if (!exchange) {
+        return current;
+      }
+      if (
+        exchange.assistantText === content &&
+        !exchange.assistantPending &&
+        exchange.assistantStreaming &&
+        !exchange.assistantFileProc &&
+        !exchange.assistantActivityLabel
+      ) {
+        return current;
+      }
+      return {
+        ...current,
+        [exchangeKey]: {
+          ...exchange,
+          assistantPending: false,
+          assistantStreaming: true,
+          assistantFileProc: false,
+          assistantActivityLabel: undefined,
+          assistantText: content,
+        },
+      };
+    });
+  }, [setPendingExchanges]);
+
   const flushUpstreamThinkNow = React.useCallback((exchangeKey: string) => {
     const buffer = buffersRef.current.get(exchangeKey);
     if (!buffer) {
@@ -278,6 +322,7 @@ export function useChatStreamBuffer({
     flushStreamTextNow,
     flushUpstreamThinkNow,
     resetStreamBuffer,
+    setStreamTextSnapshot,
     startStream,
   };
 }

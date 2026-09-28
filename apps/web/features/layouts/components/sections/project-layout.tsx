@@ -11,7 +11,7 @@ import { AppSidebar } from "@/features/layouts/components/navigation/app-sidebar
 import { MobileHeader } from "@/features/layouts/components/sections/mobile-header";
 import { ChatSessionProvider, useChatSession } from "@/features/chat";
 import { AppearancePreferencesSync, UserTimeZoneSync } from "@/features/settings";
-import { SidebarInset, SidebarProvider, useSidebar } from "@/components/ui/sidebar";
+import { SidebarInset, SidebarProvider, useSidebarActions, useSidebarIsMobile, useSidebarMobileOpen } from "@/components/ui/sidebar";
 import { UserLocaleSync } from "@/i18n/user-locale-sync";
 
 const AnnouncementDialogHost = dynamic(
@@ -32,7 +32,9 @@ function ProjectLayoutShell({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { isMobile, openMobile, setOpenMobile } = useSidebar();
+  const isMobile = useSidebarIsMobile();
+  const openMobile = useSidebarMobileOpen();
+  const { setOpenMobile } = useSidebarActions();
   const { requestNewConversation } = useChatSession();
   const routeKey = `${pathname}?${searchParams.toString()}`;
   const previousRouteKeyRef = React.useRef(routeKey);

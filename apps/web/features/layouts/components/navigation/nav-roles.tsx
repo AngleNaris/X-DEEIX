@@ -55,7 +55,8 @@ import {
   SidebarMenuItem,
   SidebarMenuSub,
   SidebarMenuSubItem,
-  useSidebar,
+  useSidebarActions,
+  useSidebarIsMobile,
 } from "@/components/ui/sidebar";
 import {
   ConversationLabelsManagerDialog,
@@ -63,7 +64,7 @@ import {
   ConversationShareDialog,
   sharePatchFromDTO,
   useConversationExport,
-  useSidebarConversations,
+  useSidebarConversationField,
 } from "@/entities/conversation";
 import { useChatSession } from "@/features/chat";
 import { SidebarConversationItem } from "@/features/layouts/components/navigation/sidebar-conversation-item";
@@ -441,24 +442,23 @@ function RoleTreeButton({
 export function NavRoles() {
   const router = useRouter();
   const pathname = usePathname();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const isMobile = useSidebarIsMobile();
+  const { setOpenMobile } = useSidebarActions();
   const onNavigate = useSidebarConversationNavigation();
   const activeConversationID = useLayoutActiveConversation();
   const { deleteFilesByDefault: deleteConversationFilesByDefault } = useSettingsChatPreferences();
   const { requestNewConversation } = useChatSession();
-  const {
-    items,
-    projects,
-    setStarByPublicID,
-    renameByPublicID,
-    regenerateTitleByPublicID,
-    updateLabelsByPublicID,
-    setProjectByPublicID,
-    archiveByPublicID,
-    deleteByPublicID,
-    touchByPublicID,
-    streamingPublicIDs,
-  } = useSidebarConversations();
+  const items = useSidebarConversationField("items");
+  const projects = useSidebarConversationField("projects");
+  const setStarByPublicID = useSidebarConversationField("setStarByPublicID");
+  const renameByPublicID = useSidebarConversationField("renameByPublicID");
+  const regenerateTitleByPublicID = useSidebarConversationField("regenerateTitleByPublicID");
+  const updateLabelsByPublicID = useSidebarConversationField("updateLabelsByPublicID");
+  const setProjectByPublicID = useSidebarConversationField("setProjectByPublicID");
+  const archiveByPublicID = useSidebarConversationField("archiveByPublicID");
+  const deleteByPublicID = useSidebarConversationField("deleteByPublicID");
+  const touchByPublicID = useSidebarConversationField("touchByPublicID");
+  const streamingPublicIDs = useSidebarConversationField("streamingPublicIDs");
   const [roles, setRoles] = React.useState<ConversationRoleDTO[]>([]);
   const [rolesOpen, setRolesOpen] = useStoredBoolean(ROLES_OPEN_STORAGE_KEY, true);
   const [draft, setDraft] = React.useState<RoleDraft | null>(null);

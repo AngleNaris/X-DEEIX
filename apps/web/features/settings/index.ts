@@ -1,5 +1,6 @@
 export { AppearancePreferencesProvider } from "@/features/settings/components/appearance-preferences-provider";
 export { AppearancePreferencesSync } from "@/features/settings/components/appearance-preferences-sync";
+export { UserTimeZoneSync } from "@/features/settings/components/user-timezone-sync";
 export { useSettingsChatPreferences } from "@/features/settings/hooks/use-settings-chat-preferences";
 
 // 以下导出是 chat 等其它 feature 消费的偏好设置契约。

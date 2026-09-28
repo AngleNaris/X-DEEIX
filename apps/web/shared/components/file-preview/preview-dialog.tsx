@@ -111,7 +111,7 @@ function isReadableTextContent(content: string): boolean {
   return replacements / sample.length < 0.08 && controls / sample.length < 0.02;
 }
 
-type FileContentLoader = (file: PreviewDialogFile) => Promise<FileContentResult>;
+export type FileContentLoader = (file: PreviewDialogFile, signal: AbortSignal) => Promise<FileContentResult>;
 
 export function useFilePreviewContent(file: PreviewDialogFile | null, loadContent?: FileContentLoader) {
   const t = useTranslations("files.previewDialog");
@@ -135,19 +135,20 @@ export function useFilePreviewContent(file: PreviewDialogFile | null, loadConten
     }
 
     let cancelled = false;
+    const controller = new AbortController();
     revoke();
     setState({ status: "loading" });
 
     void (async () => {
       try {
         const result = loadContent
-          ? await loadContent(file)
+          ? await loadContent(file, controller.signal)
           : await (async () => {
               const token = await resolveAccessToken();
               if (!token) {
                 throw new Error(t("sessionExpired"));
               }
-              return fetchFileContent(token, file.fileID);
+              return fetchFileContent(token, file.fileID, controller.signal);
             })();
         let kind = resolveFilePreviewKind(file, result.contentType);
         const objectURL = URL.createObjectURL(result.blob);
@@ -166,14 +167,14 @@ export function useFilePreviewContent(file: PreviewDialogFile | null, loadConten
           }
         }
 
-        if (cancelled) {
+        if (cancelled || controller.signal.aborted) {
           URL.revokeObjectURL(objectURL);
           return;
         }
 
         setState({ status: "ready", kind, objectURL, textContent, contentType: result.contentType });
       } catch (error) {
-        if (cancelled) {
+        if (cancelled || controller.signal.aborted) {
           return;
         }
         setState({ status: "error", message: resolveErrorMessage(error, t("loadFailed")) });
@@ -182,6 +183,7 @@ export function useFilePreviewContent(file: PreviewDialogFile | null, loadConten
 
     return () => {
       cancelled = true;
+      controller.abort();
       revoke();
     };
   }, [file, loadContent, resolveErrorMessage, revoke, t]);

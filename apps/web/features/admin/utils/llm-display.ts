@@ -10,6 +10,10 @@ import {
 import type { AdminLLMAdapter } from "@/features/admin/api/llm.types";
 import { COMPATIBLE_PRESETS, PROTOCOL_PRESETS } from "@/shared/lib/llm-presets";
 
+export const MODEL_KINDS = [
+  "chat", "audio", "image_gen", "image_edit", "video_gen", "video_extension",
+] as const;
+
 export const MODEL_KIND_META: Record<
   string,
   { label: string; shortLabel: string; icon: LucideIcon }

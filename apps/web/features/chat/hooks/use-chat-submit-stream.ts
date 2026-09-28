@@ -22,13 +22,12 @@ export function useChatSubmitStream({
   conversationID,
   conversationScopeKey,
   activeConversation,
-  isAgentGroupConversation,
   selectedPlatformModelName,
   modelOptions,
   selectedToolIDs,
   selectedSkills,
-  selectedPrompts,
   selectedKnowledgeBaseIDs,
+  uiComponentIDs,
   htmlVisualPromptEnabled,
   options,
   draft,
@@ -41,12 +40,12 @@ export function useChatSubmitStream({
   onConversationCreated,
   onConversationForked,
   touchByPublicID,
-  setConversationStreaming,
   reload,
   replaceMessage,
   setDraft,
   setAttachments,
   releaseAttachments,
+  transferAttachments,
   getPendingExchanges,
   pendingExchanges,
   setPendingExchanges,
@@ -61,19 +60,20 @@ export function useChatSubmitStream({
   activeGenerationRunsRef,
   activeGenerationRunsRevision,
   onActiveGenerationRunsChange,
+  onConversationRunDetached,
+  onConversationRunFinished,
+  onConversationRunStarted,
   resumeGenerationActive,
-  autoEditDismissed = false,
 }: {
   conversationID: string | null;
   conversationScopeKey: string;
   activeConversation: ConversationDTO | null;
-  isAgentGroupConversation: boolean;
   selectedPlatformModelName: string;
   modelOptions: ChatModelOption[];
   selectedToolIDs: number[];
   selectedSkills: SkillSummaryDTO[];
-  selectedPrompts: PromptPresetDTO[];
   selectedKnowledgeBaseIDs: string[];
+  uiComponentIDs: number[];
   htmlVisualPromptEnabled: boolean;
   options: ConversationOptions;
   draft: string;
@@ -85,13 +85,13 @@ export function useChatSubmitStream({
   prependNewConversation: (platformModelName: string) => Promise<ConversationDTO | null | undefined>;
   onConversationCreated?: (conversationPublicID: string) => void;
   onConversationForked?: (conversation: ConversationDTO) => Promise<void> | void;
-  touchByPublicID: (publicID: string, patch?: Partial<ConversationDTO>) => void;
-  setConversationStreaming: (publicID: string, ownerID: string, streaming: boolean) => void;
+  touchByPublicID: (publicID: string, patch: Partial<ConversationDTO>) => void;
   reload: () => void;
   replaceMessage: (message: MessageDTO) => void;
   setDraft: React.Dispatch<React.SetStateAction<string>>;
   setAttachments: React.Dispatch<React.SetStateAction<PendingAttachment[]>>;
   releaseAttachments: (items: PendingAttachment[]) => void;
+  transferAttachments: (items: PendingAttachment[]) => void;
   getPendingExchanges: () => PendingExchangeMap;
   pendingExchanges: PendingExchangeMap;
   setPendingExchanges: React.Dispatch<React.SetStateAction<PendingExchangeMap>>;
@@ -106,8 +106,10 @@ export function useChatSubmitStream({
   activeGenerationRunsRef?: React.RefObject<Set<string>>;
   activeGenerationRunsRevision: number;
   onActiveGenerationRunsChange?: () => void;
+  onConversationRunDetached?: (runID: string) => void;
+  onConversationRunFinished?: (runID: string) => void;
+  onConversationRunStarted?: (runID: string, conversationPublicID: string) => void;
   resumeGenerationActive?: boolean;
-  autoEditDismissed?: boolean;
 }) {
   const streamBuffer = useChatStreamBuffer({
     setPendingExchanges,
@@ -117,13 +119,12 @@ export function useChatSubmitStream({
     conversationID,
     conversationScopeKey,
     activeConversation,
-    isAgentGroupConversation,
     selectedPlatformModelName,
     modelOptions,
     selectedToolIDs,
     selectedSkills,
-    selectedPrompts,
     selectedKnowledgeBaseIDs,
+    uiComponentIDs,
     htmlVisualPromptEnabled,
     options,
     draft,
@@ -136,12 +137,12 @@ export function useChatSubmitStream({
     onConversationCreated,
     onConversationForked,
     touchByPublicID,
-    setConversationStreaming,
     reload,
     replaceMessage,
     setDraft,
     setAttachments,
     releaseAttachments,
+    transferAttachments,
     getPendingExchanges,
     pendingExchanges,
     setPendingExchanges,
@@ -158,12 +159,15 @@ export function useChatSubmitStream({
     flushStreamTextNow: streamBuffer.flushStreamTextNow,
     flushUpstreamThinkNow: streamBuffer.flushUpstreamThinkNow,
     resetStreamBuffer: streamBuffer.resetStreamBuffer,
+    setStreamTextSnapshot: streamBuffer.setStreamTextSnapshot,
     startStream: streamBuffer.startStream,
     activeGenerationRunsRef,
     activeGenerationRunsRevision,
     onActiveGenerationRunsChange,
+    onConversationRunDetached,
+    onConversationRunFinished,
+    onConversationRunStarted,
     resumeGenerationActive,
-    autoEditDismissed,
   });
 
   return messageSubmit;

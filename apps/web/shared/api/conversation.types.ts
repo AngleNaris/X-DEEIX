@@ -5,7 +5,6 @@ import type {
   CreateConversationProjectRequest as ContractCreateConversationProjectRequest,
   CreateConversationRequest as ContractCreateConversationRequest,
   CreateConversationShareRequest as ContractCreateConversationShareRequest,
-  DeleteMessageResponse as ContractDeleteMessageResponse,
   MediaVideoExtensionRequest as ContractMediaVideoExtensionRequest,
   RenameConversationRequest as ContractRenameConversationRequest,
   ReorderConversationProjectsRequest as ContractReorderConversationProjectsRequest,
@@ -207,7 +206,7 @@ export type UpstreamDebugInfo = ModelProbeDebugResponse;
 export type RenameConversationRequest = ContractRenameConversationRequest;
 
 
-export type DeleteMessageResult = ContractDeleteMessageResponse;
+export type DeleteMessageResult = MessageDeleteResponse;
 
 export type UpdateConversationLabelsRequest = ContractUpdateConversationLabelsRequest;
 
@@ -288,6 +287,8 @@ export type MessageFeedbackResult = Omit<MessageFeedbackResponse, "myFeedback"> 
 export type SendMessageRequest = Omit<ContractSendMessageRequest, "options"> & {
   modelScope?: "platform" | "user";
   userModelID?: number;
+  // 普通会话的交互式组件勾选（后端 SendMessageRequest.UIComponentIDs 已补齐）。
+  uiComponentIDs?: number[];
   options?: ConversationOptions;
 };
 

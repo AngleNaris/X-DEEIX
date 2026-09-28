@@ -25,6 +25,7 @@ const MESSAGE_PAGE_SIZE = 100;
 const RESUME_FAILURE_CONFIRMATIONS = 3;
 
 type ChatDataState = {
+  conversationPublicID: string;
   loading: boolean;
   loadingOlder: boolean;
   errorMsg: string;
@@ -45,16 +46,19 @@ export function useChatData(
     activeGenerationRunsRef,
     isGroupConversation,
     activeGenerationRunsRevision = 0,
+    onConversationRunFinished,
   }: {
     activeGenerationRunsRef?: React.RefObject<Set<string>>;
     activeGenerationRunsRevision?: number;
     // 群组会话：刷新恢复时重建群组运行占位（§16.8 正在恢复运行）。
     isGroupConversation?: boolean;
+    onConversationRunFinished?: (runID: string) => void;
   } = {},
 ) {
   const t = useTranslations("chat.data");
   const tSubmit = useTranslations("chat.submit");
   const [state, setState] = React.useState<ChatDataState>({
+    conversationPublicID: conversationID ?? "",
     loading: Boolean(conversationID),
     loadingOlder: false,
     errorMsg: "",
@@ -93,6 +97,7 @@ export function useChatData(
     async function load() {
       if (!conversationID) {
         setState({
+          conversationPublicID: "",
           loading: false,
           loadingOlder: false,
           errorMsg: "",
@@ -106,6 +111,7 @@ export function useChatData(
       const isConversationSwitch = previousConversationIDRef.current !== conversationID;
       previousConversationIDRef.current = conversationID;
       setState((prev) => ({
+        conversationPublicID: conversationID,
         loading: isConversationSwitch || prev.messages.length === 0,
         loadingOlder: false,
         errorMsg: "",
@@ -118,6 +124,7 @@ export function useChatData(
         if (!token) {
           if (!cancelled) {
             setState({
+              conversationPublicID: conversationID,
               loading: false,
               loadingOlder: false,
               errorMsg: t("signInRequired"),
@@ -149,6 +156,7 @@ export function useChatData(
               : prev.messages.filter((message) => message.id < firstTailMessageID);
           const messages = [...loadedOlderMessages, ...data.results];
           return {
+            conversationPublicID: conversationID,
             loading: false,
             loadingOlder: false,
             errorMsg: "",
@@ -283,12 +291,18 @@ export function useChatData(
       return false;
     }
 
-    const result = await cancelMessageGeneration(token, active.runID).catch(() => null);
+    const result = await cancelMessageGeneration(token, active.runID).catch((): null => null);
+    if (result?.canceled) {
+      onConversationRunFinished?.(active.runID);
+    }
     reload();
     return Boolean(result?.canceled);
-  }, [clearResumeCheckpoint, reload]);
+  }, [clearResumeCheckpoint, onConversationRunFinished, reload]);
 
   const pendingAssistant = React.useMemo(() => {
+    if (!conversationID || state.conversationPublicID !== conversationID) {
+      return null;
+    }
     for (let index = state.messages.length - 1; index >= 0; index -= 1) {
       const message = state.messages[index];
       if (message.role === "assistant" && message.status === "pending") {
@@ -296,7 +310,7 @@ export function useChatData(
       }
     }
     return null;
-  }, [state.messages]);
+  }, [conversationID, state.conversationPublicID, state.messages]);
 
   const pendingRunID = pendingAssistant?.runID?.trim() || "";
   // revision 仅用于重新读取可变 Set；effect 只依赖当前 pending run 的实际活动状态。
@@ -340,7 +354,11 @@ export function useChatData(
     };
     const isResumeInactive = () => closed || controller.signal.aborted;
     const updateResumeState = (update: (current: ChatDataState) => ChatDataState) => {
-      setState((current) => isResumeInactive() ? current : update(current));
+      setState((current) =>
+        isResumeInactive() || current.conversationPublicID !== conversationID
+          ? current
+          : update(current),
+      );
     };
     resumedTextByRun[pendingRunID] = baseContent;
     activeResumeStreamRef.current = {
@@ -364,6 +382,9 @@ export function useChatData(
         const completed = await resumeMessageGenerationStream(token, pendingRunID, {
           signal: controller.signal,
           afterSeq,
+          onTerminal: () => {
+            onConversationRunFinished?.(pendingRunID);
+          },
           onEventSeq: (seq) => {
             if (isResumeInactive()) {
               return;
@@ -602,6 +623,7 @@ export function useChatData(
     conversationID,
     pendingRunID,
     pendingRunIsActive,
+    onConversationRunFinished,
     reload,
   ]);
 

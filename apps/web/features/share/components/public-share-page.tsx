@@ -481,7 +481,7 @@ export function PublicSharePage() {
 
         <div className="space-y-7">
           {visibleMessages.map((message) => {
-            const timeline = data.groupRuns?.[message.runID];
+            const timeline = message.runID ? data.groupRuns?.[message.runID] : undefined;
             return (
               <div key={message.publicID} className="min-w-0">
                 <PublicSharedMessage

@@ -52,7 +52,7 @@ import { useLocalizedErrorMessage } from "@/i18n/use-localized-error";
 import { cn } from "@/lib/utils";
 import { type FileContentResult, fetchFileContent } from "@/shared/api/file";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
-import type { PreviewDialogFile } from "@/shared/components/file-preview/preview-dialog";
+import type { FileContentLoader, PreviewDialogFile } from "@/shared/components/file-preview/preview-dialog";
 import { registerSignedMarkdownImageURL } from "@/shared/lib/markdown-image-source";
 import { PreviewMedia } from "@/shared/components/file-preview/preview-media";
 import { type MarkdownArtifactActions, MarkdownImage } from "@/shared/components/markdown/streamdown-components";
@@ -61,7 +61,7 @@ import { MediaActionBar, MediaActionButton } from "@/shared/components/media-act
 import { useBranding } from "@/shared/config/branding-provider";
 import type { BillingDisplayCurrency } from "@/shared/lib/billing-display";
 
-const EMPTY_TRACE_EVENTS: NonNullable<ChatAreaMessage["processTrace"]>["events"] = [];
+const EMPTY_TRACE_EVENTS: NonNullable<NonNullable<ChatAreaMessage["processTrace"]>["events"]> = [];
 
 function isEditableImageAttachment(attachment: MessageAttachment): boolean {
   const mimeType = attachment.mimeType.toLowerCase();
@@ -201,7 +201,7 @@ type ChatMessageBotProps = {
   billingDisplayCurrency?: BillingDisplayCurrency;
   billingDisplayUsdToCnyRate?: number | null;
   readOnly?: boolean;
-  attachmentContentLoader?: (file: PreviewDialogFile) => Promise<FileContentResult>;
+  attachmentContentLoader?: FileContentLoader;
   onEditImageAttachment?: (attachment: MessageAttachment, sourceModelName?: string) => void;
   onExtendVideoAttachment?: (attachment: MessageAttachment, sourceModelName?: string) => void;
   onOpenProjectChange?: (change: ProjectChange) => void;
@@ -281,7 +281,7 @@ export function ChatMessageBot({
       ? mergeLiveUpstreamThinkTrace(item.processTrace, liveProcessTrace)
       : item.processTrace;
   React.useEffect(() => {
-    if (shouldClearLiveUpstreamThinkTrace(item.isStreaming, item.processTrace, liveProcessTrace)) {
+    if (shouldClearLiveUpstreamThinkTrace(Boolean(item.isStreaming), item.processTrace, liveProcessTrace)) {
       clearLiveUpstreamThinkTrace(item.runID);
     }
   }, [item.isStreaming, item.processTrace, item.runID, liveProcessTrace]);
@@ -296,7 +296,7 @@ export function ChatMessageBot({
     return resolveRetryableGroupStep(liveGroupRun);
   }, [liveGroupRun]);
   const groupStepActions = useAgentGroupStepActions({
-    clientRunID: item.runID,
+    clientRunID: item.runID ?? "",
     run: liveGroupRun,
     step: retryableGroupStep,
   });
@@ -504,7 +504,7 @@ export function ChatMessageBot({
       <MessageAgentGroupTrace
         run={liveGroupRun}
         streaming={messageStreaming}
-        clientRunID={item.runID}
+        clientRunID={item.runID ?? ""}
         readOnly={Boolean(readOnly)}
       />
 
@@ -904,7 +904,7 @@ function useInlineMediaPreview(
     loadContent,
   }: {
     attachment: MessageAttachment;
-    loadContent?: (file: PreviewDialogFile) => Promise<FileContentResult>;
+    loadContent?: FileContentLoader;
   },
 ) {
   const tPreview = useTranslations("files.previewDialog");
@@ -935,6 +935,7 @@ function useInlineMediaPreview(
 
   React.useEffect(() => {
     let cancelled = false;
+    const controller = new AbortController();
     revokeObjectURL();
 
     if (previewURL) {
@@ -956,13 +957,13 @@ function useInlineMediaPreview(
           sizeBytes,
         };
         const result = loadContent
-          ? await loadContent(file)
+          ? await loadContent(file, controller.signal)
           : await (async () => {
               const token = await resolveAccessToken();
               if (!token) {
                 throw new Error(tPreview("sessionExpired"));
               }
-              return fetchFileContent(token, fileID);
+              return fetchFileContent(token, fileID, controller.signal);
             })();
         const objectURL = URL.createObjectURL(result.blob);
         objectURLRef.current = objectURL;
@@ -990,6 +991,7 @@ function useInlineMediaPreview(
 
     return () => {
       cancelled = true;
+      controller.abort();
       revokeObjectURL();
     };
   }, [
@@ -1016,7 +1018,7 @@ function MessageInlineMediaPreview({
 }: {
   attachment: MessageAttachment;
   kind: "image" | "audio" | "video";
-  loadContent?: (file: PreviewDialogFile) => Promise<FileContentResult>;
+  loadContent?: FileContentLoader;
   onExtend?: () => void;
 }) {
   const tMessages = useTranslations("chat.messages");

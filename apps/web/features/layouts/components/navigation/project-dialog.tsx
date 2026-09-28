@@ -642,9 +642,10 @@ export function ProjectDialog({
   );
 }
 
-function ProjectDefaultSelector<T extends string | number>({
+export function ProjectDefaultSelector<T extends string | number>({
   icon: Icon,
   label,
+  description,
   emptyLabel,
   searchPlaceholder,
   options,
@@ -662,6 +663,7 @@ function ProjectDefaultSelector<T extends string | number>({
 }: {
   icon: LucideIcon;
   label: string;
+  description?: string;
   emptyLabel: string;
   searchPlaceholder: string;
   options: ProjectDefaultOption<T>[];
@@ -706,7 +708,7 @@ function ProjectDefaultSelector<T extends string | number>({
 
   return (
     <div className="min-w-0 space-y-1">
-      <p className="block text-xs text-muted-foreground">{label}</p>
+      <p className="block text-xs text-muted-foreground">{label}{description ? ` · ${description}` : ""}</p>
       <Popover
         modal
         open={open}

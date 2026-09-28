@@ -676,6 +676,7 @@ function useBillingMetaLabels(): BillingMetaLabels {
         claudeCacheWriteNote: (timeout, multiplier) => t("claudeCacheWriteNote", { timeout, multiplier }),
         claudeFastModeNote: (multiplier) => t("claudeFastModeNote", { multiplier }),
         openaiServiceTierNote: (tier, multiplier) => t("openaiServiceTierNote", { tier, multiplier }),
+        scheduleRateNote: (period, multiplier) => t("scheduleRateNote", { period, multiplier }),
         cacheWritePricingLabel: t("cacheWritePricingLabel"),
         cacheWritePricingNote: t("cacheWritePricingNote"),
       },
@@ -1166,7 +1167,7 @@ export function AssistantMessageMeta({
                     <Forward className="size-3.5" strokeWidth={1.8} />
                   </MetaIconButton>
                 ) : null}
-                {canFork ? (
+                {canFork && onFork ? (
                   <ForkMessageButton
                     label={t("forkMessage")}
                     onFork={onFork}

@@ -9,7 +9,6 @@ import type {
   ConversationOptions,
   MessageDTO,
 } from "@/shared/api/conversation.types";
-import type { PromptPresetDTO } from "@/shared/api/prompt-presets.types";
 import type { SkillSummaryDTO } from "@/shared/api/skills.types";
 
 function selectPendingExchangesByScope(
@@ -90,13 +89,12 @@ export function useChatRuntime({
   resetToken,
   messages,
   activeConversation,
-  isAgentGroupConversation,
   selectedPlatformModelName,
   modelOptions,
   selectedToolIDs,
   selectedSkills,
-  selectedPrompts,
   selectedKnowledgeBaseIDs,
+  uiComponentIDs,
   htmlVisualPromptEnabled,
   options,
   draft,
@@ -109,30 +107,31 @@ export function useChatRuntime({
   onConversationCreated,
   onConversationForked,
   touchByPublicID,
-  setConversationStreaming,
   reload,
   replaceMessage,
   setDraft,
   setAttachments,
   releaseAttachments,
+  transferAttachments,
   activeGenerationRunsRef,
   activeGenerationRunsRevision,
   onActiveGenerationRunsChange,
+  onConversationRunDetached,
+  onConversationRunFinished,
+  onConversationRunStarted,
   resumingRunID = "",
-  autoEditDismissed = false,
   resumingActivityLabel = "",
 }: {
   conversationID: string | null;
   resetToken: number;
   messages: MessageDTO[];
   activeConversation: ConversationDTO | null;
-  isAgentGroupConversation: boolean;
   selectedPlatformModelName: string;
   modelOptions: ChatModelOption[];
   selectedToolIDs: number[];
   selectedSkills: SkillSummaryDTO[];
-  selectedPrompts: PromptPresetDTO[];
   selectedKnowledgeBaseIDs: string[];
+  uiComponentIDs: number[];
   htmlVisualPromptEnabled: boolean;
   options: ConversationOptions;
   draft: string;
@@ -144,18 +143,20 @@ export function useChatRuntime({
   prependNewConversation: (platformModelName: string) => Promise<ConversationDTO | null | undefined>;
   onConversationCreated?: (conversationPublicID: string) => void;
   onConversationForked?: (conversation: ConversationDTO) => Promise<void> | void;
-  touchByPublicID: (publicID: string, patch?: Partial<ConversationDTO>) => void;
-  setConversationStreaming: (publicID: string, ownerID: string, streaming: boolean) => void;
+  touchByPublicID: (publicID: string, patch: Partial<ConversationDTO>) => void;
   reload: () => void;
   replaceMessage: (message: MessageDTO) => void;
   setDraft: React.Dispatch<React.SetStateAction<string>>;
   setAttachments: React.Dispatch<React.SetStateAction<PendingAttachment[]>>;
   releaseAttachments: (items: PendingAttachment[]) => void;
+  transferAttachments: (items: PendingAttachment[]) => void;
   activeGenerationRunsRef?: React.RefObject<Set<string>>;
   activeGenerationRunsRevision: number;
   onActiveGenerationRunsChange?: () => void;
+  onConversationRunDetached?: (runID: string) => void;
+  onConversationRunFinished?: (runID: string) => void;
+  onConversationRunStarted?: (runID: string, conversationPublicID: string) => void;
   resumingRunID?: string;
-  autoEditDismissed?: boolean;
   resumingActivityLabel?: string;
 }) {
   const [showConversationLayout, setShowConversationLayout] = React.useState(false);
@@ -204,13 +205,12 @@ export function useChatRuntime({
     conversationID,
     conversationScopeKey,
     activeConversation,
-    isAgentGroupConversation,
     selectedPlatformModelName,
     modelOptions,
     selectedToolIDs,
     selectedSkills,
-    selectedPrompts,
     selectedKnowledgeBaseIDs,
+    uiComponentIDs,
     htmlVisualPromptEnabled,
     options,
     draft,
@@ -223,12 +223,12 @@ export function useChatRuntime({
     onConversationCreated,
     onConversationForked,
     touchByPublicID,
-    setConversationStreaming,
     reload,
     replaceMessage,
     setDraft,
     setAttachments,
     releaseAttachments,
+    transferAttachments,
     getPendingExchanges,
     pendingExchanges,
     setPendingExchanges,
@@ -243,8 +243,10 @@ export function useChatRuntime({
     activeGenerationRunsRef,
     activeGenerationRunsRevision,
     onActiveGenerationRunsChange,
+    onConversationRunDetached,
+    onConversationRunFinished,
+    onConversationRunStarted,
     resumeGenerationActive: visibleResumeGenerationActive,
-    autoEditDismissed,
   });
 
   React.useEffect(() => {
@@ -280,8 +282,8 @@ export function useChatRuntime({
     onEditQueuedMessage: submitState.onEditQueuedMessage,
     onGuideQueuedMessage: submitState.onGuideQueuedMessage,
     queuedMessages: submitState.queuedMessages,
+    onDeleteMessage: submitState.onDeleteMessage,
     sending: submitState.sending || visibleResumeGenerationActive,
-    groupRunAwaitingAction: submitState.groupRunAwaitingAction,
     visibleMessageCount: branchState.visibleMessageCount,
     visibleMessages: branchState.visibleMessages,
     isConversationMode: showConversationLayout || branchState.visibleMessageCount > 0,

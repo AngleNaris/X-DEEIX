@@ -12,6 +12,7 @@ type ChatEmptyStateProps = {
   adjacentTitle?: string;
   badgeLabel?: string;
   badgeTooltip?: string;
+  titleAdornment?: React.ReactNode;
   contentWidthClassName?: string;
   children?: React.ReactNode;
 };
@@ -26,6 +27,7 @@ export function ChatEmptyState({
   adjacentTitle,
   badgeLabel,
   badgeTooltip,
+  titleAdornment,
   contentWidthClassName = "max-w-[1080px]",
   children,
 }: ChatEmptyStateProps) {
@@ -39,7 +41,7 @@ export function ChatEmptyState({
       </Badge>
     </span>
   ) : null;
-  const titleGroupKey = `${greetingTitle}:${adjacentTitle ?? ""}:${badgeLabel ?? ""}`;
+  const titleGroupKey = `${greetingTitle}:${adjacentTitle ?? ""}:${badgeLabel ?? ""}:${titleAdornment ? "adorned" : ""}`;
 
   return (
     <div className="flex h-full min-h-0 flex-col items-center justify-center px-3 py-12 text-center md:px-6 md:py-20">
@@ -54,6 +56,11 @@ export function ChatEmptyState({
             transition={CHAT_EMPTY_TEXT_TRANSITION}
           >
             <h1 className="flex min-w-0 flex-wrap items-baseline justify-center gap-x-2 gap-y-1 text-balance text-[22px] font-medium leading-[1.12] text-foreground [font-family:var(--font-economist)] md:text-[32px]">
+              {titleAdornment ? (
+                <span className="inline-flex shrink-0 items-center" aria-hidden={titleAdornment ? undefined : true}>
+                  {titleAdornment}
+                </span>
+              ) : null}
               <span>{greetingTitle}</span>
               {adjacentTitle ? (
                 <span className="inline-flex min-w-0 items-baseline gap-x-2">

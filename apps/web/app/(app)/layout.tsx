@@ -10,24 +10,24 @@ import { ThemeProvider } from "@/shared/components/theme-provider";
 import { LegacyPWAServiceWorkerMigration } from "@/shared/pwa/migrations/legacy-service-worker-migration";
 import { Toaster } from "@/components/ui/sonner";
 
-import "./globals.css";
+import "../globals.css";
 import "katex/dist/katex.min.css";
 import "streamdown/styles.css";
 
 const geistSans = localFont({
-  src: "./fonts/geist-latin.woff2",
+  src: "../fonts/geist-latin.woff2",
   variable: "--font-sans",
   weight: "100 900",
 });
 
 const geistMono = localFont({
-  src: "./fonts/geist-mono-latin.woff2",
+  src: "../fonts/geist-mono-latin.woff2",
   variable: "--font-mono",
   weight: "100 900",
 });
 
 const jetBrainsMono = localFont({
-  src: "./fonts/geist-mono-latin.woff2",
+  src: "../fonts/geist-mono-latin.woff2",
   variable: "--font-jetbrains-mono",
   weight: "100 900",
 });

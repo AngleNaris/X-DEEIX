@@ -12,7 +12,7 @@ import {
   removeByPublicID,
   sortByUpdatedAtDesc,
   upsertByPublicID,
-  useSidebarConversations,
+  useSidebarConversationField,
 } from "@/entities/conversation";
 import { useChatSession } from "@/features/chat";
 import { useLocalizedErrorMessage } from "@/i18n/use-localized-error";
@@ -105,20 +105,18 @@ export function useRecentPage() {
   const resolveErrorMessage = useLocalizedErrorMessage();
   const router = useRouter();
   const { requestNewConversation } = useChatSession();
-  const {
-    renameByPublicID,
-    regenerateTitleByPublicID,
-    updateLabelsByPublicID,
-    setStarByPublicID,
-    archiveByPublicID,
-    deleteByPublicID,
-    projects,
-    setProjectByPublicID,
-    batchSetProjectByPublicIDs,
-    touchByPublicID,
-    lastChange,
-    streamingPublicIDs,
-  } = useSidebarConversations();
+  const renameByPublicID = useSidebarConversationField("renameByPublicID");
+  const regenerateTitleByPublicID = useSidebarConversationField("regenerateTitleByPublicID");
+  const updateLabelsByPublicID = useSidebarConversationField("updateLabelsByPublicID");
+  const setStarByPublicID = useSidebarConversationField("setStarByPublicID");
+  const archiveByPublicID = useSidebarConversationField("archiveByPublicID");
+  const deleteByPublicID = useSidebarConversationField("deleteByPublicID");
+  const projects = useSidebarConversationField("projects");
+  const setProjectByPublicID = useSidebarConversationField("setProjectByPublicID");
+  const batchSetProjectByPublicIDs = useSidebarConversationField("batchSetProjectByPublicIDs");
+  const touchByPublicID = useSidebarConversationField("touchByPublicID");
+  const lastChange = useSidebarConversationField("lastChange");
+  const streamingPublicIDs = useSidebarConversationField("streamingPublicIDs");
   const [items, setItems] = React.useState<ConversationDTO[]>([]);
   const [loadingInitial, setLoadingInitial] = React.useState(true);
   const [loadingMore, setLoadingMore] = React.useState(false);

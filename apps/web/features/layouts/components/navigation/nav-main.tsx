@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useTranslations } from "next-intl";
 
-import { SidebarGroup, SidebarMenu, useSidebar } from "@/components/ui/sidebar";
+import { SidebarGroup, SidebarMenu, useSidebarActions, useSidebarIsMobile, useSidebarVisualState } from "@/components/ui/sidebar";
 import { useAgentGroupFeature } from "@/features/agent-groups/context/agent-group-feature-context";
 import { filterAgentGroupNavigationItems } from "@/features/agent-groups/model/agent-group-feature";
 import {
@@ -21,7 +21,9 @@ export function NavMain({
 }) {
   const t = useTranslations("common.navigation");
   const { enabled: agentGroupsEnabled } = useAgentGroupFeature();
-  const { state, isMobile, setOpenMobile } = useSidebar();
+  const state = useSidebarVisualState();
+  const isMobile = useSidebarIsMobile();
+  const { setOpenMobile } = useSidebarActions();
   const isCollapsed = !isMobile && state === "collapsed";
   const navigationItems = filterAgentGroupNavigationItems(NAVIGATION_ITEMS, agentGroupsEnabled);
 

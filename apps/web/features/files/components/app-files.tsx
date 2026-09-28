@@ -23,6 +23,7 @@ import { StorageQuotaPanel } from "@/features/files/components/sections/storage/
 import { useFilesPage } from "@/features/files/hooks/use-files-page";
 import { cn } from "@/lib/utils";
 import type { FileObjectDTO } from "@/shared/api/file.types";
+import { canManuallyVectorizeFile } from "@/shared/lib/file-processing";
 import { useDialogSnapshot } from "@/shared/hooks/use-dialog-snapshot";
 import { useIsMobile } from "@/shared/hooks/use-mobile";
 
@@ -86,9 +87,13 @@ export function AppFiles() {
     onBackToList,
     onToggleRagOptOut,
     onToggleFavorite,
+    vectorizing,
+    onVectorizeSelected,
   } = useFilesPage();
   const stableDeleteTarget = useDialogSnapshot(deleteTarget);
   const selectedCount = selectedFileIDs.length;
+  const selectedFileIDSet = new Set(selectedFileIDs);
+  const vectorizableSelectedCount = files.filter((file) => selectedFileIDSet.has(file.fileID) && canManuallyVectorizeFile(file)).length;
   const sidebarCollapsed = !isMobileViewport && isSidebarCollapsed;
   const selectAllDisabled = loading || files.length === 0 || bulkDeleting;
   const contentDeleting = Boolean(selectedFile && deletingFileID === selectedFile.fileID);
@@ -119,6 +124,9 @@ export function AppFiles() {
               sortKey={sortKey}
               uploading={uploading}
               selectedCount={selectedCount}
+              vectorizableSelectedCount={vectorizableSelectedCount}
+              vectorizing={vectorizing}
+              onVectorizeSelected={onVectorizeSelected}
               selectAllDisabled={selectAllDisabled}
               bulkDeleteDisabled={bulkDeleting}
               collapsed={sidebarCollapsed}

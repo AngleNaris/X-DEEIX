@@ -8,7 +8,7 @@ import type {
   ModelOptionControl,
   ModelOptionControlType,
 } from "@/features/chat/types/chat-runtime";
-import { USER_SETTINGS_UPDATED_EVENT } from "@/features/settings/events/user-settings-events";
+import { useUserSettings } from "@/shared/model/user-settings-store";
 import type { SendShortcut } from "@/features/settings/types/settings";
 import { parseSendShortcut } from "@/features/settings/utils/chat-settings";
 import { getBillingConfig } from "@/shared/api/billing";
@@ -404,14 +404,19 @@ export function useChatModelOptions({
   conversationPublicID,
   conversationModel,
   initialModel,
+  newConversationDefaultModel,
+  newConversationDefaultsPending = false,
   resetToken,
 }: {
   conversationPublicID: string | null;
   conversationModel?: string | null;
   initialModel?: string | null;
+  newConversationDefaultModel?: string | null;
+  newConversationDefaultsPending?: boolean;
   resetToken?: number;
 }) {
   const t = useTranslations("chat.models");
+  const liveUserSettings = useUserSettings();
   const [availableModels, setAvailableModels] = React.useState<ModelCatalogItem[]>([]);
   const [modelsLoading, setModelsLoading] = React.useState(true);
   const [modelsErrorMsg, setModelsErrorMsg] = React.useState("");
@@ -551,22 +556,13 @@ export function useChatModelOptions({
   }, [applyModelCatalog, loadModelCatalog, t]);
 
   React.useEffect(() => {
-    const handleUserSettingsUpdated = (event: Event) => {
-      const settings = (event as CustomEvent<Record<string, string>>).detail;
-      if (!settings || typeof settings !== "object") {
-        return;
-      }
-      setContentWidth(resolveChatContentWidth(settings));
-    };
-
-    window.addEventListener(USER_SETTINGS_UPDATED_EVENT, handleUserSettingsUpdated);
-    return () => {
-      window.removeEventListener(USER_SETTINGS_UPDATED_EVENT, handleUserSettingsUpdated);
-    };
-  }, []);
+    if (liveUserSettings.loaded) {
+      setContentWidth(resolveChatContentWidth(liveUserSettings.settings));
+    }
+  }, [liveUserSettings.loaded, liveUserSettings.settings]);
 
   React.useEffect(() => {
-    const normalizedConversationID = conversationPublicID?.trim() || null;
+    const normalizedConversationID = conversationPublicID?.trim() || "";
     if (!normalizedConversationID) {
       // 无会话状态也可能来自当前页点击“新对话”，要保留用户刚在选择器里切换的模型。
       activeConversationRef.current = null;
@@ -614,7 +610,7 @@ export function useChatModelOptions({
   }, [conversationModel, conversationPublicID, resetToken]);
 
   React.useEffect(() => {
-    if (availableModels.length === 0) {
+    if (availableModels.length === 0 || newConversationDefaultsPending) {
       return;
     }
     if (conversationPublicID?.trim()) {
@@ -640,6 +636,7 @@ export function useChatModelOptions({
       const currentSelection = selectedPlatformModelName.trim();
       if (
         !userSelectedModelRef.current &&
+        !newConversationDefaultModel?.trim() &&
         currentSelection &&
         availableModels.some((item) => item.platformModelName === currentSelection)
       ) {
@@ -654,6 +651,7 @@ export function useChatModelOptions({
         accessToken: token,
         availableModels: publicModels,
         userDefaultModel,
+        projectDefaultModel: newConversationDefaultModel ?? "",
       });
       if (!cancelled && !userSelectedModelRef.current) {
         setSelectedPlatformModelName(result.platformModelName);
@@ -673,7 +671,7 @@ export function useChatModelOptions({
     return () => {
       cancelled = true;
     };
-  }, [availableModels, conversationPublicID, initialModel, resetToken, selectedPlatformModelName, userDefaultModel]);
+  }, [availableModels, conversationPublicID, initialModel, newConversationDefaultModel, newConversationDefaultsPending, resetToken, selectedPlatformModelName, userDefaultModel]);
 
   const modelOptions = React.useMemo<ChatModelOption[]>(
     () =>

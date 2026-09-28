@@ -59,7 +59,8 @@ import {
   SidebarMenuItem,
   SidebarMenuSub,
   SidebarMenuSubItem,
-  useSidebar,
+  useSidebarActions,
+  useSidebarIsMobile,
 } from "@/components/ui/sidebar";
 import { Spinner } from "@/components/ui/spinner";
 import {
@@ -68,7 +69,7 @@ import {
   ConversationShareDialog,
   sharePatchFromDTO,
   useConversationExport,
-  useSidebarConversations,
+  useSidebarConversationField,
 } from "@/entities/conversation";
 import { useChatSession } from "@/features/chat";
 import { ProjectDialog, type ProjectDraft } from "@/features/layouts/components/navigation/project-dialog";
@@ -383,7 +384,8 @@ export function NavProjects() {
   const t = useTranslations("recent.projects");
   const tRecent = useTranslations("recent");
   const resolveErrorMessage = useLocalizedErrorMessage();
-  const { isMobile, setOpenMobile } = useSidebar();
+  const isMobile = useSidebarIsMobile();
+  const { setOpenMobile } = useSidebarActions();
   const router = useRouter();
   const onNavigate = useSidebarConversationNavigation();
   const pathname = usePathname();
@@ -394,24 +396,22 @@ export function NavProjects() {
   const activeConversationID = useLayoutActiveConversation();
   const { deleteFilesByDefault: deleteConversationFilesByDefault } = useSettingsChatPreferences();
   const { requestNewConversation } = useChatSession();
-  const {
-    items,
-    projects,
-    lastChange,
-    createProject,
-    updateProject,
-    deleteProject,
-    reorderProjects,
-    renameByPublicID,
-    regenerateTitleByPublicID,
-    updateLabelsByPublicID,
-    setStarByPublicID,
-    setProjectByPublicID,
-    archiveByPublicID,
-    deleteByPublicID,
-    touchByPublicID,
-    streamingPublicIDs,
-  } = useSidebarConversations();
+  const items = useSidebarConversationField("items");
+  const projects = useSidebarConversationField("projects");
+  const lastChange = useSidebarConversationField("lastChange");
+  const createProject = useSidebarConversationField("createProject");
+  const updateProject = useSidebarConversationField("updateProject");
+  const deleteProject = useSidebarConversationField("deleteProject");
+  const reorderProjects = useSidebarConversationField("reorderProjects");
+  const renameByPublicID = useSidebarConversationField("renameByPublicID");
+  const regenerateTitleByPublicID = useSidebarConversationField("regenerateTitleByPublicID");
+  const updateLabelsByPublicID = useSidebarConversationField("updateLabelsByPublicID");
+  const setStarByPublicID = useSidebarConversationField("setStarByPublicID");
+  const setProjectByPublicID = useSidebarConversationField("setProjectByPublicID");
+  const archiveByPublicID = useSidebarConversationField("archiveByPublicID");
+  const deleteByPublicID = useSidebarConversationField("deleteByPublicID");
+  const touchByPublicID = useSidebarConversationField("touchByPublicID");
+  const streamingPublicIDs = useSidebarConversationField("streamingPublicIDs");
   const [draft, setDraft] = React.useState<ProjectDraft | null>(null);
   const [deleteTarget, setDeleteTarget] = React.useState<ProjectActionTarget | null>(null);
   const [deleteProjectConversations, setDeleteProjectConversations] = React.useState(false);
@@ -614,6 +614,7 @@ export function NavProjects() {
       await updateProject(draft.publicID, {
         name,
         systemPrompt: draft.systemPrompt.trim(),
+        defaultModel: draft.defaultModel.trim(),
         mcpDefaultMode: draft.mcpDefaultMode,
         defaultMCPToolIDs: draft.mcpDefaultMode === "custom" ? draft.defaultMCPToolIDs : [],
         defaultSkillIDs: draft.defaultSkillIDs,
@@ -623,6 +624,7 @@ export function NavProjects() {
       await createProject({
         name,
         systemPrompt: draft.systemPrompt.trim(),
+        defaultModel: draft.defaultModel.trim(),
         mcpDefaultMode: draft.mcpDefaultMode,
         defaultMCPToolIDs: draft.mcpDefaultMode === "custom" ? draft.defaultMCPToolIDs : [],
         defaultSkillIDs: draft.defaultSkillIDs,
@@ -705,7 +707,7 @@ export function NavProjects() {
                 open={projectsOpen}
                 onCreate={() => setDraft({
                   name: "",
-                  systemPrompt: "",
+                  systemPrompt: "", defaultModel: "",
                   mcpDefaultMode: "inherit",
                   defaultMCPToolIDs: [],
                   defaultSkillIDs: [],
@@ -737,7 +739,7 @@ export function NavProjects() {
               open={projectsOpen}
               onCreate={() => setDraft({
                 name: "",
-                systemPrompt: "",
+                systemPrompt: "", defaultModel: "",
                 mcpDefaultMode: "inherit",
                 defaultMCPToolIDs: [],
                 defaultSkillIDs: [],
@@ -861,6 +863,7 @@ export function NavProjects() {
                                           publicID: project.publicID,
                                           name: project.name,
                                           systemPrompt: project.systemPrompt ?? "",
+                                          defaultModel: project.defaultModel ?? "",
                                           mcpDefaultMode: project.mcpDefaultMode ?? "inherit",
                                           defaultMCPToolIDs: project.defaultMCPToolIDs ?? [],
                                           defaultSkillIDs: project.defaultSkillIDs ?? [],

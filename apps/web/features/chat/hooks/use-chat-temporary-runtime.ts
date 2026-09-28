@@ -23,7 +23,7 @@ import {
   TEMPORARY_CHAT_MAX_IMAGE_ATTACHMENTS,
 } from "@/shared/api/conversation";
 import type { TemporaryChatRequestAttachment } from "@/shared/api/conversation";
-import type { ConversationOptions, TemporaryChatHistoryMessage } from "@/shared/api/conversation.types";
+import type { ConversationOptions, StreamMessageEvent, TemporaryChatHistoryMessage } from "@/shared/api/conversation.types";
 import type { FileContentLoader } from "@/shared/components/file-preview/preview-dialog";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import { createSecureUUID } from "@/shared/lib/secure-id";
@@ -413,7 +413,7 @@ export function useChatTemporaryRuntime({
         },
         {
           signal: controller.signal,
-          onDelta: (delta) => {
+          onDelta: (delta: string) => {
             streamedAssistantText += delta;
             updateMessage(assistantID, (message) => ({
               ...message,
@@ -421,10 +421,10 @@ export function useChatTemporaryRuntime({
               activityLabel: undefined,
             }));
           },
-          onRagSearch: (message) => {
+          onRagSearch: (message: string) => {
             updateMessage(assistantID, (item) => ({ ...item, activityLabel: message }));
           },
-          onProcessUpdate: (event) => {
+          onProcessUpdate: (event: Extract<StreamMessageEvent, { type: "process_update" }>) => {
             updateMessage(assistantID, (message) => ({
               ...message,
               activityLabel: undefined,
@@ -433,18 +433,18 @@ export function useChatTemporaryRuntime({
                 : message.processTrace,
             }));
           },
-          onUpstreamThinkDelta: (event) => {
+          onUpstreamThinkDelta: (event: Extract<StreamMessageEvent, { type: "upstream_think_delta" }>) => {
             liveRunIDsRef.current.add(clientRunID);
             upsertLiveUpstreamThinkTrace(clientRunID, event);
           },
-          onUsage: (event) => {
+          onUsage: (event: Extract<StreamMessageEvent, { type: "usage" }>) => {
             updateMessage(assistantID, (message) => ({
               ...message,
               inputTokens: event.input_tokens > 0 ? event.input_tokens : message.inputTokens,
               outputTokens: event.output_tokens > 0 ? event.output_tokens : message.outputTokens,
             }));
           },
-          onModerationBlocked: (event) => {
+          onModerationBlocked: (event: Extract<StreamMessageEvent, { type: "moderation_blocked" }>) => {
             moderationBlocked = true;
             // 临时对话没有可回看的账单，拦截后仍计费的说明只能随实时事件一并展示。
             updateMessage(assistantID, (message) => ({

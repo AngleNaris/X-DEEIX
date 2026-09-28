@@ -167,6 +167,22 @@ export async function resetAdminLLMUpstreamCircuit(
 // Upstream route bindings
 // ---------------------------------------------------------------------------
 
+export async function syncAdminLLMUpstreamModels(
+  accessToken: string,
+  upstreamID: number,
+  options: { allowEmpty?: boolean; expectedSnapshot?: string; signal?: AbortSignal } = {},
+): Promise<import("./llm.types").SyncAdminLLMUpstreamModelsData> {
+  const params = new URLSearchParams();
+  if (options.allowEmpty) params.set("allow_empty", "true");
+  if (options.expectedSnapshot) params.set("expected_snapshot", options.expectedSnapshot);
+  const query = params.size > 0 ? `?${params.toString()}` : "";
+  return authedRequest<import("./llm.types").SyncAdminLLMUpstreamModelsData>(
+    `/api/v1/admin/llm/upstreams/${upstreamID}/models/sync${query}`,
+    { method: "POST", accessToken, signal: options.signal },
+    true,
+  );
+}
+
 export async function listAdminLLMUpstreamModels(
   accessToken: string,
   upstreamID: number,
@@ -291,10 +307,11 @@ export async function resetAdminLLMUpstreamModelCircuit(
 export async function listAdminLLMRemoteModels(
   accessToken: string,
   upstreamID: number,
+  signal?: AbortSignal,
 ): Promise<ListAdminLLMRemoteModelsData> {
   return authedRequest<ListAdminLLMRemoteModelsData>(
     `/api/v1/admin/llm/upstreams/${upstreamID}/models/remote`,
-    { accessToken },
+    { accessToken, signal },
     true,
   );
 }
@@ -303,10 +320,11 @@ export async function importAdminLLMUpstreamModels(
   accessToken: string,
   upstreamID: number,
   payload: ImportAdminLLMUpstreamModelsRequest,
+  signal?: AbortSignal,
 ): Promise<ImportAdminLLMUpstreamModelsData> {
   return authedRequest<ImportAdminLLMUpstreamModelsData>(
     `/api/v1/admin/llm/upstreams/${upstreamID}/models/import`,
-    { method: "POST", accessToken, body: payload },
+    { method: "POST", accessToken, body: payload, signal },
     true,
   );
 }

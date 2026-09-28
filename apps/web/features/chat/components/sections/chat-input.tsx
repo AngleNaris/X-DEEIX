@@ -135,17 +135,15 @@ const COMPOSER_MENTION_KINDS_WITHOUT_MODEL: readonly ChatMentionMenuKind[] = [
   "tool",
   "skill",
   "prompt",
-  "script",
-  "group",
 ];
 
+// custom 预留：script/group 召唤待在新 hook 上重落（旧实现见 ff04da5a），本轮先收敛到上游 kind。
 const COMPOSER_MENTION_KINDS_WITHOUT_GROUP: readonly ChatMentionMenuKind[] = [
   "model",
   "file",
   "tool",
   "skill",
   "prompt",
-  "script",
 ];
 
 const FilePreviewDialog = dynamic(
@@ -167,7 +165,7 @@ type ChatInputProps = {
   groupRunLocked?: boolean;
   uploading: boolean;
   isConversationMode: boolean;
-  maxFilesPerMessage: number;
+  maxFilesPerMessage?: number;
   fileMode?: "auto" | "full_context" | "rag";
   ragAvailable: boolean | null;
   ragAvailabilityReason: string;
@@ -181,7 +179,7 @@ type ChatInputProps = {
   selectedPlatformModelName: string;
   availableTools: MCPToolDTO[];
   selectedToolIDs: number[];
-  selectedPrompts: PromptPresetDTO[];
+  selectedPrompts?: PromptPresetDTO[];
   selectedSkills: SkillSummaryDTO[];
   selectedKnowledgeBaseIDs: string[];
   defaultToolIDs: number[];
@@ -205,7 +203,7 @@ type ChatInputProps = {
   onModelCatalogRefresh?: () => void | Promise<void>;
   onToolsRetry?: () => void;
   onSelectedToolsChange: (toolIDs: number[]) => void;
-  onSelectedPromptsChange: (prompts: PromptPresetDTO[]) => void;
+  onSelectedPromptsChange?: (prompts: PromptPresetDTO[]) => void;
   onSelectedSkillsChange: (skills: SkillSummaryDTO[]) => void;
   onSelectedKnowledgeBasesChange: (ids: string[]) => void;
   onDefaultToolsChange: (toolIDs: number[]) => void | Promise<void>;
@@ -217,7 +215,7 @@ type ChatInputProps = {
   onUploadFiles: (files: File[]) => void | Promise<void>;
   onCaptureScreenshot: () => void | Promise<void>;
   onRemoveAttachment: (fileID: string) => void;
-  onReorderAttachment: (fromIndex: number, toIndex: number) => void;
+  onReorderAttachment?: (fromIndex: number, toIndex: number) => void;
   /** 连续改图：纯文字提交自动带入「上一张 AI 生成图」后的附件列表（用于模式指示）。 */
   resolvedSubmissionAttachments?: PendingAttachment[];
   /** 连续改图自动带入模式激活（显示可关闭提示条）。 */
@@ -382,7 +380,7 @@ function ChatInputComponent({
   selectedPlatformModelName,
   availableTools,
   selectedToolIDs,
-  selectedPrompts,
+  selectedPrompts = [],
   selectedSkills,
   selectedKnowledgeBaseIDs,
   defaultToolIDs,
@@ -405,7 +403,7 @@ function ChatInputComponent({
   onModelCatalogRefresh,
   onToolsRetry,
   onSelectedToolsChange,
-  onSelectedPromptsChange,
+  onSelectedPromptsChange = () => {},
   onSelectedSkillsChange,
   onSelectedKnowledgeBasesChange,
   onDefaultToolsChange,
@@ -417,7 +415,7 @@ function ChatInputComponent({
   onUploadFiles,
   onCaptureScreenshot,
   onRemoveAttachment,
-  onReorderAttachment,
+  onReorderAttachment = () => {},
   resolvedSubmissionAttachments,
   autoEditActive = false,
   onAutoEditDismiss,
@@ -687,7 +685,12 @@ function ChatInputComponent({
   const showSelectedSkills = selectedSkills.length > 0 && !isMediaMode;
   const showSelectedPrompts = selectedPrompts.length > 0 && !isMediaMode;
   const {
-    activeIndex: mentionActiveIndex,
+    activeRowKey: mentionActiveRowKey,
+    activeTab: mentionActiveTab,
+    handleListScroll: handleMentionListScroll,
+    selectTab: selectMentionTab,
+    showTabBar: showMentionTabBar,
+    tabs: mentionTabs,
     handleBlur: handleMentionBlur,
     handleChange: handleMentionChange,
     handleFocus: handleMentionFocus,
@@ -698,7 +701,7 @@ function ChatInputComponent({
     menuRef: mentionMenuRef,
     menuReady: mentionMenuReady,
     open: showMentionMenu,
-    sections: mentionSections,
+    rows: mentionRows,
     select: selectMentionItem,
   } = useChatMentionMenu({
     attachments,
@@ -706,15 +709,10 @@ function ChatInputComponent({
     defaultFileLabel: tComposer("mention.fileFallback"),
     disabled: loading || uploading || modelLoading || modelDisabled,
     draft,
-    enabledKinds: hideModelPicker
-      ? COMPOSER_MENTION_KINDS_WITHOUT_MODEL
-      : disableGroupSummon
-        ? COMPOSER_MENTION_KINDS_WITHOUT_GROUP
-        : undefined,
+    enabledKinds: hideModelPicker ? COMPOSER_MENTION_KINDS_WITHOUT_MODEL : undefined,
     maxSelectedTools,
     maxSelectedSkills,
     modelOptions,
-    selectedPrompts,
     selectedSkills,
     selectedPlatformModelName,
     selectedToolIDs,
@@ -723,10 +721,8 @@ function ChatInputComponent({
     toolsDisabled: isMediaMode,
     onDraftChange,
     onFileSelect: onAttachExistingFile,
-    onGroupSelect: disableGroupSummon ? undefined : onSelectAgentGroup,
     onModelCatalogRefresh,
     onModelChange,
-    onSelectedPromptsChange,
     onSelectedSkillsChange,
     placementAnchor: "container",
     placementPreference: isConversationMode ? "top" : "bottom",
@@ -742,15 +738,6 @@ function ChatInputComponent({
       });
     },
   });
-  const mentionSectionOffsets = React.useMemo(() => {
-    const offsets = new Map<ChatMentionMenuKind, number>();
-    let offset = 0;
-    for (const section of mentionSections) {
-      offsets.set(section.kind, offset);
-      offset += section.items.length;
-    }
-    return offsets;
-  }, [mentionSections]);
   const onSelectUploadTool = React.useCallback(() => {
     fileInputRef.current?.click();
   }, []);
@@ -1141,14 +1128,18 @@ function ChatInputComponent({
           ) : null}
 
           <ChatMentionMenuPortal
-            activeIndex={mentionActiveIndex}
+            activeRowKey={mentionActiveRowKey}
+            activeTab={mentionActiveTab}
+            tabs={mentionTabs}
+            showTabBar={showMentionTabBar}
+            onSelectTab={selectMentionTab}
+            onListScroll={handleMentionListScroll}
             menuID={mentionMenuID}
             menuLayout={mentionMenuLayout}
             menuRef={mentionMenuRef}
             menuReady={mentionMenuReady}
             open={showMentionMenu}
-            sectionOffsets={mentionSectionOffsets}
-            sections={mentionSections}
+            rows={mentionRows}
             t={tComposer}
             onSelect={selectMentionItem}
           />
@@ -1360,6 +1351,7 @@ function ChatInputComponent({
               {!isMediaMode ? (
                 <ChatKnowledgeBases
                   selectedIDs={selectedKnowledgeBaseIDs}
+                  placementPreference={isConversationMode ? "top" : "bottom"}
                   disabled={loading || uploading}
                   available={ragAvailable}
                   unavailableReason={ragAvailabilityReason}

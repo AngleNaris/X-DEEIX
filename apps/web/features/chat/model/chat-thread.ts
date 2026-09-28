@@ -172,6 +172,7 @@ type MessageLabels = {
   imageRunning?: string;
   moderationBlocked?: string;
   moderationBlockedDescription?: string;
+  moderationBilled?: string;
   moderationEventID?: (eventID: string) => string;
   moderationCategories?: (categories: string[]) => string;
   resolveErrorMessage?: (errorCode: string, fallback: string, details?: UpstreamDebugInfo) => string;
@@ -285,6 +286,17 @@ export function mapServerMessage(
     }
   }
   return msg;
+}
+
+export function chatMessageKey(
+  role: ChatAreaMessage["role"],
+  fallbackKey: string,
+  runID?: string | null,
+) {
+  const normalizedRunID = runID?.trim() || "";
+  return normalizedRunID && role !== "system"
+    ? `${role}-run-${normalizedRunID}`
+    : fallbackKey;
 }
 
 export function toBranchKey(publicID?: string | null): string {

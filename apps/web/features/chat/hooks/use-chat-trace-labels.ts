@@ -60,13 +60,22 @@ export type ProcessTraceLabels = {
       thinking: string;
     };
     detail: {
+      nameLabel: string;
       request: string;
       response: string;
       error: string;
+      argumentsTitle: string;
+      resultTitle: string;
+      copy: string;
+      copied: string;
+      copyFailed: string;
       expand: string;
       collapse: string;
       sourceFallback: (index: number) => string;
       generatedImageAlt: (index: number) => string;
+      sourceCount: (count: number) => string;
+      groundingSupportCount: (count: number) => string;
+      exitCode: (code: number) => string;
       query: string;
       action: string;
       source: string;
@@ -109,6 +118,17 @@ export type ProcessTraceLabels = {
     titleDone: string;
     subtitleActive: string;
     subtitleDone: string;
+    rowActive: string;
+    rowDone: string;
+    duration: (seconds: string) => string;
+  };
+  run: {
+    titleActive: string;
+    titleDone: string;
+    toolCalls: (count: number) => string;
+    thinkRounds: (count: number) => string;
+    duration: (duration: string) => string;
+    labelSeparator: string;
   };
   promptTrace: {
     modes: {
@@ -151,6 +171,8 @@ export type ProcessTraceLabels = {
     detail: string;
     range: (fromTurn: number, toTurn: number) => string;
     tokens: (sourceTokens: number, summaryTokens: number) => string;
+    pending: string;
+    failed: string;
   };
   recalled: {
     title: string;
@@ -170,6 +192,15 @@ export type ProcessTraceLabels = {
     sessionExpired: string;
   };
 };
+
+export function useChatTraceLabels(): ProcessTraceLabels {
+  return useProcessTraceLabels();
+}
+
+// 兼容别名：旧 custom 导入路径（message-process-trace-shared / message-tool-trace / message-process-trace）。
+export { useProcessTraceLabels as useTraceLabels };
+export type { ProcessTraceLabels as TraceLabels };
+export type { ProcessTraceLabels as ToolTraceLabels };
 
 export function useProcessTraceLabels(): ProcessTraceLabels {
   const t = useTranslations("chat.processTrace");
@@ -233,13 +264,22 @@ export function useProcessTraceLabels(): ProcessTraceLabels {
           thinking: t("tool.names.thinking"),
         },
         detail: {
+          nameLabel: t("tool.detail.nameLabel"),
           request: t("tool.detail.request"),
           response: t("tool.detail.response"),
           error: t("tool.detail.error"),
+          argumentsTitle: t("tool.detail.argumentsTitle"),
+          resultTitle: t("tool.detail.resultTitle"),
+          copy: t("tool.detail.copy"),
+          copied: t("tool.detail.copied"),
+          copyFailed: t("tool.detail.copyFailed"),
           expand: t("tool.detail.expand"),
           collapse: t("tool.detail.collapse"),
           sourceFallback: (index: number) => t("tool.detail.sourceFallback", { index }),
           generatedImageAlt: (index: number) => t("tool.detail.generatedImageAlt", { index }),
+          sourceCount: (count: number) => t("tool.detail.sourceCount", { count }),
+          groundingSupportCount: (count: number) => t("tool.detail.groundingSupportCount", { count }),
+          exitCode: (code: number) => t("tool.detail.exitCode", { code }),
           query: t("tool.detail.query"),
           action: t("tool.detail.action"),
           source: t("tool.detail.source"),
@@ -282,6 +322,17 @@ export function useProcessTraceLabels(): ProcessTraceLabels {
         titleDone: t("think.titleDone"),
         subtitleActive: t("think.subtitleActive"),
         subtitleDone: t("think.subtitleDone"),
+        rowActive: t("think.rowActive"),
+        rowDone: t("think.rowDone"),
+        duration: (seconds: string) => t("think.duration", { seconds }),
+      },
+      run: {
+        titleActive: t("run.titleActive"),
+        titleDone: t("run.titleDone"),
+        toolCalls: (count: number) => t("run.toolCalls", { count }),
+        thinkRounds: (count: number) => t("run.thinkRounds", { count }),
+        duration: (duration: string) => t("run.duration", { duration }),
+        labelSeparator: t("run.labelSeparator"),
       },
       promptTrace: {
         modes: {
@@ -325,6 +376,8 @@ export function useProcessTraceLabels(): ProcessTraceLabels {
         detail: t("compaction.detail"),
         range: (fromTurn: number, toTurn: number) => t("compaction.range", { fromTurn, toTurn }),
         tokens: (sourceTokens: number, summaryTokens: number) => t("compaction.tokens", { sourceTokens, summaryTokens }),
+        pending: t("compaction.pending"),
+        failed: t("compaction.failed"),
       },
       recalled: {
         title: t("recalled.title"),

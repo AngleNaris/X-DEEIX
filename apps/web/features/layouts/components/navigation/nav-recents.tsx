@@ -29,7 +29,7 @@ import {
   sharePatchFromDTO,
   type ConversationLabelsTarget,
   useConversationExport,
-  useSidebarConversations,
+  useSidebarConversationField,
 } from "@/entities/conversation";
 import { LoadingReveal } from "@/shared/components/loading-reveal";
 import { SidebarConversationItem } from "@/features/layouts/components/navigation/sidebar-conversation-item";
@@ -60,26 +60,24 @@ export function NavRecents() {
   const activeConversationID = useLayoutActiveConversation();
   const { deleteFilesByDefault } = useSettingsChatPreferences();
 
-  const {
-    recentItems,
-    hasMore,
-    loadingInitial,
-    loadingMore,
-    loadMoreFailed,
-    loadMore,
-    retryLoadMore,
-    projects,
-    transferringStarPublicID,
-    renameByPublicID,
-    regenerateTitleByPublicID,
-    updateLabelsByPublicID,
-    setStarByPublicID,
-    archiveByPublicID,
-    deleteByPublicID,
-    touchByPublicID,
-    setProjectByPublicID,
-    streamingPublicIDs,
-  } = useSidebarConversations();
+  const recentItems = useSidebarConversationField("recentItems");
+  const hasMore = useSidebarConversationField("hasMore");
+  const loadingInitial = useSidebarConversationField("loadingInitial");
+  const loadingMore = useSidebarConversationField("loadingMore");
+  const loadMoreFailed = useSidebarConversationField("loadMoreFailed");
+  const loadMore = useSidebarConversationField("loadMore");
+  const retryLoadMore = useSidebarConversationField("retryLoadMore");
+  const projects = useSidebarConversationField("projects");
+  const transferringStarPublicID = useSidebarConversationField("transferringStarPublicID");
+  const renameByPublicID = useSidebarConversationField("renameByPublicID");
+  const regenerateTitleByPublicID = useSidebarConversationField("regenerateTitleByPublicID");
+  const updateLabelsByPublicID = useSidebarConversationField("updateLabelsByPublicID");
+  const setStarByPublicID = useSidebarConversationField("setStarByPublicID");
+  const archiveByPublicID = useSidebarConversationField("archiveByPublicID");
+  const deleteByPublicID = useSidebarConversationField("deleteByPublicID");
+  const touchByPublicID = useSidebarConversationField("touchByPublicID");
+  const setProjectByPublicID = useSidebarConversationField("setProjectByPublicID");
+  const streamingPublicIDs = useSidebarConversationField("streamingPublicIDs");
 
   const [deleteTarget, setDeleteTarget] = React.useState<SidebarConversationDeleteTarget>(null);
   const [deleteFiles, setDeleteFiles] = React.useState(false);
