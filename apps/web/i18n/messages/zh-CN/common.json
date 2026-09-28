@@ -153,5 +153,12 @@
     "description": "刷新网页后即可使用最新版本。",
     "prerelease": "预览版",
     "stable": "正式版"
+  },
+  "errorPage": {
+    "title": "页面出错了",
+    "prefix": "页面渲染出错，您可以",
+    "retry": "重试",
+    "or": "或",
+    "backToChat": "回到会话"
   }
 }
