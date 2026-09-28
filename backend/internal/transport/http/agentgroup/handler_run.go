@@ -7,6 +7,7 @@ import (
 
 	appconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/conversation"
 	domainagentgroup "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/agentgroup"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
 	"github.com/gin-gonic/gin"
@@ -28,7 +29,7 @@ func (h *Handler) GetAgentGroupRunDetail(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	runPublicID, err := stringParam(c, "run_id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid run id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid run id"))
 		return
 	}
 	detail, err := h.service.GetAgentGroupRunDetail(c.Request.Context(), userID, runPublicID)
@@ -58,16 +59,16 @@ func (h *Handler) LookupAgentGroupRunDetailByClientRunID(c *gin.Context) {
 	conversationPublicID := strings.TrimSpace(c.Query("conversationID"))
 	clientRunID := strings.TrimSpace(c.Query("clientRunID"))
 	if conversationPublicID == "" || clientRunID == "" {
-		response.Error(c, http.StatusBadRequest, "conversationID and clientRunID are required")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestRequired, "conversationID and clientRunID are required"))
 		return
 	}
 	conversation, err := h.runControl.GetConversationByPublicID(c.Request.Context(), userID, conversationPublicID)
 	if err != nil {
 		if errors.Is(err, appconversation.ErrConversationNotFound) {
-			response.Error(c, http.StatusNotFound, "conversation not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationNotFound)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "lookup agent group run detail failed")
+		response.InternalError(c)
 		return
 	}
 	detail, err := h.service.GetAgentGroupRunDetailByClientRunID(c.Request.Context(), userID, conversation.ID, clientRunID)
@@ -91,7 +92,7 @@ func (h *Handler) LookupAgentGroupRunDetailByClientRunID(c *gin.Context) {
 func (h *Handler) GetAgentGroupFeature(c *gin.Context) {
 	enabled, err := h.service.IsEnabled(c.Request.Context())
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "query agent group feature failed")
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, AgentGroupFeatureResponse{Enabled: enabled})

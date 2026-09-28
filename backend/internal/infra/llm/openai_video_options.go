@@ -3,42 +3,15 @@ package llm
 import (
 	"regexp"
 	"strings"
+
+	portllm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
 // SanitizeOpenAIVideoOptions 将 Sora 兼容视频协议参数收敛为实际上送的规范值。
 // 支持 duration/seconds 与 resolution/size 别名归一；Application 层复用该函数，
 // 保证有效参数、计费和 adapter 请求一致。
 func SanitizeOpenAIVideoOptions(options map[string]any) {
-	if len(options) == 0 {
-		return
-	}
-	duration, durationOK := openAIVideoDurationOption(options)
-	if durationOK {
-		options["duration"] = duration
-	} else {
-		delete(options, "duration")
-	}
-	delete(options, "seconds")
-	resolution := openAIVideoResolutionOption(options)
-	if resolution != "" {
-		options["resolution"] = resolution
-	} else {
-		delete(options, "resolution")
-	}
-	delete(options, "size")
-	aspectRatio := strings.ToLower(stringOption(options, "aspect_ratio"))
-	if isOpenAIVideoAspectRatio(aspectRatio) {
-		options["aspect_ratio"] = aspectRatio
-	} else {
-		delete(options, "aspect_ratio")
-	}
-	for key := range options {
-		switch key {
-		case "duration", "resolution", "aspect_ratio":
-		default:
-			delete(options, key)
-		}
-	}
+	portllm.SanitizeOpenAIVideoOptions(options)
 }
 
 // openAIVideoDurationOption 读取 duration 或其字符串别名 seconds，范围 1-15 秒。

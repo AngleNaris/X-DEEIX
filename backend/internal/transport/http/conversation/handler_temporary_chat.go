@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	appconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/background"
@@ -20,6 +21,16 @@ import (
 )
 
 const temporaryChatMaxRequestBytes = 8 << 20
+const asyncAuditTimeout = 5 * time.Second
+
+func (h *Handler) beginUsageSession(c *gin.Context, input appconversation.SendMessageBillingInput) (*appconversation.UsageSession, bool) {
+	session, err := h.service.BeginUsageSession(c.Request.Context(), input)
+	if err != nil {
+		handleUsageAuthorizationError(c, err)
+		return nil, false
+	}
+	return session, true
+}
 
 // StreamTemporaryChatMessage godoc
 // @Summary 流式发送临时对话消息
@@ -122,7 +133,7 @@ func (h *Handler) StreamTemporaryChatMessage(c *gin.Context) {
 	}
 	if result != nil && result.IsModerationBlocked() {
 		if !result.ModerationTerminalEmitted() && clientConnected() {
-			_ = writeEvent(moderationBlockedStreamPayload(result, session.Authorization()))
+			_ = writeEvent(moderationBlockedStreamPayload(result))
 		}
 		h.recordTemporaryChatAuditAsync(c, req, len(input.Attachments), "blocked")
 		return

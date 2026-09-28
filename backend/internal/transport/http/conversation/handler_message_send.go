@@ -14,6 +14,7 @@ import (
 	appconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/conversation"
 	domainbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/billing"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
 	"github.com/gin-gonic/gin"
@@ -66,7 +67,7 @@ func (h *Handler) parseSendMessageInput(c *gin.Context) (appconversation.SendMes
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation id"))
 		return appconversation.SendMessageInput{}, nil, nil, err
 	}
 
@@ -86,16 +87,16 @@ func (h *Handler) parseSendMessageInput(c *gin.Context) (appconversation.SendMes
 	conversation, err := h.service.GetConversationByPublicID(c.Request.Context(), userID, publicID)
 	if err != nil {
 		if errors.Is(err, appconversation.ErrConversationNotFound) {
-			response.Error(c, http.StatusNotFound, "conversation not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationNotFound)
 			return appconversation.SendMessageInput{}, nil, nil, err
 		}
-		response.Error(c, http.StatusInternalServerError, "load conversation failed")
+		response.InternalError(c)
 		return appconversation.SendMessageInput{}, nil, nil, err
 	}
 
 	// 群组会话的模型由群组成员覆盖与角色默认值决定，禁止请求级模型覆盖。
 	if err = validateAgentGroupMessageModel(conversation, req.Model); err != nil {
-		response.ErrorWithCode(c, http.StatusBadRequest, "agent_group.model_override_not_allowed", "model override not allowed in agent group conversation")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New("agent_group.model_override_not_allowed", "model override not allowed in agent group conversation"))
 		return appconversation.SendMessageInput{}, nil, nil, err
 	}
 
@@ -115,6 +116,7 @@ func (h *Handler) parseSendMessageInput(c *gin.Context) (appconversation.SendMes
 		SkillIDs:                req.SkillIDs,
 		KnowledgeBaseIDs:        req.KnowledgeBaseIDs,
 		HTMLVisualPromptEnabled: req.HTMLVisualPromptEnabled,
+		UIComponentIDs:          req.UIComponentIDs,
 		ParentMessagePublicID:   req.ParentMessagePublicID,
 		SourceMessagePublicID:   req.SourceMessagePublicID,
 		BranchReason:            req.BranchReason,
@@ -296,42 +298,42 @@ func (h *Handler) recordSendMessageAuditCtx(
 
 func handleSendMessageBillingError(c *gin.Context, err error) {
 	if errors.Is(err, billing.ErrUsageConcurrencyLimitExceeded) {
-		response.Error(c, http.StatusTooManyRequests, "usage concurrency limit exceeded")
+		response.ErrorFrom(c, http.StatusTooManyRequests, billing.ErrUsageConcurrencyLimitExceeded)
 		return
 	}
 	if errors.Is(err, billing.ErrUsageReservationConflict) {
-		response.Error(c, http.StatusConflict, "usage reservation already exists")
+		response.ErrorFrom(c, http.StatusConflict, billing.ErrUsageReservationConflict)
 		return
 	}
 	if errors.Is(err, billing.ErrUsageBalanceInsufficient) {
-		response.Error(c, http.StatusPaymentRequired, "usage balance is insufficient")
+		response.ErrorFrom(c, http.StatusPaymentRequired, billing.ErrUsageBalanceInsufficient)
 		return
 	}
 	if errors.Is(err, billing.ErrModelPricingRequired) {
-		response.Error(c, http.StatusPaymentRequired, "model pricing is required")
+		response.ErrorFrom(c, http.StatusPaymentRequired, billing.ErrModelPricingRequired)
 		return
 	}
-	response.Error(c, http.StatusInternalServerError, "record billing failed")
+	response.InternalError(c)
 }
 
 func handleUsageAuthorizationError(c *gin.Context, err error) {
 	if errors.Is(err, billing.ErrUsageConcurrencyLimitExceeded) {
-		response.Error(c, http.StatusTooManyRequests, "usage concurrency limit exceeded")
+		response.ErrorFrom(c, http.StatusTooManyRequests, billing.ErrUsageConcurrencyLimitExceeded)
 		return
 	}
 	if errors.Is(err, billing.ErrUsageReservationConflict) {
-		response.Error(c, http.StatusConflict, "usage reservation already exists")
+		response.ErrorFrom(c, http.StatusConflict, billing.ErrUsageReservationConflict)
 		return
 	}
 	if errors.Is(err, billing.ErrUsageBalanceInsufficient) {
-		response.Error(c, http.StatusPaymentRequired, "usage balance is insufficient")
+		response.ErrorFrom(c, http.StatusPaymentRequired, billing.ErrUsageBalanceInsufficient)
 		return
 	}
 	if errors.Is(err, billing.ErrModelPricingRequired) {
-		response.Error(c, http.StatusPaymentRequired, "model pricing is required")
+		response.ErrorFrom(c, http.StatusPaymentRequired, billing.ErrModelPricingRequired)
 		return
 	}
-	response.Error(c, http.StatusInternalServerError, "usage balance reservation failed")
+	response.InternalError(c)
 }
 
 func mapBillingStreamError(err error) streamError {
@@ -374,65 +376,65 @@ func billingStreamErrorPayload(err error) map[string]interface{} {
 func handleSendMessageError(c *gin.Context, err error) {
 	switch {
 	case errors.Is(err, appconversation.ErrConversationNotFound):
-		response.Error(c, http.StatusNotFound, "conversation not found")
+		response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationNotFound)
 	case errors.Is(err, appconversation.ErrInvalidFileReference):
-		response.Error(c, http.StatusBadRequest, "invalid file reference")
+		response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrInvalidFileReference)
 	case errors.Is(err, appconversation.ErrFileNotFound):
-		response.Error(c, http.StatusNotFound, "file not found")
+		response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrFileNotFound)
 	case errors.Is(err, appconversation.ErrFileTooLarge):
-		response.Error(c, http.StatusRequestEntityTooLarge, "file too large")
+		response.ErrorFrom(c, http.StatusRequestEntityTooLarge, appconversation.ErrFileTooLarge)
 	case errors.Is(err, appconversation.ErrTooManyMessageFiles):
-		response.Error(c, http.StatusBadRequest, "too many files in one message")
+		response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrTooManyMessageFiles)
 	case errors.Is(err, appconversation.ErrTooManySelectedTools):
-		response.Error(c, http.StatusBadRequest, "too many selected tools")
+		response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrTooManySelectedTools)
 	case errors.Is(err, appconversation.ErrMultipleImageAttachmentProcessors):
-		response.Error(c, http.StatusBadRequest, "multiple image attachment processors selected")
+		response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrMultipleImageAttachmentProcessors)
 	case errors.Is(err, appconversation.ErrImageAttachmentProcessingFailed):
-		response.Error(c, http.StatusBadGateway, "image attachment processing failed")
+		response.ErrorFrom(c, http.StatusBadGateway, appconversation.ErrImageAttachmentProcessingFailed)
 	case errors.Is(err, appconversation.ErrTooManySelectedSkills):
-		response.Error(c, http.StatusBadRequest, "too many selected skills")
+		response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrTooManySelectedSkills)
 	case errors.Is(err, appconversation.ErrSkillNotFound):
-		response.Error(c, http.StatusNotFound, "skill not found")
+		response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrSkillNotFound)
 	case errors.Is(err, appconversation.ErrInvalidSkillUse):
-		response.Error(c, http.StatusBadRequest, "invalid skill use")
+		response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrInvalidSkillUse)
 	case errors.Is(err, appconversation.ErrInvalidMessageBranch):
-		response.Error(c, http.StatusBadRequest, "invalid message branch")
+		response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrInvalidMessageBranch)
 	case errors.Is(err, appconversation.ErrFileProcessingNotReady):
-		response.Error(c, http.StatusBadRequest, "file processing not ready")
+		response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrFileProcessingNotReady)
 	case errors.Is(err, appconversation.ErrFileTooLargeForFullContext):
-		response.Error(c, http.StatusBadRequest, "file too large for full context")
+		response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrFileTooLargeForFullContext)
 	case errors.Is(err, appconversation.ErrEmbeddingUnavailable):
-		response.Error(c, http.StatusBadRequest, "embedding unavailable for current file capability")
+		response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrEmbeddingUnavailable)
 	case errors.Is(err, appconversation.ErrInvalidKnowledgeBaseReference):
-		response.ErrorWithCode(c, http.StatusBadRequest, appconversation.MessageErrorCodeKnowledgeBaseInvalidReference, "invalid knowledge base reference")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(appconversation.MessageErrorCodeKnowledgeBaseInvalidReference, "invalid knowledge base reference"))
 	case errors.Is(err, appconversation.ErrKnowledgeBaseUnavailable):
-		response.ErrorWithCode(c, http.StatusServiceUnavailable, appconversation.MessageErrorCodeKnowledgeBaseUnavailable, "knowledge base retrieval is unavailable")
+		response.ErrorFrom(c, http.StatusServiceUnavailable, apperr.New(appconversation.MessageErrorCodeKnowledgeBaseUnavailable, "knowledge base retrieval is unavailable"))
 	case errors.Is(err, appconversation.ErrKnowledgeBaseNotReady):
-		response.ErrorWithCode(c, http.StatusConflict, appconversation.MessageErrorCodeKnowledgeBaseNotReady, "selected knowledge base has no ready files")
+		response.ErrorFrom(c, http.StatusConflict, apperr.New(appconversation.MessageErrorCodeKnowledgeBaseNotReady, "selected knowledge base has no ready files"))
 	case errors.Is(err, appconversation.ErrModelRouteNotConfigured):
-		response.Error(c, http.StatusServiceUnavailable, "model route not configured")
+		response.ErrorFrom(c, http.StatusServiceUnavailable, appconversation.ErrModelRouteNotConfigured)
 	case errors.Is(err, appconversation.ErrGeneratedMediaArtifactUnavailable):
-		response.ErrorWithCode(c, http.StatusBadGateway, appconversation.MessageErrorCode(err), "generated media artifact is temporarily unavailable")
+		response.ErrorFrom(c, http.StatusBadGateway, apperr.New(appconversation.MessageErrorCode(err), "generated media artifact is temporarily unavailable"))
 	case errors.Is(err, appconversation.ErrUpstreamEmptyResponse):
-		response.Error(c, http.StatusBadGateway, "model returned empty response")
+		response.ErrorFrom(c, http.StatusBadGateway, appconversation.ErrUpstreamEmptyResponse)
 	case errors.Is(err, appconversation.ErrUpstreamRequestFailed):
 		if code := appconversation.MessageErrorCode(err); code != "" {
-			response.ErrorWithCode(c, http.StatusBadGateway, code, mapClientErrorMessage(err))
+			response.ErrorFrom(c, http.StatusBadGateway, apperr.New(code, mapClientErrorMessage(err)))
 			return
 		}
-		response.Error(c, http.StatusBadGateway, mapClientErrorMessage(err))
+		response.ErrorFrom(c, http.StatusBadGateway, appconversation.ErrUpstreamRequestFailed)
 	case errors.Is(err, appconversation.ErrAgentGroupFeatureDisabled):
-		response.ErrorWithCode(c, http.StatusForbidden, "agent_group.feature_disabled", "agent group feature disabled")
+		response.ErrorFrom(c, http.StatusForbidden, apperr.New("agent_group.feature_disabled", "agent group feature disabled"))
 	case errors.Is(err, appconversation.ErrAgentGroupRunInProgress):
-		response.ErrorWithCode(c, http.StatusConflict, "agent_group.run_in_progress", "agent group run already in progress")
+		response.ErrorFrom(c, http.StatusConflict, apperr.New("agent_group.run_in_progress", "agent group run already in progress"))
 	case errors.Is(err, appconversation.ErrAgentGroupRunPaused):
-		response.ErrorWithCode(c, http.StatusConflict, "agent_group.run_paused", "agent group run paused")
+		response.ErrorFrom(c, http.StatusConflict, apperr.New("agent_group.run_paused", "agent group run paused"))
 	case errors.Is(err, appconversation.ErrAgentGroupRunBlocked):
-		response.ErrorWithCode(c, http.StatusConflict, "agent_group.run_blocked", "agent group run blocked")
+		response.ErrorFrom(c, http.StatusConflict, apperr.New("agent_group.run_blocked", "agent group run blocked"))
 	case errors.Is(err, appconversation.ErrAgentGroupCASConflict):
-		response.ErrorWithCode(c, http.StatusConflict, "agent_group.run_state_conflict", "agent group run state conflict")
+		response.ErrorFrom(c, http.StatusConflict, apperr.New("agent_group.run_state_conflict", "agent group run state conflict"))
 	default:
-		response.Error(c, http.StatusInternalServerError, "send message failed")
+		response.InternalError(c)
 	}
 }
 
@@ -523,6 +525,12 @@ func (h *Handler) SendMessage(c *gin.Context) {
 // @Failure 500 {object} ErrorDoc
 // @Router /conversations/{id}/messages/stream [post]
 func (h *Handler) StreamMessage(c *gin.Context) {
+	generationCtx, releaseLifecycle, ok := h.service.AcquireMessageGenerationLifecycle(context.WithoutCancel(c.Request.Context()))
+	if !ok {
+		response.ErrorWithCode(c, http.StatusServiceUnavailable, response.CodeServiceUnavailable)
+		return
+	}
+	defer releaseLifecycle()
 	input, conversation, req, err := h.parseSendMessageInput(c)
 	if err != nil {
 		return
@@ -542,7 +550,11 @@ func (h *Handler) StreamMessage(c *gin.Context) {
 
 	var clientDisconnected atomic.Bool
 	flushStreamEvent := func(payload map[string]interface{}) error {
-		payload = h.service.PublishMessageGenerationEvent(input.ClientRunID, payload)
+		var owned bool
+		payload, owned = h.service.PublishMessageGenerationEvent(generationCtx, input.ClientRunID, payload)
+		if !owned {
+			return nil
+		}
 		if clientDisconnected.Load() {
 			return nil
 		}
@@ -572,7 +584,8 @@ func (h *Handler) StreamMessage(c *gin.Context) {
 		return nil
 	}
 
-	result, err := h.service.StreamMessage(c.Request.Context(), input, func(delta string) error {
+	defer h.service.FinishMessageGeneration(generationCtx, input.ClientRunID)
+	result, err := h.service.StreamMessage(generationCtx, input, func(delta string) error {
 		_ = flushStreamEvent(map[string]interface{}{
 			"type":  "delta",
 			"delta": delta,
@@ -591,7 +604,7 @@ func (h *Handler) StreamMessage(c *gin.Context) {
 		} else {
 			_ = h.releaseSendMessageUsageAuthorization(authorization)
 		}
-		h.service.FinishMessageGeneration(input.ClientRunID)
+		h.service.FinishMessageGeneration(generationCtx, input.ClientRunID)
 		h.recordStreamSendMessageAuditAsync(c, conversation, req, result, "stream_message")
 		return
 	}
@@ -600,7 +613,7 @@ func (h *Handler) StreamMessage(c *gin.Context) {
 			if !result.Billable {
 				if releaseErr := h.releaseSendMessageUsageAuthorization(authorization); releaseErr != nil {
 					_ = flushStreamEvent(billingStreamErrorPayload(releaseErr))
-					h.service.FinishMessageGeneration(input.ClientRunID)
+					h.service.FinishMessageGeneration(generationCtx, input.ClientRunID)
 					return
 				}
 				payload := streamErrorPayload(err)
@@ -609,7 +622,7 @@ func (h *Handler) StreamMessage(c *gin.Context) {
 					payload["debug"] = debug
 				}
 				_ = flushStreamEvent(payload)
-				h.service.FinishMessageGeneration(input.ClientRunID)
+				h.service.FinishMessageGeneration(generationCtx, input.ClientRunID)
 				h.recordStreamSendMessageAuditAsync(c, conversation, req, result, "stream_message")
 				return
 			}
@@ -620,7 +633,7 @@ func (h *Handler) StreamMessage(c *gin.Context) {
 				payload := billingStreamErrorPayload(billingErr)
 				payload["data"] = toSendMessageResponse(result)
 				_ = flushStreamEvent(payload)
-				h.service.FinishMessageGeneration(input.ClientRunID)
+				h.service.FinishMessageGeneration(generationCtx, input.ClientRunID)
 				return
 			}
 			payload := streamErrorPayload(err)
@@ -629,13 +642,13 @@ func (h *Handler) StreamMessage(c *gin.Context) {
 				payload["debug"] = debug
 			}
 			_ = flushStreamEvent(payload)
-			h.service.FinishMessageGeneration(input.ClientRunID)
+			h.service.FinishMessageGeneration(generationCtx, input.ClientRunID)
 			h.recordStreamSendMessageAuditAsync(c, conversation, req, result, "stream_message")
 			return
 		}
 		if releaseErr := h.releaseSendMessageUsageAuthorization(authorization); releaseErr != nil {
 			_ = flushStreamEvent(billingStreamErrorPayload(releaseErr))
-			h.service.FinishMessageGeneration(input.ClientRunID)
+			h.service.FinishMessageGeneration(generationCtx, input.ClientRunID)
 			return
 		}
 		payload := streamErrorPayload(err)
@@ -643,7 +656,7 @@ func (h *Handler) StreamMessage(c *gin.Context) {
 			payload["debug"] = debug
 		}
 		_ = flushStreamEvent(payload)
-		h.service.FinishMessageGeneration(input.ClientRunID)
+		h.service.FinishMessageGeneration(generationCtx, input.ClientRunID)
 		return
 	}
 
@@ -651,14 +664,14 @@ func (h *Handler) StreamMessage(c *gin.Context) {
 	if !result.Billable {
 		if releaseErr := h.releaseSendMessageUsageAuthorization(authorization); releaseErr != nil {
 			_ = flushStreamEvent(billingStreamErrorPayload(releaseErr))
-			h.service.FinishMessageGeneration(input.ClientRunID)
+			h.service.FinishMessageGeneration(generationCtx, input.ClientRunID)
 			return
 		}
 		_ = flushStreamEvent(map[string]interface{}{
 			"type": "completed",
 			"data": toSendMessageResponse(result),
 		})
-		h.service.FinishMessageGeneration(input.ClientRunID)
+		h.service.FinishMessageGeneration(generationCtx, input.ClientRunID)
 		h.recordStreamSendMessageAuditAsync(c, conversation, req, result, "stream_message")
 		return
 	}
@@ -668,7 +681,7 @@ func (h *Handler) StreamMessage(c *gin.Context) {
 	billingCancel()
 	if billingErr != nil {
 		_ = flushStreamEvent(billingStreamErrorPayload(billingErr))
-		h.service.FinishMessageGeneration(input.ClientRunID)
+		h.service.FinishMessageGeneration(generationCtx, input.ClientRunID)
 		return
 	}
 
@@ -676,7 +689,7 @@ func (h *Handler) StreamMessage(c *gin.Context) {
 		"type": "completed",
 		"data": toSendMessageResponse(result),
 	})
-	h.service.FinishMessageGeneration(input.ClientRunID)
+	h.service.FinishMessageGeneration(generationCtx, input.ClientRunID)
 	h.recordStreamSendMessageAuditAsync(c, conversation, req, result, "stream_message")
 }
 
@@ -693,7 +706,7 @@ func (h *Handler) StreamMessage(c *gin.Context) {
 func (h *Handler) CancelMessageGeneration(c *gin.Context) {
 	runID, err := stringParam(c, "run_id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid run id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid run id"))
 		return
 	}
 	canceled := h.service.CancelMessageGeneration(c.Request.Context(), middleware.MustUserID(c), runID)
@@ -806,7 +819,7 @@ func (h *Handler) RetryMediaImageArtifact(c *gin.Context) {
 func (h *Handler) ResumeMessageGenerationStream(c *gin.Context) {
 	runID, err := stringParam(c, "run_id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid run id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid run id"))
 		return
 	}
 	afterSeq, _ := strconv.ParseInt(strings.TrimSpace(c.Query("after")), 10, 64)
@@ -824,7 +837,7 @@ func (h *Handler) ResumeMessageGenerationStream(c *gin.Context) {
 	)
 	if !ok {
 		h.service.MarkMessageGenerationInterrupted(c.Request.Context(), userID, runID)
-		response.Error(c, http.StatusNotFound, "generation stream not found")
+		response.ErrorFrom(c, http.StatusNotFound, apperr.New(response.CodeResourceNotFound, "generation stream not found"))
 		return
 	}
 	defer unsubscribe()

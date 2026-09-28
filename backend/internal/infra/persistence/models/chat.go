@@ -26,7 +26,7 @@ type Conversation struct {
 	LastPromptFingerprint  string     `gorm:"size:64;not null;default:'';index:idx_chat_conversations_last_prompt_fingerprint;comment:最新上游状态指纹"`
 	LastAssistantMessageID *uint      `gorm:"index:idx_chat_conversations_last_assistant_message_id;comment:最新成功助手消息ID"`
 	LastReadMessageID      *uint      `gorm:"index:idx_chat_conversations_last_read_message_id;comment:用户已读助手消息ID"`
-	SystemPrompt          string     `gorm:"type:text;not null;default:'';comment:会话级系统提示词"`
+	SystemPrompt           string     `gorm:"type:text;not null;default:'';comment:会话级系统提示词"`
 }
 
 // TableName 指定表名。
@@ -42,6 +42,7 @@ type ConversationProject struct {
 	Name           string `gorm:"size:80;not null;default:'';comment:项目名称"`
 	Description    string `gorm:"size:255;not null;default:'';comment:项目描述"`
 	SystemPrompt   string `gorm:"type:text;not null;default:'';comment:项目级系统提示词"`
+	DefaultModel   string `gorm:"size:128;not null;default:'';comment:项目新会话默认平台模型；空值表示继承全局默认"`
 	MCPDefaultMode string `gorm:"size:16;not null;default:'inherit';comment:MCP默认模式(inherit/custom)"`
 	Color          string `gorm:"size:32;not null;default:'';comment:项目颜色"`
 	Icon           string `gorm:"size:32;not null;default:'';comment:项目图标"`
@@ -230,6 +231,7 @@ type FileObject struct {
 	ExtractorVersion       string     `gorm:"size:32;not null;default:'';comment:提取器版本"`
 	ExtractedAt            *time.Time `gorm:"comment:文本提取完成时间"`
 	ProcessingPayloadJSON  string     `gorm:"type:text;not null;default:'';comment:文件处理扩展负载JSON"`
+	ProcessingAttemptID    string     `gorm:"size:64;not null;default:'';comment:当前文件处理执行令牌"`
 	ProcessingStartedAt    *time.Time `gorm:"comment:处理开始时间"`
 	ProcessingCompletedAt  *time.Time `gorm:"comment:处理完成时间"`
 	RagOptOut              bool       `gorm:"not null;default:false;comment:用户是否关闭此文件的RAG检索"`
@@ -361,6 +363,14 @@ type ChatRunEvent struct {
 	ToolCallID       string     `gorm:"size:255;not null;default:'';index:idx_chat_run_events_tool_call_id;comment:工具调用ID"`
 	ToolName         string     `gorm:"size:128;not null;default:'';index:idx_chat_run_events_tool_name;comment:工具名称"`
 	LatencyMS        int64      `gorm:"not null;default:0;comment:调用时长毫秒"`
+	MCPServerID      uint       `gorm:"not null;default:0;comment:MCP服务器ID快照(非MCP调用为0)"`
+	MCPServerName    string     `gorm:"size:128;not null;default:'';comment:MCP服务器名称快照"`
+	InputSizeBytes   int64      `gorm:"->;-:migration;column:input_size_bytes"`
+	InputOmitted     bool       `gorm:"->;-:migration;column:input_omitted"`
+	OutputSizeBytes  int64      `gorm:"->;-:migration;column:output_size_bytes"`
+	OutputOmitted    bool       `gorm:"->;-:migration;column:output_omitted"`
+	ErrorSizeBytes   int64      `gorm:"->;-:migration;column:error_size_bytes"`
+	ErrorOmitted     bool       `gorm:"->;-:migration;column:error_omitted"`
 	InputJSON        string     `gorm:"type:text;not null;default:'';comment:输入JSON"`
 	OutputJSON       string     `gorm:"type:text;not null;default:'';comment:输出JSON"`
 	ErrorJSON        string     `gorm:"type:text;not null;default:'';comment:错误JSON"`

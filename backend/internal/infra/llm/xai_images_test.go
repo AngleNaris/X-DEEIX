@@ -7,17 +7,15 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-
-	portllm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
 func TestBuildXAIImageRequestBody(t *testing.T) {
-	payload, err := buildXAIImageRequestBody("grok-imagine-image-quality", portllm.GenerateInput{
-		Messages: []portllm.Message{
+	payload, err := buildXAIImageRequestBody("grok-imagine-image-quality", GenerateInput{
+		Messages: []Message{
 			{Role: "system", Content: "ignore"},
 			{Role: "user", Content: "A clean product render"},
 		},
-		Options: map[string]any{
+		Options: map[string]interface{}{
 			"aspect_ratio":    "16:9",
 			"n":               2,
 			"resolution":      "2k",
@@ -44,9 +42,9 @@ func TestBuildXAIImageRequestBody(t *testing.T) {
 }
 
 func TestBuildXAIImageRequestBodyDropsUnsupportedParams(t *testing.T) {
-	payload, err := buildXAIImageRequestBody("grok-imagine-image-quality", portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "A clean product render"}},
-		Options: map[string]any{
+	payload, err := buildXAIImageRequestBody("grok-imagine-image-quality", GenerateInput{
+		Messages: []Message{{Role: "user", Content: "A clean product render"}},
+		Options: map[string]interface{}{
 			"aspect_ratio": "21:9",
 			"n":            2.5,
 			"resolution":   "4k",
@@ -63,8 +61,8 @@ func TestBuildXAIImageRequestBodyDropsUnsupportedParams(t *testing.T) {
 }
 
 func TestBuildXAIImageRequestBodyPreservesOfficialDefaultResponseFormat(t *testing.T) {
-	payload, err := buildXAIImageRequestBody("grok-imagine-image-quality", portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "A clean product render"}},
+	payload, err := buildXAIImageRequestBody("grok-imagine-image-quality", GenerateInput{
+		Messages: []Message{{Role: "user", Content: "A clean product render"}},
 	})
 	if err != nil {
 		t.Fatalf("build xAI image request body: %v", err)
@@ -75,17 +73,17 @@ func TestBuildXAIImageRequestBodyPreservesOfficialDefaultResponseFormat(t *testi
 }
 
 func TestBuildXAIImageEditRequestBody(t *testing.T) {
-	payload, debugBody, err := buildXAIImageEditRequestBody("grok-imagine-image-quality", portllm.GenerateInput{
-		Messages: []portllm.Message{
+	payload, debugBody, err := buildXAIImageEditRequestBody("grok-imagine-image-quality", GenerateInput{
+		Messages: []Message{
 			{
 				Role: "user",
-				Parts: []portllm.ContentPart{
-					{Kind: portllm.ContentPartText, Text: "Render this as a pencil sketch"},
-					{Kind: portllm.ContentPartImage, MimeType: "image/png", Data: []byte("source")},
+				Parts: []ContentPart{
+					{Kind: ContentPartText, Text: "Render this as a pencil sketch"},
+					{Kind: ContentPartImage, MimeType: "image/png", Data: []byte("source")},
 				},
 			},
 		},
-		Options: map[string]any{
+		Options: map[string]interface{}{
 			"aspect_ratio": "1:1",
 			"resolution":   "2k",
 		},
@@ -102,7 +100,7 @@ func TestBuildXAIImageEditRequestBody(t *testing.T) {
 	if _, ok := payload["response_format"]; ok {
 		t.Fatalf("expected xAI to apply its documented URL default, got %#v", payload)
 	}
-	image := payload["image"].(map[string]any)
+	image := payload["image"].(map[string]interface{})
 	if image["type"] != "image_url" {
 		t.Fatalf("expected image_url type, got %#v", image)
 	}
@@ -115,15 +113,15 @@ func TestBuildXAIImageEditRequestBody(t *testing.T) {
 }
 
 func TestBuildXAIImageEditRequestBodyAllowsUpToThreeImages(t *testing.T) {
-	payload, _, err := buildXAIImageEditRequestBody("grok-imagine-image-quality", portllm.GenerateInput{
-		Messages: []portllm.Message{
+	payload, _, err := buildXAIImageEditRequestBody("grok-imagine-image-quality", GenerateInput{
+		Messages: []Message{
 			{
 				Role: "user",
-				Parts: []portllm.ContentPart{
-					{Kind: portllm.ContentPartText, Text: "Combine these"},
-					{Kind: portllm.ContentPartImage, MimeType: "image/png", Data: []byte("one")},
-					{Kind: portllm.ContentPartImage, MimeType: "image/jpeg", Data: []byte("two")},
-					{Kind: portllm.ContentPartImage, MimeType: "image/webp", Data: []byte("three")},
+				Parts: []ContentPart{
+					{Kind: ContentPartText, Text: "Combine these"},
+					{Kind: ContentPartImage, MimeType: "image/png", Data: []byte("one")},
+					{Kind: ContentPartImage, MimeType: "image/jpeg", Data: []byte("two")},
+					{Kind: ContentPartImage, MimeType: "image/webp", Data: []byte("three")},
 				},
 			},
 		},
@@ -134,7 +132,7 @@ func TestBuildXAIImageEditRequestBodyAllowsUpToThreeImages(t *testing.T) {
 	if _, ok := payload["image"]; ok {
 		t.Fatalf("multi-reference edit must not send the singular image field: %#v", payload)
 	}
-	images := payload["images"].([]map[string]any)
+	images := payload["images"].([]map[string]interface{})
 	if len(images) != 3 {
 		t.Fatalf("expected three ordered image inputs, got %#v", images)
 	}
@@ -142,7 +140,7 @@ func TestBuildXAIImageEditRequestBodyAllowsUpToThreeImages(t *testing.T) {
 
 func TestGenerateXAIImageUsesImageEndpoint(t *testing.T) {
 	var requestPath string
-	var requestBody map[string]any
+	var requestBody map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestPath = r.URL.Path
 		if got := r.Header.Get("Authorization"); got != "Bearer xai-key" {
@@ -162,14 +160,14 @@ func TestGenerateXAIImageUsesImageEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	output, err := newTestClient().Generate(context.Background(), portllm.RouteConfig{
-		Protocol:      portllm.AdapterXAIImage,
+	output, err := newTestClient().Generate(context.Background(), RouteConfig{
+		Protocol:      AdapterXAIImage,
 		BaseURL:       server.URL + "/v1",
 		APIKey:        "xai-key",
 		UpstreamModel: "grok-imagine-image-quality",
-	}, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "A clean product render"}},
-		Options: map[string]any{
+	}, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "A clean product render"}},
+		Options: map[string]interface{}{
 			"aspect_ratio": "16:9",
 		},
 	})
@@ -199,13 +197,13 @@ func TestGenerateXAIImageGenerationAdapterKeepsGenerationEndpoint(t *testing.T) 
 	}))
 	defer server.Close()
 
-	_, err := newTestClient().Generate(context.Background(), portllm.RouteConfig{
-		Protocol:      portllm.AdapterXAIImage,
-		Endpoint:      portllm.EndpointImageEdits,
+	_, err := newTestClient().Generate(context.Background(), RouteConfig{
+		Protocol:      AdapterXAIImage,
+		Endpoint:      EndpointImageEdits,
 		BaseURL:       server.URL + "/v1",
 		UpstreamModel: "grok-imagine-image-quality",
-	}, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "A clean product render"}},
+	}, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "A clean product render"}},
 	})
 	if err != nil {
 		t.Fatalf("generate xAI image: %v", err)
@@ -217,7 +215,7 @@ func TestGenerateXAIImageGenerationAdapterKeepsGenerationEndpoint(t *testing.T) 
 
 func TestGenerateXAIImageEditUsesImageEditsEndpoint(t *testing.T) {
 	var requestPath string
-	var requestBody map[string]any
+	var requestBody map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestPath = r.URL.Path
 		if got := r.Header.Get("Authorization"); got != "Bearer xai-key" {
@@ -237,20 +235,20 @@ func TestGenerateXAIImageEditUsesImageEditsEndpoint(t *testing.T) {
 	}))
 	defer server.Close()
 
-	output, err := newTestClient().Generate(context.Background(), portllm.RouteConfig{
-		Protocol:      portllm.AdapterXAIImageEdits,
+	output, err := newTestClient().Generate(context.Background(), RouteConfig{
+		Protocol:      AdapterXAIImageEdits,
 		BaseURL:       server.URL + "/v1",
 		APIKey:        "xai-key",
 		UpstreamModel: "grok-imagine-image-quality",
-	}, portllm.GenerateInput{
-		Messages: []portllm.Message{{
+	}, GenerateInput{
+		Messages: []Message{{
 			Role: "user",
-			Parts: []portllm.ContentPart{
-				{Kind: portllm.ContentPartText, Text: "Render this as a pencil sketch"},
-				{Kind: portllm.ContentPartImage, MimeType: "image/png", Data: []byte("source")},
+			Parts: []ContentPart{
+				{Kind: ContentPartText, Text: "Render this as a pencil sketch"},
+				{Kind: ContentPartImage, MimeType: "image/png", Data: []byte("source")},
 			},
 		}},
-		Options: map[string]any{
+		Options: map[string]interface{}{
 			"response_format": "b64_json",
 		},
 	})
@@ -279,7 +277,7 @@ func TestParseXAIImageOutput(t *testing.T) {
 			{"url": "https://example.com/a.jpg", "mime_type": "image/webp"},
 			{"b64_json": "aGVsbG8=", "mime_type": "image/png", "revised_prompt": "A revised render"}
 		]
-	}`), portllm.AdapterXAIImage)
+	}`), AdapterXAIImage)
 	if err != nil {
 		t.Fatalf("parse xAI image output: %v", err)
 	}

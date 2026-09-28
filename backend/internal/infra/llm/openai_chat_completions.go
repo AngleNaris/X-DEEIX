@@ -298,7 +298,8 @@ func applyChatStreamEvent(
 	onEvent func(GenerateStreamEvent) error,
 	mode textEncodedToolCallMode,
 ) error {
-	return applyChatStreamEventWithToolPolicy(adapter, parsed, result, onEvent, mode, true)
+	var textBuffer string
+	return applyChatStreamEventWithToolPolicy(adapter, parsed, result, onEvent, mode, true, &textBuffer)
 }
 
 func applyChatStreamEventWithToolPolicy(
@@ -308,6 +309,7 @@ func applyChatStreamEventWithToolPolicy(
 	onEvent func(GenerateStreamEvent) error,
 	mode textEncodedToolCallMode,
 	allowNativeTools bool,
+	textBuffer *string,
 ) error {
 	if responseID := strings.TrimSpace(getString(parsed["id"])); responseID != "" {
 		result.ResponseID = responseID
@@ -316,7 +318,7 @@ func applyChatStreamEventWithToolPolicy(
 	delta := extractChatStreamDelta(parsed)
 	if delta != "" {
 		if mode != textEncodedToolCallsInactive {
-			if err := bufferChatVisibleDelta(result, delta, onEvent, mode); err != nil {
+			if err := bufferChatVisibleDelta(result, textBuffer, delta, onEvent, mode); err != nil {
 				return err
 			}
 		} else if err := emitChatVisibleDelta(result, delta, onEvent); err != nil {
@@ -529,23 +531,23 @@ func extractChatVisibleContentText(raw interface{}) string {
 	}
 }
 
-func bufferChatVisibleDelta(result *GenerateOutput, delta string, onEvent func(GenerateStreamEvent) error, mode textEncodedToolCallMode) error {
+func bufferChatVisibleDelta(result *GenerateOutput, textBuffer *string, delta string, onEvent func(GenerateStreamEvent) error, mode textEncodedToolCallMode) error {
 	if result == nil || delta == "" {
 		return nil
 	}
-	result.chatTextBuffer += delta
-	return flushChatVisibleBuffer(result, onEvent, false, mode)
+	*textBuffer += delta
+	return flushChatVisibleBuffer(result, textBuffer, onEvent, false, mode)
 }
 
 // flushChatVisibleBuffer 在文本工具调用模式下延迟释放可见文本，确保完整工具调用不会作为普通文本输出。
 // 工具禁用轮（strip-only）剥离标记但不生成 ToolCall；模型在禁用轮仍输出调用时置
 // TextToolCallsStripped，供上层判断模型尚未收尾。
-func flushChatVisibleBuffer(result *GenerateOutput, onEvent func(GenerateStreamEvent) error, final bool, mode textEncodedToolCallMode) error {
-	if result == nil || result.chatTextBuffer == "" {
+func flushChatVisibleBuffer(result *GenerateOutput, textBuffer *string, onEvent func(GenerateStreamEvent) error, final bool, mode textEncodedToolCallMode) error {
+	if result == nil || *textBuffer == "" {
 		return nil
 	}
-	if cleanText, toolCalls, ok := parseTextEncodedToolCalls(result.chatTextBuffer, mode); ok {
-		result.chatTextBuffer = ""
+	if cleanText, toolCalls, ok := parseTextEncodedToolCalls(*textBuffer, mode); ok {
+		*textBuffer = ""
 		if textEncodedToolCallsAreActive(mode) {
 			result.ToolCalls = append(result.ToolCalls, toolCalls...)
 		} else {
@@ -556,27 +558,27 @@ func flushChatVisibleBuffer(result *GenerateOutput, onEvent func(GenerateStreamE
 		}
 		return emitChatVisibleDelta(result, cleanText, onEvent)
 	}
-	if !final && maybeTextEncodedToolCallsPrefix(result.chatTextBuffer, mode) {
+	if !final && maybeTextEncodedToolCallsPrefix(*textBuffer, mode) {
 		return nil
 	}
 	// 只有 DSML 标记的不完整包才是协议错误；普通 <tool_calls> 可能只是正文示例，
 	// 或者是无法解析的模型输出，交由下方普通文本路径保留。
-	if final && maybeDSMLToolCallsPrefix(result.chatTextBuffer) {
+	if final && maybeDSMLToolCallsPrefix(*textBuffer) {
 		if textEncodedToolCallsAreActive(mode) {
 			if mode == textEncodedToolCallsGenericActive {
-				text := result.chatTextBuffer
-				result.chatTextBuffer = ""
+				text := *textBuffer
+				*textBuffer = ""
 				return emitChatVisibleDelta(result, text, onEvent)
 			}
 			return errDeepSeekDSMLToolCallsIncomplete
 		}
 		// strip-only：丢弃悬空未闭合的文本工具调用，不中断工具禁用轮。
 		result.TextToolCallsStripped = true
-		result.chatTextBuffer = ""
+		*textBuffer = ""
 		return nil
 	}
-	text := result.chatTextBuffer
-	result.chatTextBuffer = ""
+	text := *textBuffer
+	*textBuffer = ""
 	if mode != textEncodedToolCallsInactive && !textEncodedToolCallsAreActive(mode) {
 		if stripped := stripRemainingTextToolCallMarkers(&text); stripped {
 			result.TextToolCallsStripped = true

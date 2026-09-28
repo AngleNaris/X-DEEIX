@@ -274,11 +274,11 @@ func (c *Client) pollXAIVideoResult(ctx context.Context, route RouteConfig, requ
 	perRequestTimeout := resolveReadTimeout(route.ReadTimeoutMS)
 	for {
 		reqCtx, reqCancel := context.WithTimeout(ctx, perRequestTimeout)
- 		req, err := newXAIMediaRequest(reqCtx, http.MethodGet, requestURL, nil, route)
- 		if err != nil {
- 			reqCancel()
- 			return nil, MarkRequestAccepted(err)
- 		}
+		req, err := newXAIMediaRequest(reqCtx, http.MethodGet, requestURL, nil, route)
+		if err != nil {
+			reqCancel()
+			return nil, MarkRequestAccepted(err)
+		}
 		resp, err := c.doRouteRequest(route, req)
 		reqCancel()
 		if err != nil {

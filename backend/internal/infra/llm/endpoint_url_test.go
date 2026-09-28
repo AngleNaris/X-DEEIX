@@ -1,10 +1,6 @@
 package llm
 
-import (
-	"testing"
-
-	portllm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
-)
+import "testing"
 
 func TestBuildOpenAICompatibleURLsRespectVersionedBasePath(t *testing.T) {
 	cases := []struct {
@@ -16,85 +12,85 @@ func TestBuildOpenAICompatibleURLsRespectVersionedBasePath(t *testing.T) {
 		{
 			name:     "plain base uses v1 chat completions",
 			baseURL:  "https://api.example.com",
-			endpoint: portllm.EndpointChatCompletions,
+			endpoint: EndpointChatCompletions,
 			want:     "https://api.example.com/v1/chat/completions",
 		},
 		{
 			name:     "openai v1 base is not duplicated",
 			baseURL:  "https://api.openai.com/v1",
-			endpoint: portllm.EndpointResponses,
+			endpoint: EndpointResponses,
 			want:     "https://api.openai.com/v1/responses",
 		},
 		{
 			name:     "openai image generations endpoint",
 			baseURL:  "https://api.openai.com/v1",
-			endpoint: portllm.EndpointImageGenerations,
+			endpoint: EndpointImageGenerations,
 			want:     "https://api.openai.com/v1/images/generations",
 		},
 		{
 			name:     "openai image edits endpoint",
 			baseURL:  "https://api.openai.com/v1",
-			endpoint: portllm.EndpointImageEdits,
+			endpoint: EndpointImageEdits,
 			want:     "https://api.openai.com/v1/images/edits",
 		},
 		{
 			name:     "xai v1 base is not duplicated",
 			baseURL:  "https://api.x.ai/v1",
-			endpoint: portllm.EndpointResponses,
+			endpoint: EndpointResponses,
 			want:     "https://api.x.ai/v1/responses",
 		},
 		{
 			name:     "xai image generations endpoint",
 			baseURL:  "https://api.x.ai/v1",
-			endpoint: portllm.EndpointImageGenerations,
+			endpoint: EndpointImageGenerations,
 			want:     "https://api.x.ai/v1/images/generations",
 		},
 		{
 			name:     "xai video generations endpoint",
 			baseURL:  "https://api.x.ai/v1",
-			endpoint: portllm.EndpointVideoGenerations,
+			endpoint: EndpointVideoGenerations,
 			want:     "https://api.x.ai/v1/videos/generations",
 		},
 		{
 			name:     "xai video extensions endpoint",
 			baseURL:  "https://api.x.ai/v1",
-			endpoint: portllm.EndpointVideoExtensions,
+			endpoint: EndpointVideoExtensions,
 			want:     "https://api.x.ai/v1/videos/extensions",
 		},
 		{
 			name:     "xai proxy plain base gets v1 image endpoint",
 			baseURL:  "https://proxy.example.com",
-			endpoint: portllm.EndpointImageGenerations,
+			endpoint: EndpointImageGenerations,
 			want:     "https://proxy.example.com/v1/images/generations",
 		},
 		{
 			name:     "xai proxy v1 base is not duplicated",
 			baseURL:  "https://proxy.example.com/v1",
-			endpoint: portllm.EndpointImageGenerations,
+			endpoint: EndpointImageGenerations,
 			want:     "https://proxy.example.com/v1/images/generations",
 		},
 		{
 			name:     "xai proxy nested v1 base is not duplicated",
 			baseURL:  "https://proxy.example.com/xai/v1",
-			endpoint: portllm.EndpointImageGenerations,
+			endpoint: EndpointImageGenerations,
 			want:     "https://proxy.example.com/xai/v1/images/generations",
 		},
 		{
 			name:     "xai proxy v4 base is respected",
 			baseURL:  "https://proxy.example.com/v4",
-			endpoint: portllm.EndpointImageGenerations,
+			endpoint: EndpointImageGenerations,
 			want:     "https://proxy.example.com/v4/images/generations",
 		},
 		{
 			name:     "bigmodel v4 base is respected",
 			baseURL:  "https://open.bigmodel.cn/api/paas/v4",
-			endpoint: portllm.EndpointChatCompletions,
+			endpoint: EndpointChatCompletions,
 			want:     "https://open.bigmodel.cn/api/paas/v4/chat/completions",
 		},
 		{
 			name:     "trailing slash on versioned base is trimmed",
 			baseURL:  "https://open.bigmodel.cn/api/paas/v4/",
-			endpoint: portllm.EndpointResponses,
+			endpoint: EndpointResponses,
 			want:     "https://open.bigmodel.cn/api/paas/v4/responses",
 		},
 	}
@@ -121,13 +117,13 @@ func TestBuildOpenAIModelsURLRespectsVersionedBasePath(t *testing.T) {
 }
 
 func TestOpenRouterChatCompletionsAdapterUsesChatEndpoint(t *testing.T) {
-	if got := portllm.DefaultEndpointForAdapter(portllm.AdapterOpenRouterChat); got != portllm.EndpointChatCompletions {
+	if got := DefaultEndpointForAdapter(AdapterOpenRouterChat); got != EndpointChatCompletions {
 		t.Fatalf("expected OpenRouter Chat Completions endpoint, got %q", got)
 	}
-	if !portllm.SupportsStreamingAdapter(portllm.AdapterOpenRouterChat) {
+	if !SupportsStreamingAdapter(AdapterOpenRouterChat) {
 		t.Fatal("expected OpenRouter Chat Completions to support streaming")
 	}
-	if !portllm.IsImplementedAdapter(portllm.AdapterOpenRouterChat) {
+	if !IsImplementedAdapter(AdapterOpenRouterChat) {
 		t.Fatal("expected OpenRouter Chat Completions adapter to be implemented")
 	}
 }

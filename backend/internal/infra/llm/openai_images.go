@@ -687,20 +687,24 @@ func applyOpenAIImageCompletedPayload(parsed map[string]interface{}, outputForma
 }
 
 func parseOpenAIImagePayload(payload map[string]interface{}, outputFormat string) (GeneratedImage, bool) {
+	mimeType := declaredImageMediaType(payload)
+	if mimeType == "" {
+		mimeType = openAIImageMIMEType(outputFormat)
+	}
 	if len(payload) == 0 {
 		return GeneratedImage{}, false
 	}
 	if url := strings.TrimSpace(getString(payload["url"])); url != "" {
 		return GeneratedImage{
 			URL:           url,
-			MIMEType:      openAIImageMIMEType(outputFormat),
+			MIMEType:      mimeType,
 			RevisedPrompt: strings.TrimSpace(getString(payload["revised_prompt"])),
 		}, true
 	}
 	if b64 := strings.TrimSpace(getString(payload["b64_json"])); b64 != "" {
 		return GeneratedImage{
 			B64JSON:       b64,
-			MIMEType:      openAIImageMIMEType(outputFormat),
+			MIMEType:      mimeType,
 			RevisedPrompt: strings.TrimSpace(getString(payload["revised_prompt"])),
 		}, true
 	}

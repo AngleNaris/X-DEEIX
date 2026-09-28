@@ -41,7 +41,7 @@ func (h *Handler) CreateDocCard(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	var req UpsertDocCardRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.InvalidRequestBody(c, err)
 		return
 	}
 	item, err := h.svc.UpsertDocCard(c, userID, "", appdoccard.UpsertInput{
@@ -54,7 +54,7 @@ func (h *Handler) CreateDocCard(c *gin.Context) {
 		Enabled:   req.Enabled,
 	}, "user")
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, err.Error())
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, appdoccard.NewCardView(*item))
@@ -65,12 +65,12 @@ func (h *Handler) UpdateDocCard(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	var param CardIDParam
 	if err := c.ShouldBindUri(&param); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorWithCode(c, http.StatusBadRequest, response.CodeRequestInvalid)
 		return
 	}
 	var req UpsertDocCardRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.InvalidRequestBody(c, err)
 		return
 	}
 	item, err := h.svc.UpsertDocCard(c, userID, param.ID, appdoccard.UpsertInput{
@@ -83,7 +83,7 @@ func (h *Handler) UpdateDocCard(c *gin.Context) {
 		Enabled:   req.Enabled,
 	}, "user")
 	if err != nil {
-		response.Error(c, http.StatusNotFound, "doc card not found")
+		response.ErrorWithCode(c, http.StatusNotFound, response.CodeResourceNotFound)
 		return
 	}
 	response.Success(c, appdoccard.NewCardView(*item))
@@ -94,7 +94,7 @@ func (h *Handler) ListDocCards(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	items, err := h.svc.ListDocCards(c, userID)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, err.Error())
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, items)
@@ -105,11 +105,11 @@ func (h *Handler) DeleteDocCard(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	var param CardIDParam
 	if err := c.ShouldBindUri(&param); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorWithCode(c, http.StatusBadRequest, response.CodeRequestInvalid)
 		return
 	}
 	if err := h.svc.DeleteDocCard(c, userID, param.ID); err != nil {
-		response.Error(c, http.StatusNotFound, "doc card not found")
+		response.ErrorWithCode(c, http.StatusNotFound, response.CodeResourceNotFound)
 		return
 	}
 	response.Success(c, gin.H{"deleted": true})

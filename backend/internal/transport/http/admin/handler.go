@@ -1098,7 +1098,7 @@ func (h *Handler) ResetUserPassword(c *gin.Context) {
 		mustResetPassword = *req.MustResetPassword
 	}
 
-	if err = h.service.ResetUserPasswordByAdmin(c.Request.Context(), appadmin.ResetUserPasswordInput{
+	if err = h.service.ResetUserPasswordByAdmin(c.Request.Context(), appadmin.ResetUserPasswordByAdminInput{
 		RequestID:         middleware.MustRequestID(c),
 		ActorUserID:       actorUserID,
 		TargetUserID:      uint(parsedID),

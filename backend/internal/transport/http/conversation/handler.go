@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	appconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/conversation"
+	appprocessing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/processing"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
@@ -17,8 +18,9 @@ import (
 
 // Handler 封装会话 HTTP 处理。
 type Handler struct {
-	service *appconversation.Service
-	cfg     *config.Runtime
+	processing *appprocessing.Service
+	service    *appconversation.Service
+	cfg        *config.Runtime
 }
 
 func normalizeStreamEventPayload(eventType string, payload map[string]interface{}) map[string]interface{} {
@@ -47,23 +49,24 @@ func normalizeStreamEventPayload(eventType string, payload map[string]interface{
 }
 
 // NewHandler 创建处理器。
-func NewHandler(service *appconversation.Service, cfg *config.Runtime) *Handler {
+func NewHandler(service *appconversation.Service, cfg *config.Runtime, processing *appprocessing.Service) *Handler {
 	return &Handler{
-		service: service,
-		cfg:     cfg,
+		processing: processing,
+		service:    service,
+		cfg:        cfg,
 	}
 }
 
 func (h *Handler) recordAudit(c *gin.Context, action string, resource string, resourceID string, detail interface{}) {
 	h.service.RecordAudit(c.Request.Context(), appconversation.AuditInput{
-		UserID:     middleware.MustUserID(c),
-		RequestID:  middleware.MustRequestID(c),
-		Action:     action,
-		Resource:   resource,
-		ResourceID: resourceID,
-		ClientIP:   c.ClientIP(),
-		UserAgent:  c.Request.UserAgent(),
-		Detail:     detail,
+		ActorUserID: middleware.MustUserID(c),
+		RequestID:   middleware.MustRequestID(c),
+		Action:      action,
+		Resource:    resource,
+		ResourceID:  resourceID,
+		IP:          c.ClientIP(),
+		UserAgent:   c.Request.UserAgent(),
+		Detail:      detail,
 	})
 }
 
@@ -109,6 +112,11 @@ type streamError struct {
 }
 
 func mapStreamError(err error) streamError {
+	// Prefer the shared typed contract; retain custom mappings not yet in the table.
+	described := describeSendMessageError(err)
+	if described.Code != response.CodeInternal {
+		return streamError{Status: described.Status, Code: described.Code, Message: described.Message}
+	}
 	status := http.StatusInternalServerError
 	code := ""
 	message := "send message failed"
@@ -220,11 +228,20 @@ func streamErrorPayload(err error) map[string]interface{} {
 	mapped := mapStreamError(err)
 	payload := map[string]interface{}{
 		"type":      "error",
+		"status":    mapped.Status,
 		"message":   mapped.Message,
 		"errorCode": mapped.Code,
 	}
 	if debug := appconversation.MessageErrorDebug(err); debug != nil {
 		payload["debug"] = debug
+	}
+	return payload
+}
+
+func streamErrorPayloadWithResult(err error, result *appconversation.SendMessageResult) map[string]interface{} {
+	payload := streamErrorPayload(err)
+	if result != nil {
+		payload["data"] = toSendMessageResponse(result)
 	}
 	return payload
 }

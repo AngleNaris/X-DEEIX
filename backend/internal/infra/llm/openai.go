@@ -361,6 +361,8 @@ func setOpenAIResponseTextParam(payload map[string]interface{}, key string, valu
 
 func buildOpenAIRequestURL(baseURL string, endpoint string) string {
 	switch endpoint {
+	case "images":
+		return buildVersionedEndpointURL(baseURL, "v1", "/images")
 	case EndpointChatCompletions:
 		return buildVersionedEndpointURL(baseURL, "v1", "/chat/completions")
 	case EndpointImageGenerations:
@@ -474,6 +476,7 @@ func consumeOpenAIGenerateStreamWithToolPolicy(
 	scanner.Buffer(make([]byte, 0, 64*1024), maxUpstreamBodyBytes)
 
 	var eventName string
+	var textBuffer string
 	dataLines := make([]string, 0, 4)
 
 	dispatch := func() error {
@@ -489,7 +492,7 @@ func consumeOpenAIGenerateStreamWithToolPolicy(
 		}
 		if strings.TrimSpace(payloadText) == "[DONE]" {
 			if normalizeEndpoint(endpoint) == EndpointChatCompletions && mode != textEncodedToolCallsInactive {
-				if err := flushChatVisibleBuffer(result, onEvent, true, mode); err != nil {
+				if err := flushChatVisibleBuffer(result, &textBuffer, onEvent, true, mode); err != nil {
 					return err
 				}
 			}
@@ -506,7 +509,7 @@ func consumeOpenAIGenerateStreamWithToolPolicy(
 
 		switch normalizeEndpoint(endpoint) {
 		case EndpointChatCompletions:
-			return applyChatStreamEventWithToolPolicy(adapter, parsed, result, onEvent, mode, allowNativeTools)
+			return applyChatStreamEventWithToolPolicy(adapter, parsed, result, onEvent, mode, allowNativeTools, &textBuffer)
 		default:
 			return applyResponsesStreamEventWithToolPolicy(adapter, currentEvent, parsed, payloadText, result, onEvent, allowNativeTools)
 		}
@@ -541,7 +544,7 @@ func consumeOpenAIGenerateStreamWithToolPolicy(
 		return err
 	}
 	if normalizeEndpoint(endpoint) == EndpointChatCompletions && mode != textEncodedToolCallsInactive {
-		if err := flushChatVisibleBuffer(result, onEvent, true, mode); err != nil {
+		if err := flushChatVisibleBuffer(result, &textBuffer, onEvent, true, mode); err != nil {
 			return err
 		}
 	}

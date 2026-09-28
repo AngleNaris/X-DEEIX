@@ -46,14 +46,14 @@ func (h *Handler) CreateFileShare(c *gin.Context) {
 	result, err := h.service.CreateFileShare(c.Request.Context(), userID, fileID, ttl)
 	if err != nil {
 		if errors.Is(err, appconversation.ErrInvalidFileReference) {
-			response.Error(c, http.StatusBadRequest, "invalid file share")
+			response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrInvalidFileReference)
 			return
 		}
 		if errors.Is(err, appconversation.ErrFileNotFound) {
-			response.Error(c, http.StatusNotFound, "file not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrFileNotFound)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "create file share failed")
+		response.InternalError(c)
 		return
 	}
 	h.recordAudit(c, "create_file_share", "file", fileID, map[string]interface{}{"share_id": result.ShareID, "expires_at": result.ExpiresAt})
@@ -72,7 +72,7 @@ func (h *Handler) CreateFileShare(c *gin.Context) {
 func (h *Handler) GetFileShare(c *gin.Context) {
 	result, err := h.service.GetFileShare(c.Request.Context(), middleware.MustUserID(c), c.Param("file_id"))
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid file share")
+		response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrInvalidFileReference)
 		return
 	}
 	response.Success(c, toFileShareResult(result))
@@ -93,10 +93,10 @@ func (h *Handler) RevokeFileShare(c *gin.Context) {
 	err := h.service.RevokeFileShare(c.Request.Context(), middleware.MustUserID(c), fileID)
 	if err != nil {
 		if errors.Is(err, appconversation.ErrFileShareNotFound) {
-			response.Error(c, http.StatusNotFound, "file share not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrFileShareNotFound)
 			return
 		}
-		response.Error(c, http.StatusBadRequest, "invalid file share")
+		response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrInvalidFileReference)
 		return
 	}
 	h.recordAudit(c, "revoke_file_share", "file", fileID, nil)
@@ -114,7 +114,7 @@ func (h *Handler) RevokeFileShare(c *gin.Context) {
 func (h *Handler) GetPublicFileShare(c *gin.Context) {
 	result, err := h.service.GetPublicFileShare(c.Request.Context(), c.Param("share_id"))
 	if err != nil {
-		response.Error(c, http.StatusNotFound, "file share not found")
+		response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrFileShareNotFound)
 		return
 	}
 	c.Header("Cache-Control", "no-store")
@@ -132,7 +132,7 @@ func (h *Handler) GetPublicFileShare(c *gin.Context) {
 func (h *Handler) GetPublicFileShareContent(c *gin.Context) {
 	result, err := h.service.OpenPublicFileShareContent(c.Request.Context(), c.Param("share_id"))
 	if err != nil {
-		response.Error(c, http.StatusNotFound, "file share not found")
+		response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrFileShareNotFound)
 		return
 	}
 	_ = filecontent.Write(c, result, true)

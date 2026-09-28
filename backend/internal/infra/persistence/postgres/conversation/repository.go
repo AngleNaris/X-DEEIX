@@ -2070,6 +2070,9 @@ func conversationEventDetailSelectColumns(db *gorm.DB) []string {
 
 // CreateConversationRun 写入会话运行日志。
 func (r *Repo) CreateConversationRun(ctx context.Context, item *domainconversation.Run) error {
+	if item == nil || strings.TrimSpace(item.RunID) == "" || item.UserID == 0 || item.ConversationID == 0 {
+		return repository.ErrInvalidInput
+	}
 	entity := toConversationRunModel(item)
 	if err := r.db.WithContext(ctx).Create(&entity).Error; err != nil {
 		return translateError(err)
@@ -2094,55 +2097,16 @@ func (r *Repo) EnsureConversationRun(ctx context.Context, item *domainconversati
 
 // UpsertConversationRun writes the final run snapshot (create or full update by run_id).
 func (r *Repo) UpsertConversationRun(ctx context.Context, item *domainconversation.Run) error {
-	if item == nil || strings.TrimSpace(item.RunID) == "" {
-		return nil
+	err := r.UpdateConversationRun(ctx, item)
+	if !errors.Is(err, repository.ErrNotFound) {
+		return err
 	}
-	entity := toConversationRunModel(item)
-	err := r.db.WithContext(ctx).
-		Clauses(clause.OnConflict{
-			Columns: []clause.Column{{Name: "run_id"}},
-			DoUpdates: clause.AssignmentColumns([]string{
-				"request_id",
-				"user_id",
-				"conversation_id",
-				"task_type",
-				"endpoint",
-				"provider",
-				"provider_protocol",
-				"upstream_id",
-				"upstream_model_id",
-				"upstream_name",
-				"requested_model_name",
-				"platform_model_name",
-				"routed_binding_code",
-				"model_vendor",
-				"model_icon",
-				"upstream_model_name",
-				"input_tokens",
-				"output_tokens",
-				"cache_read_tokens",
-				"cache_write_tokens",
-				"reasoning_tokens",
-				"tool_calls_count",
-				"first_token_latency_ms",
-				"total_latency_ms",
-				"status",
-				"error_code",
-				"error_message",
-				"moderation_state",
-				"moderation_event_id",
-				"moderation_categories_json",
-				"started_at",
-				"ended_at",
-				"updated_at",
-			}),
-		}).
-		Create(&entity).Error
-	if err != nil {
-		return translateError(err)
+	// A competing insert must never transfer run ownership. Retry only through
+	// the owner-scoped update, which rejects a different user or conversation.
+	if err = r.CreateConversationRun(ctx, item); errors.Is(err, repository.ErrDuplicate) {
+		return r.UpdateConversationRun(ctx, item)
 	}
-	*item = toConversationRunDomain(entity)
-	return nil
+	return err
 }
 
 // UpsertConversationMessageTrace 写入或更新消息轨迹。
@@ -2397,7 +2361,7 @@ func (r *Repo) ListConversationToolCallsByRunIDPrefix(
 }
 
 // UpdateConversationRun 按运行 ID 更新会话运行快照字段（只更新非空字段）。
-func (r *Repo) UpdateConversationRun(
+func (r *Repo) PatchConversationRun(
 	ctx context.Context,
 	userID uint,
 	conversationID uint,
@@ -3021,6 +2985,20 @@ func (r *Repo) GetActiveFileObjectsByIDs(ctx context.Context, userID uint, fileI
 		return []domainconversation.FileObject{}, nil
 	}
 	if err := r.db.WithContext(ctx).
+		Where("user_id = ? AND status = ? AND file_id IN ?", userID, "active", fileIDs).
+		Find(&items).Error; err != nil {
+		return nil, translateError(err)
+	}
+	return toFileObjectDomains(items), nil
+}
+
+func (r *Repo) GetActiveFileProcessingStatusesByIDs(ctx context.Context, userID uint, fileIDs []string) ([]domainconversation.FileObject, error) {
+	items := make([]models.FileObject, 0)
+	if len(fileIDs) == 0 {
+		return []domainconversation.FileObject{}, nil
+	}
+	if err := r.db.WithContext(ctx).
+		Select("file_id", "file_name", "mime_type", "detected_mime", "file_category", "storage_path", "status", "processing_status", "processing_ready", "processing_error_code", "processing_error_message", "extract_status", "extract_chars", "extract_pages", "preview_text", "ocr_used", "rag_ready", "rag_reason", "embed_status", "embed_signature", "embed_error", "chunk_count", "processing_started_at", "processing_completed_at", "updated_at").
 		Where("user_id = ? AND status = ? AND file_id IN ?", userID, "active", fileIDs).
 		Find(&items).Error; err != nil {
 		return nil, translateError(err)
@@ -5317,11 +5295,13 @@ func toFileObjectProcessingStateDomain(item models.FileObject) domainconversatio
 		DetectedMIME:        item.DetectedMIME,
 		FileCategory:        item.FileCategory,
 		ProcessingStatus:    item.ProcessingStatus,
+		ProcessingReady:     item.ProcessingReady,
 		ExtractStatus:       item.ExtractStatus,
 		ExtractEngine:       item.ExtractEngine,
 		ExtractStoragePath:  item.ExtractStoragePath,
 		ExtractChars:        item.ExtractChars,
 		ExtractPages:        item.ExtractPages,
+		PageCount:           item.PageCount,
 		PreviewText:         item.PreviewText,
 		OCRUsed:             item.OCRUsed,
 		RAGReady:            item.RAGReady,
@@ -5332,6 +5312,7 @@ func toFileObjectProcessingStateDomain(item models.FileObject) domainconversatio
 		PayloadJSON:         item.ProcessingPayloadJSON,
 		StartedAt:           item.ProcessingStartedAt,
 		CompletedAt:         item.ProcessingCompletedAt,
+		ExtractedAt:         item.ExtractedAt,
 		CreatedAt:           item.CreatedAt,
 		UpdatedAt:           item.UpdatedAt,
 	}
@@ -5345,11 +5326,13 @@ func fileObjectProcessingStateUpdates(item *domainconversation.FileObjectProcess
 		"detected_mime":            item.DetectedMIME,
 		"file_category":            item.FileCategory,
 		"processing_status":        item.ProcessingStatus,
+		"processing_ready":         item.ProcessingReady,
 		"extract_status":           item.ExtractStatus,
 		"extract_engine":           item.ExtractEngine,
 		"extract_storage_path":     item.ExtractStoragePath,
 		"extract_chars":            item.ExtractChars,
 		"extract_pages":            item.ExtractPages,
+		"page_count":               item.PageCount,
 		"preview_text":             item.PreviewText,
 		"ocr_used":                 item.OCRUsed,
 		"rag_ready":                item.RAGReady,
@@ -5360,6 +5343,7 @@ func fileObjectProcessingStateUpdates(item *domainconversation.FileObjectProcess
 		"processing_payload_json":  item.PayloadJSON,
 		"processing_started_at":    item.StartedAt,
 		"processing_completed_at":  item.CompletedAt,
+		"extracted_at":             item.ExtractedAt,
 		"updated_at":               time.Now(),
 	}
 }
@@ -5722,13 +5706,17 @@ func (r *Repo) MarkTimedOutFileEmbeddingsFailed(ctx context.Context, userID uint
 }
 
 // ListFilesForReindex 分页返回需要重建向量的文件（embed_status 为 none、stale 或 failed）。
-func (r *Repo) ListFilesForReindex(ctx context.Context, limit int, afterID uint) ([]domainconversation.FileObject, error) {
+func (r *Repo) ListFilesForReindex(ctx context.Context, limit int, afterID uint, includeEmpty bool) ([]domainconversation.FileObject, error) {
 	if limit <= 0 {
 		limit = 50
 	}
+	statuses := []string{"none", "stale", "failed"}
+	if includeEmpty {
+		statuses = append(statuses, domainconversation.FileSubprocessStatusEmpty)
+	}
 	var entities []models.FileObject
 	err := r.db.WithContext(ctx).
-		Where("id > ? AND embed_status IN ? AND status = ?", afterID, []string{"none", "stale", "failed"}, "active").
+		Where("id > ? AND embed_status IN ? AND status = ?", afterID, statuses, "active").
 		Order("id ASC").
 		Limit(limit).
 		Find(&entities).Error

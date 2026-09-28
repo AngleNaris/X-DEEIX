@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	appconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/conversation"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
 	"github.com/gin-gonic/gin"
@@ -25,7 +26,7 @@ func (h *Handler) ListConversationRoles(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	items, err := h.service.ListConversationRoles(c.Request.Context(), userID, c.Query("status"))
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "list conversation roles failed")
+		response.InternalError(c)
 		return
 	}
 	results := make([]ConversationRoleResponse, 0, len(items))
@@ -71,10 +72,10 @@ func (h *Handler) CreateConversationRole(c *gin.Context) {
 	})
 	if err != nil {
 		if errors.Is(err, appconversation.ErrInvalidConversationProject) {
-			response.Error(c, http.StatusBadRequest, "invalid conversation role")
+			response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalid, "invalid conversation role"))
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "create conversation role failed")
+		response.InternalError(c)
 		return
 	}
 	h.recordAudit(c, "create_conversation_role", "conversation_role", item.PublicID, map[string]interface{}{
@@ -103,16 +104,16 @@ func (h *Handler) GetConversationRole(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation role id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation role id"))
 		return
 	}
 	item, err := h.service.GetConversationRole(c.Request.Context(), userID, publicID)
 	if err != nil {
 		if errors.Is(err, appconversation.ErrConversationRoleNotFound) {
-			response.Error(c, http.StatusNotFound, "conversation role not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationRoleNotFound)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "get conversation role failed")
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, toConversationRoleResponse(item))
@@ -136,7 +137,7 @@ func (h *Handler) UpdateConversationRole(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation role id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation role id"))
 		return
 	}
 	var req UpdateConversationRoleRequest
@@ -162,10 +163,10 @@ func (h *Handler) UpdateConversationRole(c *gin.Context) {
 	})
 	if err != nil {
 		if errors.Is(err, appconversation.ErrConversationRoleNotFound) {
-			response.Error(c, http.StatusNotFound, "conversation role not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationRoleNotFound)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "update conversation role failed")
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, toConversationRoleResponse(item))
@@ -187,19 +188,19 @@ func (h *Handler) DeleteConversationRole(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation role id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation role id"))
 		return
 	}
 	if err = h.service.DeleteConversationRole(c.Request.Context(), userID, publicID); err != nil {
 		if errors.Is(err, appconversation.ErrConversationRoleNotFound) {
-			response.Error(c, http.StatusNotFound, "conversation role not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationRoleNotFound)
 			return
 		}
 		if errors.Is(err, appconversation.ErrConversationRoleInUseByAgentGroup) {
-			response.ErrorWithCode(c, http.StatusConflict, "conversation.agent_group_role_in_use", "conversation role is in use by agent group member")
+			response.ErrorFrom(c, http.StatusConflict, apperr.New("conversation.agent_group_role_in_use", "conversation role is in use by agent group member"))
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "delete conversation role failed")
+		response.InternalError(c)
 		return
 	}
 	h.recordAudit(c, "delete_conversation_role", "conversation_role", publicID, nil)
@@ -227,10 +228,10 @@ func (h *Handler) ReorderConversationRoles(c *gin.Context) {
 	}
 	if err := h.service.ReorderConversationRoles(c.Request.Context(), userID, req.RoleIDs); err != nil {
 		if errors.Is(err, appconversation.ErrConversationRoleNotFound) {
-			response.Error(c, http.StatusNotFound, "conversation role not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationRoleNotFound)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "reorder conversation roles failed")
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, gin.H{"reordered": true})

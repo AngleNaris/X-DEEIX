@@ -974,7 +974,7 @@ func TestConversationProjectDefaultsRoundTripAndDelete(t *testing.T) {
 		t.Fatalf("updated project defaults = %#v", updated)
 	}
 
-	if _, err = repo.DeleteConversationProjectByPublicID(ctx, 1, project.PublicID, false, false); err != nil {
+	if _, err = repo.DeleteConversationProjectByPublicID(ctx, 1, project.PublicID, repository.DeleteConversationProjectOptions{}); err != nil {
 		t.Fatalf("DeleteConversationProjectByPublicID() error = %v", err)
 	}
 	var associationCount int64

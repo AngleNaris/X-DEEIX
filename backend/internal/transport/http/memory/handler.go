@@ -37,7 +37,7 @@ func (h *Handler) ListUserMemories(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	items, err := h.service.ListUserMemories(c.Request.Context(), userID)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "list user memories failed")
+		response.InternalError(c)
 		return
 	}
 	memories := make([]UserMemoryResponse, 0, len(items))
@@ -78,14 +78,14 @@ func (h *Handler) UpsertUserMemory(c *gin.Context) {
 		"user",
 	); err != nil {
 		if errors.Is(err, appmemory.ErrInvalidMemoryCategory) {
-			response.Error(c, http.StatusBadRequest, err.Error())
+			response.ErrorFrom(c, http.StatusBadRequest, err)
 			return
 		}
 		if errors.Is(err, appmemory.ErrMemoryLimitReached) {
-			response.Error(c, http.StatusConflict, err.Error())
+			response.ErrorFrom(c, http.StatusConflict, err)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "upsert user memory failed")
+		response.InternalError(c)
 		return
 	}
 
@@ -119,12 +119,12 @@ func (h *Handler) DeleteUserMemory(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	memoryKey := c.Param("memory_key")
 	if memoryKey == "" {
-		response.Error(c, http.StatusBadRequest, "memory_key is required")
+		response.ErrorWithCode(c, http.StatusBadRequest, response.CodeRequestRequired)
 		return
 	}
 
 	if err := h.service.DeleteUserMemory(c.Request.Context(), userID, memoryKey); err != nil {
-		response.Error(c, http.StatusInternalServerError, "delete user memory failed")
+		response.InternalError(c)
 		return
 	}
 

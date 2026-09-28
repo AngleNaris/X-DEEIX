@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	appconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/conversation"
+	appprocessing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/processing"
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
@@ -38,13 +39,13 @@ func (h *Handler) UploadFile(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, h.maxUploadRequestBytes())
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "file is required")
+		response.ErrorWithCode(c, http.StatusBadRequest, "file.required")
 		return
 	}
 
 	fileReader, err := fileHeader.Open()
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid file stream")
+		response.ErrorWithCode(c, http.StatusBadRequest, "file.invalid_stream")
 		return
 	}
 	defer fileReader.Close() //nolint:errcheck
@@ -60,25 +61,25 @@ func (h *Handler) UploadFile(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, appconversation.ErrStorageQuotaExceeded):
-			response.Error(c, http.StatusConflict, "storage quota exceeded")
+			response.ErrorWithCode(c, http.StatusConflict, "file.storage_quota_exceeded")
 			return
 		case errors.Is(err, appconversation.ErrDangerousMIMEType):
-			response.Error(c, http.StatusBadRequest, "dangerous file type not allowed")
+			response.ErrorWithCode(c, http.StatusBadRequest, response.CodeFileTypeBlocked)
 			return
 		case errors.Is(err, appconversation.ErrMIMEBlocked):
-			response.Error(c, http.StatusBadRequest, "mime blocked")
+			response.ErrorWithCode(c, http.StatusBadRequest, response.CodeFileTypeBlocked)
 			return
 		case errors.Is(err, appconversation.ErrEmbeddingUnavailable):
-			response.Error(c, http.StatusBadRequest, "embedding unavailable for this file size")
+			response.ErrorWithCode(c, http.StatusBadRequest, "file.embedding_unavailable")
 			return
 		case errors.Is(err, appconversation.ErrFileTooLarge):
-			response.Error(c, http.StatusRequestEntityTooLarge, "file too large")
+			response.ErrorWithCode(c, http.StatusRequestEntityTooLarge, response.CodeFileTooLarge)
 			return
 		case errors.Is(err, appconversation.ErrInvalidFileReference):
-			response.Error(c, http.StatusBadRequest, "invalid file")
+			response.ErrorWithCode(c, http.StatusBadRequest, "request.invalid_file")
 			return
 		default:
-			response.Error(c, http.StatusInternalServerError, "upload file failed")
+			response.InternalError(c)
 			return
 		}
 	}
@@ -93,7 +94,7 @@ func (h *Handler) UploadFile(c *gin.Context) {
 	)
 
 	response.Success(c, FileUploadResponse{
-		File:   toFileObjectResponse(&result.File, buildFileMediaURLs(h.service.UploadService(), userID, &result.File)),
+		File:   toFileObjectResponse(&result.File, h.processing.ResolveFileVectorizationCapabilities(c.Request.Context(), []model.FileObject{result.File})[result.File.FileID], buildFileMediaURLs(h.service.UploadService(), userID, &result.File)),
 		Quota:  toStorageQuotaResponse(result.Quota),
 		Reused: result.Reused,
 	})
@@ -135,12 +136,13 @@ func (h *Handler) ListFiles(c *gin.Context) {
 
 	result, err := h.service.ListFiles(c.Request.Context(), userID, page, pageSize, searchQuery, filterKind, sortBy)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "list files failed")
+		response.InternalError(c)
 		return
 	}
+	capabilities := h.processing.ResolveFileVectorizationCapabilities(c.Request.Context(), result.Items)
 	results := make([]FileObjectResponse, 0, len(result.Items))
 	for i := range result.Items {
-		results = append(results, toFileObjectResponse(&result.Items[i], buildFileMediaURLs(h.service.UploadService(), userID, &result.Items[i])))
+		results = append(results, toFileObjectResponse(&result.Items[i], capabilities[result.Items[i].FileID], buildFileMediaURLs(h.service.UploadService(), userID, &result.Items[i])))
 	}
 	response.Success(c, FileListResponse{
 		Total:   result.Total,
@@ -154,16 +156,16 @@ func (h *Handler) GetFileProcessingStatus(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	fileID := c.Param("file_id")
 	if strings.TrimSpace(fileID) == "" {
-		response.Error(c, http.StatusBadRequest, "invalid file id")
+		response.ErrorWithCode(c, http.StatusBadRequest, "file.invalid_id")
 		return
 	}
-	result, err := h.service.GetFileProcessingStatus(c.Request.Context(), userID, fileID)
+	result, err := h.processing.GetFileProcessingStatus(c.Request.Context(), userID, fileID)
 	if err != nil {
-		if errors.Is(err, appconversation.ErrFileNotFound) {
-			response.Error(c, http.StatusNotFound, "file not found")
+		if errors.Is(err, appprocessing.ErrFileNotFound) {
+			response.ErrorWithCode(c, http.StatusNotFound, "file.not_found")
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "get file processing status failed")
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, toFileProcessingStatusResponse(result))
@@ -174,23 +176,23 @@ func (h *Handler) GetFileExtract(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	fileID := c.Param("file_id")
 	if strings.TrimSpace(fileID) == "" {
-		response.Error(c, http.StatusBadRequest, "invalid file id")
+		response.ErrorWithCode(c, http.StatusBadRequest, "file.invalid_id")
 		return
 	}
 	result, err := h.service.GetFileExtract(c.Request.Context(), userID, fileID)
 	if err != nil {
 		switch {
 		case errors.Is(err, appconversation.ErrInvalidFileReference):
-			response.Error(c, http.StatusBadRequest, "invalid file id")
+			response.ErrorWithCode(c, http.StatusBadRequest, "file.invalid_id")
 			return
 		case errors.Is(err, appconversation.ErrFileNotFound):
-			response.Error(c, http.StatusNotFound, "file not found")
+			response.ErrorWithCode(c, http.StatusNotFound, "file.not_found")
 			return
 		case errors.Is(err, appconversation.ErrFileProcessingNotReady):
-			response.Error(c, http.StatusConflict, "file extract not ready")
+			response.ErrorWithCode(c, http.StatusConflict, "file.extract_not_ready")
 			return
 		default:
-			response.Error(c, http.StatusInternalServerError, "get file extract failed")
+			response.InternalError(c)
 			return
 		}
 	}
@@ -202,7 +204,7 @@ func (h *Handler) GetChatFilePolicy(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	result, err := h.service.GetChatFilePolicy(c.Request.Context(), userID)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "get chat file policy failed")
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, toChatFilePolicyResponse(result))
@@ -226,7 +228,7 @@ func (h *Handler) UpdateFile(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	fileID := c.Param("file_id")
 	if strings.TrimSpace(fileID) == "" {
-		response.Error(c, http.StatusBadRequest, "invalid file id")
+		response.ErrorWithCode(c, http.StatusBadRequest, "file.invalid_id")
 		return
 	}
 
@@ -236,7 +238,7 @@ func (h *Handler) UpdateFile(c *gin.Context) {
 		return
 	}
 	if req.FileName == nil && req.RagOptOut == nil && req.Favorite == nil {
-		response.Error(c, http.StatusBadRequest, "at least one file property is required")
+		response.ErrorWithCode(c, http.StatusBadRequest, "request.required")
 		return
 	}
 
@@ -250,13 +252,13 @@ func (h *Handler) UpdateFile(c *gin.Context) {
 		if err != nil {
 			switch {
 			case errors.Is(err, appconversation.ErrInvalidFileReference):
-				response.Error(c, http.StatusBadRequest, "invalid file id")
+				response.ErrorWithCode(c, http.StatusBadRequest, "file.invalid_id")
 			case errors.Is(err, appconversation.ErrInvalidFileName):
-				response.Error(c, http.StatusBadRequest, "invalid file name")
+				response.ErrorWithCode(c, http.StatusBadRequest, "file.invalid_name")
 			case errors.Is(err, appconversation.ErrFileNotFound):
-				response.Error(c, http.StatusNotFound, "file not found")
+				response.ErrorWithCode(c, http.StatusNotFound, "file.not_found")
 			default:
-				response.Error(c, http.StatusInternalServerError, "update file failed")
+				response.InternalError(c)
 			}
 			return
 		}
@@ -267,11 +269,11 @@ func (h *Handler) UpdateFile(c *gin.Context) {
 		if err != nil {
 			switch {
 			case errors.Is(err, appconversation.ErrInvalidFileReference):
-				response.Error(c, http.StatusBadRequest, "invalid file id")
+				response.ErrorWithCode(c, http.StatusBadRequest, "file.invalid_id")
 			case errors.Is(err, appconversation.ErrFileNotFound):
-				response.Error(c, http.StatusNotFound, "file not found")
+				response.ErrorWithCode(c, http.StatusNotFound, "file.not_found")
 			default:
-				response.Error(c, http.StatusInternalServerError, "update file failed")
+				response.InternalError(c)
 			}
 			return
 		}
@@ -280,11 +282,11 @@ func (h *Handler) UpdateFile(c *gin.Context) {
 		item, err = h.service.UpdateFileFavorite(c.Request.Context(), userID, fileID, *req.Favorite)
 		if err != nil {
 			if errors.Is(err, appconversation.ErrInvalidFileReference) {
-				response.Error(c, http.StatusBadRequest, "invalid file id")
+				response.ErrorWithCode(c, http.StatusBadRequest, "file.invalid_id")
 			} else if errors.Is(err, appconversation.ErrFileNotFound) {
-				response.Error(c, http.StatusNotFound, "file not found")
+				response.ErrorWithCode(c, http.StatusNotFound, "file.not_found")
 			} else {
-				response.Error(c, http.StatusInternalServerError, "update file failed")
+				response.InternalError(c)
 			}
 			return
 		}
@@ -306,7 +308,7 @@ func (h *Handler) UpdateFile(c *gin.Context) {
 		auditDetail,
 	)
 
-	response.Success(c, toFileObjectResponse(item))
+	response.Success(c, toFileObjectResponse(item, h.processing.ResolveFileVectorizationCapabilities(c.Request.Context(), []model.FileObject{*item})[item.FileID]))
 }
 
 // DeleteFile godoc
@@ -327,7 +329,7 @@ func (h *Handler) DeleteFile(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	fileID := c.Param("file_id")
 	if fileID == "" {
-		response.Error(c, http.StatusBadRequest, "invalid file id")
+		response.ErrorWithCode(c, http.StatusBadRequest, "file.invalid_id")
 		return
 	}
 
@@ -335,16 +337,16 @@ func (h *Handler) DeleteFile(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, appconversation.ErrInvalidFileReference):
-			response.Error(c, http.StatusBadRequest, "invalid file id")
+			response.ErrorWithCode(c, http.StatusBadRequest, "file.invalid_id")
 			return
 		case errors.Is(err, appconversation.ErrFileNotFound):
-			response.Error(c, http.StatusNotFound, "file not found")
+			response.ErrorWithCode(c, http.StatusNotFound, "file.not_found")
 			return
 		case errors.Is(err, appconversation.ErrFileInUse):
-			response.Error(c, http.StatusConflict, "file is in use")
+			response.ErrorWithCode(c, http.StatusConflict, response.CodeFileInUse)
 			return
 		default:
-			response.Error(c, http.StatusInternalServerError, "delete file failed")
+			response.InternalError(c)
 			return
 		}
 	}
@@ -376,7 +378,7 @@ func (h *Handler) GetFileContent(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	fileID := c.Param("file_id")
 	if strings.TrimSpace(fileID) == "" {
-		response.Error(c, http.StatusBadRequest, "invalid file id")
+		response.ErrorWithCode(c, http.StatusBadRequest, "file.invalid_id")
 		return
 	}
 
@@ -410,7 +412,7 @@ func (h *Handler) GetFileThumbnail(c *gin.Context) {
 		case errors.Is(err, appconversation.ErrInvalidFileReference):
 			response.ErrorFrom(c, http.StatusBadRequest, errInvalidFileID)
 		default:
-			response.Error(c, http.StatusInternalServerError, "file content unavailable")
+			response.InternalError(c)
 		}
 		return
 	}

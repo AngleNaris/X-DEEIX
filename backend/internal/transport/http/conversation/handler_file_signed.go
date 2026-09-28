@@ -72,7 +72,7 @@ func (h *Handler) GetSignedFileThumbnail(c *gin.Context) {
 			errors.Is(err, appupload.ErrThumbnailUnsupported):
 			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrFileNotFound)
 		default:
-			response.Error(c, http.StatusInternalServerError, "file content unavailable")
+			response.InternalError(c)
 		}
 		return
 	}
@@ -92,7 +92,7 @@ func (h *Handler) serveFileContent(c *gin.Context, userID uint, fileID string, p
 			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrFileNotFound)
 			return
 		default:
-			response.Error(c, http.StatusInternalServerError, "file content unavailable")
+			response.InternalError(c)
 			return
 		}
 	}
@@ -110,7 +110,7 @@ func (h *Handler) serveFileContent(c *gin.Context, userID uint, fileID string, p
 			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrFileNotFound)
 			return
 		default:
-			response.Error(c, http.StatusInternalServerError, "file content unavailable")
+			response.InternalError(c)
 			return
 		}
 	}

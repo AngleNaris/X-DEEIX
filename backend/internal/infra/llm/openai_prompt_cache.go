@@ -1,10 +1,6 @@
 package llm
 
-import (
-	"strings"
-
-	portllm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
-)
+import "strings"
 
 const (
 	openAIPromptCacheModeExplicit = "explicit"
@@ -13,11 +9,11 @@ const (
 
 type openAIPromptCacheConfig struct {
 	Key      string
-	Options  map[string]any
+	Options  map[string]interface{}
 	Explicit bool
 }
 
-func resolveOpenAIPromptCacheConfig(adapter string, input portllm.GenerateInput) openAIPromptCacheConfig {
+func resolveOpenAIPromptCacheConfig(adapter string, input GenerateInput) openAIPromptCacheConfig {
 	config := openAIPromptCacheConfig{}
 	if input.Ephemeral || !isOpenAITextAdapter(adapter) {
 		return config
@@ -29,16 +25,16 @@ func resolveOpenAIPromptCacheConfig(adapter string, input portllm.GenerateInput)
 }
 
 func isOpenAITextAdapter(adapter string) bool {
-	adapter = portllm.NormalizeAdapter(adapter)
-	return adapter == portllm.AdapterOpenAIResponses || adapter == portllm.AdapterOpenAIChatCompletions
+	adapter = NormalizeAdapter(adapter)
+	return adapter == AdapterOpenAIResponses || adapter == AdapterOpenAIChatCompletions
 }
 
-func normalizedOpenAIPromptCacheOptions(options map[string]any) map[string]any {
+func normalizedOpenAIPromptCacheOptions(options map[string]interface{}) map[string]interface{} {
 	raw := modelParamMap(options, "prompt_cache_options")
 	if len(raw) == 0 || !strings.EqualFold(strings.TrimSpace(getString(raw["mode"])), openAIPromptCacheModeExplicit) {
 		return nil
 	}
-	result := map[string]any{"mode": openAIPromptCacheModeExplicit}
+	result := map[string]interface{}{"mode": openAIPromptCacheModeExplicit}
 	if rawTTL, exists := raw["ttl"]; exists {
 		ttl, ok := rawTTL.(string)
 		if !ok || strings.ToLower(strings.TrimSpace(ttl)) != openAIPromptCacheTTL30Minutes {
@@ -49,7 +45,7 @@ func normalizedOpenAIPromptCacheOptions(options map[string]any) map[string]any {
 	return result
 }
 
-func applyOpenAIPromptCacheRequestFields(payload map[string]any, config openAIPromptCacheConfig) {
+func applyOpenAIPromptCacheRequestFields(payload map[string]interface{}, config openAIPromptCacheConfig) {
 	if payload == nil {
 		return
 	}
@@ -61,7 +57,7 @@ func applyOpenAIPromptCacheRequestFields(payload map[string]any, config openAIPr
 	}
 }
 
-func appendOpenAIPromptCacheBreakpoint(block map[string]any, hint *portllm.CacheControl, config *openAIPromptCacheConfig) bool {
+func appendOpenAIPromptCacheBreakpoint(block map[string]interface{}, hint *CacheControl, config *openAIPromptCacheConfig) bool {
 	if block == nil || hint == nil || config == nil || !config.Explicit ||
 		!openAIContentBlockSupportsPromptCacheBreakpoint(block) {
 		return false
@@ -69,11 +65,11 @@ func appendOpenAIPromptCacheBreakpoint(block map[string]any, hint *portllm.Cache
 	if _, exists := block["prompt_cache_breakpoint"]; exists {
 		return false
 	}
-	block["prompt_cache_breakpoint"] = map[string]any{"mode": openAIPromptCacheModeExplicit}
+	block["prompt_cache_breakpoint"] = map[string]interface{}{"mode": openAIPromptCacheModeExplicit}
 	return true
 }
 
-func openAIContentBlockSupportsPromptCacheBreakpoint(block map[string]any) bool {
+func openAIContentBlockSupportsPromptCacheBreakpoint(block map[string]interface{}) bool {
 	switch strings.TrimSpace(getString(block["type"])) {
 	case "input_text", "input_image", "input_file", "text", "image_url", "input_audio", "file", "refusal":
 		return true

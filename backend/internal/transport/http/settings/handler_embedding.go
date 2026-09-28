@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,18 +74,18 @@ func (h *Handler) GetEmbeddingRuntime(c *gin.Context) {
 // @Tags admin/settings
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} response.Envelope
+// @Success 200 {object} EmbeddingIndexStatusResponseDoc
 // @Router /admin/settings/embedding/status [get]
 func (h *Handler) GetEmbeddingStatus(c *gin.Context) {
 	if h.embeddingSvc == nil {
-		response.Error(c, http.StatusServiceUnavailable, "embedding service not available")
+		response.ErrorWithCode(c, http.StatusServiceUnavailable, response.CodeServiceUnavailable)
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 	defer cancel()
 	status, err := h.embeddingSvc.GetIndexStatus(ctx)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "get embedding status failed")
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, toEmbeddingIndexStatusResponse(status))
@@ -95,23 +96,24 @@ func (h *Handler) GetEmbeddingStatus(c *gin.Context) {
 // @Tags admin/settings
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} response.Envelope
+// @Success 200 {object} EmbeddingReindexResponseDoc
 // @Router /admin/settings/embedding/reindex [post]
 func (h *Handler) TriggerReindex(c *gin.Context) {
 	if h.embeddingSvc == nil {
-		response.Error(c, http.StatusServiceUnavailable, "embedding service not available")
+		response.ErrorWithCode(c, http.StatusServiceUnavailable, response.CodeServiceUnavailable)
 		return
 	}
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
 	// accepted=1 表示后台任务已接受（分页扫描与重建均在后台执行，不阻塞本请求）。
-	accepted, err := h.embeddingSvc.ReindexStaleFiles(ctx)
+	includeEmpty, _ := strconv.ParseBool(c.Query("include_empty"))
+	accepted, err := h.embeddingSvc.ReindexStaleFiles(ctx, includeEmpty)
 	if err != nil {
 		if errors.Is(err, appembedding.ErrEmbeddingServiceNotConfigured) {
 			response.ErrorFrom(c, http.StatusBadRequest, err)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "reindex failed")
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, EmbeddingReindexResponse{Submitted: accepted, Message: "reindex task accepted"})

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	appskill "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/skill"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
 	"github.com/gin-gonic/gin"
@@ -49,7 +50,7 @@ func (h *Handler) ListVisibleSkills(c *gin.Context) {
 	for _, rawID := range rawIDs {
 		parsed, err := strconv.ParseUint(rawID, 10, strconv.IntSize)
 		if err != nil || parsed == 0 {
-			response.Error(c, http.StatusBadRequest, "invalid skill id")
+			response.ErrorFrom(c, http.StatusBadRequest, apperr.New("request.invalid_id", "invalid skill id"))
 			return
 		}
 		id := uint(parsed)
@@ -427,7 +428,7 @@ func (h *Handler) GetSkillPackageFile(c *gin.Context) {
 	}
 	filePath := strings.TrimPrefix(c.Param("filepath"), "/")
 	if filePath == "" {
-		response.Error(c, http.StatusBadRequest, "invalid file path")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New("request.invalid_file_path", "invalid file path"))
 		return
 	}
 	content, err := h.service.GetPackageFile(c.Request.Context(), middleware.MustUserID(c), id, filePath)
@@ -532,22 +533,22 @@ func readPackageZip(c *gin.Context) ([]byte, bool) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxPackageZipUploadBytes)
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "skill package file is required")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New("skill.package_file_required", "skill package file is required"))
 		return nil, false
 	}
 	if fileHeader.Size > maxPackageZipUploadBytes {
-		response.Error(c, http.StatusBadRequest, "skill package file is too large")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New("skill.package_file_too_large", "skill package file is too large"))
 		return nil, false
 	}
 	file, err := fileHeader.Open()
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "skill package file is unreadable")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New("skill.package_file_unreadable", "skill package file is unreadable"))
 		return nil, false
 	}
 	defer func() { _ = file.Close() }()
 	data, err := io.ReadAll(io.LimitReader(file, maxPackageZipUploadBytes+1))
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "skill package file is unreadable")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New("skill.package_file_unreadable", "skill package file is unreadable"))
 		return nil, false
 	}
 	return data, true
@@ -578,7 +579,7 @@ func patchInputFromRequest(req PatchSkillRequest) appskill.PatchInput {
 func idParam(c *gin.Context) (uint, bool) {
 	id, err := strconv.ParseUint(c.Param("id"), 10, strconv.IntSize)
 	if err != nil || id == 0 {
-		response.Error(c, http.StatusBadRequest, "invalid skill id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New("request.invalid_id", "invalid skill id"))
 		return 0, false
 	}
 	return uint(id), true
@@ -630,15 +631,15 @@ func auditInput(c *gin.Context, action string, resourceID uint, detail interface
 
 func writeSkillError(c *gin.Context, err error) {
 	if errors.Is(err, appskill.ErrSkillNotFound) {
-		response.Error(c, http.StatusNotFound, "skill not found")
+		response.ErrorFrom(c, http.StatusNotFound, apperr.New("skill.not_found", "skill not found"))
 		return
 	}
 	if errors.Is(err, appskill.ErrSkillConflict) {
-		response.Error(c, http.StatusConflict, "skill trigger already exists")
+		response.ErrorFrom(c, http.StatusConflict, apperr.New("skill.conflict", "skill trigger already exists"))
 		return
 	}
 	if errors.Is(err, appskill.ErrSkillVersionConflict) {
-		response.ErrorWithCode(c, http.StatusConflict, "skill.version_conflict", "skill has been modified")
+		response.ErrorFrom(c, http.StatusConflict, apperr.New("skill.version_conflict", "skill has been modified"))
 		return
 	}
 	if errors.Is(err, appskill.ErrInvalidSkill) {
@@ -657,5 +658,5 @@ func writeSkillError(c *gin.Context, err error) {
 		response.ErrorFrom(c, http.StatusUnsupportedMediaType, err)
 		return
 	}
-	response.Error(c, http.StatusInternalServerError, "skill operation failed")
+	response.InternalError(c)
 }

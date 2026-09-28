@@ -46,7 +46,9 @@ func buildResponsesRequestBody(
 	stream bool,
 ) map[string]interface{} {
 	if adapter == AdapterOpenRouterResponses {
-		return buildOpenRouterResponsesRequestBody(model, input, messages, providerTools, toolDefinitions, providerStreamOptions, stream)
+		payload := buildOpenRouterResponsesRequestBody(model, input, messages, providerTools, toolDefinitions, providerStreamOptions, stream)
+		enforceEphemeralResponsesPayload(payload, input)
+		return payload
 	}
 	promptCache := resolveOpenAIPromptCacheConfig(adapter, input)
 	items := buildResponsesAPIInput(messages, &promptCache)
@@ -55,7 +57,7 @@ func buildResponsesRequestBody(
 		"input":  items,
 		"stream": stream,
 	}
-	if adapter == AdapterOpenAIResponses && input.ResponsesBackground {
+	if adapter == AdapterOpenAIResponses && input.ResponsesBackground && !input.Ephemeral {
 		payload["background"] = true
 		payload["store"] = true
 	}
@@ -78,7 +80,7 @@ func buildResponsesRequestBody(
 	appendToolDeclarations(payload, providerTools, webSearchTools, buildOpenAITools(toolDefinitions, false))
 	// 有状态会话：提供 previous_response_id 时服务端续接存储的历史，
 	// input 仅包含本轮新消息，避免全量重传。
-	if prevID := strings.TrimSpace(input.PreviousResponseID); prevID != "" {
+	if prevID := strings.TrimSpace(input.PreviousResponseID); prevID != "" && !input.Ephemeral {
 		payload["previous_response_id"] = prevID
 	}
 	if streamOptions := responsesStreamOptions(providerStreamOptions); stream && len(streamOptions) > 0 {
@@ -91,7 +93,19 @@ func buildResponsesRequestBody(
 	} else {
 		appendResponseInclude(payload, responseIncludeValues(input.Options)...)
 	}
+	enforceEphemeralResponsesPayload(payload, input)
 	return payload
+}
+
+// Enforce after provider options so user overrides cannot enable response storage.
+func enforceEphemeralResponsesPayload(payload map[string]interface{}, input GenerateInput) {
+	if !input.Ephemeral {
+		return
+	}
+	payload["store"] = false
+	for _, key := range []string{"background", "previous_response_id", "prompt_cache_key", "prompt_cache_options", "prompt_cache_retention"} {
+		delete(payload, key)
+	}
 }
 
 func responsesProtectedProviderOptionKeys(adapter string, hasManagedInstructions bool) []string {

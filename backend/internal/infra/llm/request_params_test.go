@@ -1,14 +1,10 @@
 package llm
 
-import (
-	"testing"
-
-	portllm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
-)
+import "testing"
 
 func TestBuildOpenAIChatCompletionsMinimalStreamRequestIncludesUsage(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIChatCompletions, "gpt-5", portllm.EndpointChatCompletions, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "hello"}},
+	payload := mustBuildRequestBody(t, AdapterOpenAIChatCompletions, "gpt-5", EndpointChatCompletions, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "hello"}},
 	}, true)
 
 	expectedKeys := map[string]struct{}{
@@ -18,15 +14,15 @@ func TestBuildOpenAIChatCompletionsMinimalStreamRequestIncludesUsage(t *testing.
 		"stream_options": {},
 	}
 	assertOnlyPayloadKeys(t, payload, expectedKeys)
-	streamOptions, ok := payload["stream_options"].(map[string]any)
+	streamOptions, ok := payload["stream_options"].(map[string]interface{})
 	if !ok || streamOptions["include_usage"] != true {
 		t.Fatalf("expected stream usage enabled by default, got %#v", payload["stream_options"])
 	}
 }
 
 func TestBuildOpenAIResponsesMinimalRequestHasOnlyProtocolDefaults(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIResponses, "gpt-5", portllm.EndpointResponses, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "hello"}},
+	payload := mustBuildRequestBody(t, AdapterOpenAIResponses, "gpt-5", EndpointResponses, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "hello"}},
 	}, true)
 
 	expectedKeys := map[string]struct{}{
@@ -43,8 +39,8 @@ func TestBuildOpenAIResponsesMinimalRequestHasOnlyProtocolDefaults(t *testing.T)
 }
 
 func TestBuildOpenAIResponsesBackgroundRequestSetsStore(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIResponses, "gpt-5", portllm.EndpointResponses, portllm.GenerateInput{
-		Messages:            []portllm.Message{{Role: "user", Content: "hello"}},
+	payload := mustBuildRequestBody(t, AdapterOpenAIResponses, "gpt-5", EndpointResponses, GenerateInput{
+		Messages:            []Message{{Role: "user", Content: "hello"}},
 		ResponsesBackground: true,
 	}, true)
 
@@ -54,10 +50,10 @@ func TestBuildOpenAIResponsesBackgroundRequestSetsStore(t *testing.T) {
 }
 
 func TestBuildOpenAIResponsesBackgroundIgnoresProviderOverride(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIResponses, "gpt-5", portllm.EndpointResponses, portllm.GenerateInput{
-		Messages:            []portllm.Message{{Role: "user", Content: "hello"}},
+	payload := mustBuildRequestBody(t, AdapterOpenAIResponses, "gpt-5", EndpointResponses, GenerateInput{
+		Messages:            []Message{{Role: "user", Content: "hello"}},
 		ResponsesBackground: true,
-		Options: map[string]any{
+		Options: map[string]interface{}{
 			"background": false,
 			"store":      false,
 		},
@@ -69,21 +65,21 @@ func TestBuildOpenAIResponsesBackgroundIgnoresProviderOverride(t *testing.T) {
 }
 
 func TestOpenAIResponsesCreatedEventEmitsResponseID(t *testing.T) {
-	result := &portllm.GenerateOutput{}
+	result := &GenerateOutput{}
 	var got string
 	err := applyResponsesStreamEvent(
-		portllm.AdapterOpenAIResponses,
+		AdapterOpenAIResponses,
 		"response.created",
-		map[string]any{
+		map[string]interface{}{
 			"type": "response.created",
-			"response": map[string]any{
+			"response": map[string]interface{}{
 				"id":           "resp_123",
 				"service_tier": "default",
 			},
 		},
 		"",
 		result,
-		func(event portllm.GenerateStreamEvent) error {
+		func(event GenerateStreamEvent) error {
 			got = event.ResponseID
 			return nil
 		},
@@ -100,28 +96,28 @@ func TestOpenAIResponsesCreatedEventEmitsResponseID(t *testing.T) {
 }
 
 func TestBuildOpenAIResponsesUsesOutputTextForAssistantHistory(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIResponses, "gpt-5", portllm.EndpointResponses, portllm.GenerateInput{
-		Messages: []portllm.Message{
+	payload := mustBuildRequestBody(t, AdapterOpenAIResponses, "gpt-5", EndpointResponses, GenerateInput{
+		Messages: []Message{
 			{Role: "system", Content: "follow the rules"},
 			{Role: "user", Content: "hello"},
 			{Role: "assistant", Content: "hi there"},
 			{
 				Role: "assistant",
-				Parts: []portllm.ContentPart{
-					{Kind: portllm.ContentPartText, Text: "part answer"},
+				Parts: []ContentPart{
+					{Kind: ContentPartText, Text: "part answer"},
 				},
 			},
 			{Role: "user", Content: "next"},
 		},
 	}, true)
 
-	inputItems, ok := payload["input"].([]map[string]any)
+	inputItems, ok := payload["input"].([]map[string]interface{})
 	if !ok || len(inputItems) != 5 {
 		t.Fatalf("expected responses input items, got %#v", payload["input"])
 	}
 	expectedTypes := []string{"input_text", "input_text", "output_text", "output_text", "input_text"}
 	for i, expected := range expectedTypes {
-		content, ok := inputItems[i]["content"].([]map[string]any)
+		content, ok := inputItems[i]["content"].([]map[string]interface{})
 		if !ok || len(content) != 1 {
 			t.Fatalf("expected content item at %d, got %#v", i, inputItems[i]["content"])
 		}
@@ -132,15 +128,15 @@ func TestBuildOpenAIResponsesUsesOutputTextForAssistantHistory(t *testing.T) {
 }
 
 func TestBuildOpenRouterResponsesAddsRequiredHistoryMessageFields(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenRouterResponses, "openai/gpt-oss-120b:free", portllm.EndpointResponses, portllm.GenerateInput{
-		Messages: []portllm.Message{
+	payload := mustBuildRequestBody(t, AdapterOpenRouterResponses, "openai/gpt-oss-120b:free", EndpointResponses, GenerateInput{
+		Messages: []Message{
 			{Role: "user", Content: "你好"},
 			{Role: "assistant", Content: "你好！有什么我可以帮忙的吗？"},
 			{Role: "user", Content: "你是谁？"},
 		},
 	}, true)
 
-	inputItems, ok := payload["input"].([]map[string]any)
+	inputItems, ok := payload["input"].([]map[string]interface{})
 	if !ok || len(inputItems) != 3 {
 		t.Fatalf("expected three openrouter responses input items, got %#v", payload["input"])
 	}
@@ -154,7 +150,7 @@ func TestBuildOpenRouterResponsesAddsRequiredHistoryMessageFields(t *testing.T) 
 	if assistant["id"] == "" || assistant["status"] != "completed" {
 		t.Fatalf("expected assistant id/status for openrouter history, got %#v", assistant)
 	}
-	content := assistant["content"].([]map[string]any)
+	content := assistant["content"].([]map[string]interface{})
 	if content[0]["type"] != "output_text" {
 		t.Fatalf("expected output_text content, got %#v", content[0])
 	}
@@ -164,18 +160,18 @@ func TestBuildOpenRouterResponsesAddsRequiredHistoryMessageFields(t *testing.T) 
 }
 
 func TestBuildOpenAIResponsesPlaylistHistoryMatchesOfficialContentTypes(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIResponses, "gpt-5.5", portllm.EndpointResponses, portllm.GenerateInput{
-		Messages: []portllm.Message{
+	payload := mustBuildRequestBody(t, AdapterOpenAIResponses, "gpt-5.5", EndpointResponses, GenerateInput{
+		Messages: []Message{
 			{Role: "user", Content: "这是我最近听的歌，你根据文件告诉我不同歌手的占比"},
 			{Role: "assistant", Content: "根据你文件里的 11 首歌，我按“歌手参与次数”统计。"},
 			{Role: "user", Content: "<ctx>\n<files>\n<file name=\"My_FreeText_Playlist_Missing.csv\">Track name\tArtist name\n\t天后 (Live) - 薛之谦</file>\n</files>\n</ctx>\n\n<q>推荐一些流行的哥</q>"},
 		},
-		Options: map[string]any{
-			"include": []any{"reasoning.encrypted_content"},
+		Options: map[string]interface{}{
+			"include": []interface{}{"reasoning.encrypted_content"},
 		},
 	}, true)
 
-	inputItems, ok := payload["input"].([]map[string]any)
+	inputItems, ok := payload["input"].([]map[string]interface{})
 	if !ok || len(inputItems) != 3 {
 		t.Fatalf("expected three responses input items, got %#v", payload["input"])
 	}
@@ -185,7 +181,7 @@ func TestBuildOpenAIResponsesPlaylistHistoryMatchesOfficialContentTypes(t *testi
 		if inputItems[i]["role"] != expectedRoles[i] {
 			t.Fatalf("expected role %q at %d, got %#v", expectedRoles[i], i, inputItems[i])
 		}
-		content, ok := inputItems[i]["content"].([]map[string]any)
+		content, ok := inputItems[i]["content"].([]map[string]interface{})
 		if !ok || len(content) != 1 {
 			t.Fatalf("expected single content item at %d, got %#v", i, inputItems[i]["content"])
 		}
@@ -196,8 +192,8 @@ func TestBuildOpenAIResponsesPlaylistHistoryMatchesOfficialContentTypes(t *testi
 }
 
 func TestBuildAnthropicMinimalRequestHasOnlyRequiredDefaults(t *testing.T) {
-	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4", portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "hello"}},
+	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4", GenerateInput{
+		Messages: []Message{{Role: "user", Content: "hello"}},
 	}, true)
 
 	expectedKeys := map[string]struct{}{
@@ -211,15 +207,15 @@ func TestBuildAnthropicMinimalRequestHasOnlyRequiredDefaults(t *testing.T) {
 	if payload["max_tokens"] != anthropicDefaultMaxTokens {
 		t.Fatalf("expected default max_tokens, got %#v", payload["max_tokens"])
 	}
-	cacheControl, ok := payload["cache_control"].(map[string]any)
+	cacheControl, ok := payload["cache_control"].(map[string]interface{})
 	if !ok || cacheControl["type"] != "ephemeral" {
 		t.Fatalf("expected default cache_control, got %#v", payload["cache_control"])
 	}
 }
 
 func TestBuildGeminiMinimalRequestHasOnlyProtocolDefaults(t *testing.T) {
-	payload := mustBuildGeminiRequestBody(t, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "hello"}},
+	payload := mustBuildGeminiRequestBody(t, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "hello"}},
 	})
 
 	expectedKeys := map[string]struct{}{
@@ -228,7 +224,7 @@ func TestBuildGeminiMinimalRequestHasOnlyProtocolDefaults(t *testing.T) {
 	assertOnlyPayloadKeys(t, payload, expectedKeys)
 }
 
-func assertOnlyPayloadKeys(t *testing.T, payload map[string]any, expected map[string]struct{}) {
+func assertOnlyPayloadKeys(t *testing.T, payload map[string]interface{}, expected map[string]struct{}) {
 	t.Helper()
 	if len(payload) != len(expected) {
 		t.Fatalf("expected only keys %v, got %#v", mapKeys(expected), payload)
@@ -249,9 +245,9 @@ func mapKeys(items map[string]struct{}) []string {
 }
 
 func TestBuildOpenAIChatCompletionsRequestBodyDoesNotForwardPromptCacheRetention(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIChatCompletions, "gpt-5", portllm.EndpointChatCompletions, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "hello"}},
-		Options: map[string]any{
+	payload := mustBuildRequestBody(t, AdapterOpenAIChatCompletions, "gpt-5", EndpointChatCompletions, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "hello"}},
+		Options: map[string]interface{}{
 			"max_output_tokens":      2048,
 			"prompt_cache_retention": "24h",
 			"temperature":            0.2,
@@ -259,7 +255,7 @@ func TestBuildOpenAIChatCompletionsRequestBodyDoesNotForwardPromptCacheRetention
 			"frequency_penalty":      0.4,
 			"presence_penalty":       0.3,
 			"seed":                   1234,
-			"stop":                   []any{"END", "STOP"},
+			"stop":                   []interface{}{"END", "STOP"},
 			"response_format":        "json",
 		},
 	}, false)
@@ -296,40 +292,40 @@ func TestBuildOpenAIChatCompletionsRequestBodyDoesNotForwardPromptCacheRetention
 }
 
 func TestBuildOpenAIChatCompletionsUsesConfiguredGPT56PromptCachePrefix(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIChatCompletions, "gpt-5.6-luna", portllm.EndpointChatCompletions, portllm.GenerateInput{
+	payload := mustBuildRequestBody(t, AdapterOpenAIChatCompletions, "gpt-5.6-luna", EndpointChatCompletions, GenerateInput{
 		PromptCacheKey: "session-123",
-		Messages: []portllm.Message{
-			{Role: "system", Content: "stable policy", CacheControl: &portllm.CacheControl{Type: "ephemeral"}},
-			{Role: "user", Content: "historical question", CacheControl: &portllm.CacheControl{Type: "ephemeral"}},
+		Messages: []Message{
+			{Role: "system", Content: "stable policy", CacheControl: &CacheControl{Type: "ephemeral"}},
+			{Role: "user", Content: "historical question", CacheControl: &CacheControl{Type: "ephemeral"}},
 			{Role: "assistant", Content: "historical answer"},
 			{Role: "user", Content: "dynamic rag context"},
 		},
-		Options: map[string]any{
-			"prompt_cache_options": map[string]any{"mode": "explicit"},
+		Options: map[string]interface{}{
+			"prompt_cache_options": map[string]interface{}{"mode": "explicit"},
 		},
 	}, false)
 
 	if payload["prompt_cache_key"] != "session-123" {
 		t.Fatalf("expected stable prompt_cache_key, got %#v", payload["prompt_cache_key"])
 	}
-	cacheOptions, ok := payload["prompt_cache_options"].(map[string]any)
+	cacheOptions, ok := payload["prompt_cache_options"].(map[string]interface{})
 	if !ok || cacheOptions["mode"] != "explicit" {
 		t.Fatalf("expected GPT-5.6 explicit prompt cache options, got %#v", payload["prompt_cache_options"])
 	}
-	messages := payload["messages"].([]map[string]any)
-	stableContent, ok := messages[0]["content"].([]map[string]any)
+	messages := payload["messages"].([]map[string]interface{})
+	stableContent, ok := messages[0]["content"].([]map[string]interface{})
 	if !ok || len(stableContent) != 1 {
 		t.Fatalf("expected cacheable system text content block, got %#v", messages[0]["content"])
 	}
-	breakpoint, ok := stableContent[0]["prompt_cache_breakpoint"].(map[string]any)
+	breakpoint, ok := stableContent[0]["prompt_cache_breakpoint"].(map[string]interface{})
 	if !ok || breakpoint["mode"] != "explicit" {
 		t.Fatalf("expected explicit breakpoint on stable prefix, got %#v", stableContent[0])
 	}
-	historicalContent, ok := messages[1]["content"].([]map[string]any)
+	historicalContent, ok := messages[1]["content"].([]map[string]interface{})
 	if !ok || len(historicalContent) != 1 {
 		t.Fatalf("expected cacheable historical user content block, got %#v", messages[1]["content"])
 	}
-	if _, ok := historicalContent[0]["prompt_cache_breakpoint"].(map[string]any); !ok {
+	if _, ok := historicalContent[0]["prompt_cache_breakpoint"].(map[string]interface{}); !ok {
 		t.Fatalf("expected explicit breakpoint on historical user, got %#v", historicalContent[0])
 	}
 	if _, ok := messages[3]["content"].(string); !ok {
@@ -338,10 +334,10 @@ func TestBuildOpenAIChatCompletionsUsesConfiguredGPT56PromptCachePrefix(t *testi
 }
 
 func TestBuildOpenAIResponsesKeepsImplicitCachingWithoutExplicitOptions(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIResponses, "gpt-5.6", portllm.EndpointResponses, portllm.GenerateInput{
+	payload := mustBuildRequestBody(t, AdapterOpenAIResponses, "gpt-5.6", EndpointResponses, GenerateInput{
 		PromptCacheKey: "session-implicit",
-		Messages: []portllm.Message{
-			{Role: "system", Content: "stable policy", CacheControl: &portllm.CacheControl{Type: "ephemeral"}},
+		Messages: []Message{
+			{Role: "system", Content: "stable policy", CacheControl: &CacheControl{Type: "ephemeral"}},
 			{Role: "user", Content: "hello"},
 		},
 	}, false)
@@ -352,8 +348,8 @@ func TestBuildOpenAIResponsesKeepsImplicitCachingWithoutExplicitOptions(t *testi
 	if _, ok := payload["prompt_cache_options"]; ok {
 		t.Fatalf("expected implicit caching to remain unchanged without opt-in, got %#v", payload["prompt_cache_options"])
 	}
-	for _, item := range payload["input"].([]map[string]any) {
-		for _, block := range item["content"].([]map[string]any) {
+	for _, item := range payload["input"].([]map[string]interface{}) {
+		for _, block := range item["content"].([]map[string]interface{}) {
 			if _, ok := block["prompt_cache_breakpoint"]; ok {
 				t.Fatalf("expected no explicit breakpoints without opt-in, got %#v", block)
 			}
@@ -362,17 +358,17 @@ func TestBuildOpenAIResponsesKeepsImplicitCachingWithoutExplicitOptions(t *testi
 }
 
 func TestBuildOpenAIChatCompletionsProviderOptionsMergeAndProtectSystemFields(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIChatCompletions, "gpt-5", portllm.EndpointChatCompletions, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "hello"}},
-		Options: map[string]any{
+	payload := mustBuildRequestBody(t, AdapterOpenAIChatCompletions, "gpt-5", EndpointChatCompletions, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "hello"}},
+		Options: map[string]interface{}{
 			"service_tier": "priority",
-			"metadata": map[string]any{
+			"metadata": map[string]interface{}{
 				"tenant": "deeix-chat",
 			},
 			"model":          "attacker-model",
-			"messages":       []any{},
+			"messages":       []interface{}{},
 			"stream":         false,
-			"stream_options": map[string]any{"include_usage": false},
+			"stream_options": map[string]interface{}{"include_usage": false},
 		},
 	}, true)
 
@@ -382,28 +378,28 @@ func TestBuildOpenAIChatCompletionsProviderOptionsMergeAndProtectSystemFields(t 
 	if payload["stream"] != true {
 		t.Fatalf("expected protected stream=true, got %#v", payload["stream"])
 	}
-	streamOptions, ok := payload["stream_options"].(map[string]any)
+	streamOptions, ok := payload["stream_options"].(map[string]interface{})
 	if !ok || streamOptions["include_usage"] != false {
 		t.Fatalf("expected provider stream_options, got %#v", payload["stream_options"])
 	}
 	if payload["service_tier"] != "priority" {
 		t.Fatalf("expected provider option service_tier, got %#v", payload["service_tier"])
 	}
-	metadata, ok := payload["metadata"].(map[string]any)
+	metadata, ok := payload["metadata"].(map[string]interface{})
 	if !ok || metadata["tenant"] != "deeix-chat" {
 		t.Fatalf("expected provider metadata merge, got %#v", payload["metadata"])
 	}
 }
 
 func TestBuildOpenAIChatCompletionsStructuredOutputsAndVerbosity(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIChatCompletions, "gpt-5.1", portllm.EndpointChatCompletions, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "developer", Content: "Return valid JSON."}, {Role: "user", Content: "hello"}},
-		Options: map[string]any{
+	payload := mustBuildRequestBody(t, AdapterOpenAIChatCompletions, "gpt-5.1", EndpointChatCompletions, GenerateInput{
+		Messages: []Message{{Role: "developer", Content: "Return valid JSON."}, {Role: "user", Content: "hello"}},
+		Options: map[string]interface{}{
 			"verbosity": "low",
-			"response_format": map[string]any{
+			"response_format": map[string]interface{}{
 				"type":   "json_schema",
 				"name":   "answer",
-				"schema": map[string]any{"type": "object"},
+				"schema": map[string]interface{}{"type": "object"},
 				"strict": true,
 			},
 		},
@@ -412,15 +408,15 @@ func TestBuildOpenAIChatCompletionsStructuredOutputsAndVerbosity(t *testing.T) {
 	if payload["verbosity"] != "low" {
 		t.Fatalf("expected chat verbosity=low, got %#v", payload["verbosity"])
 	}
-	messages := payload["messages"].([]map[string]any)
+	messages := payload["messages"].([]map[string]interface{})
 	if messages[0]["role"] != "developer" {
 		t.Fatalf("expected developer role to be preserved, got %#v", messages[0])
 	}
-	format, ok := payload["response_format"].(map[string]any)
+	format, ok := payload["response_format"].(map[string]interface{})
 	if !ok || format["type"] != "json_schema" {
 		t.Fatalf("expected chat response_format json_schema, got %#v", payload["response_format"])
 	}
-	jsonSchema, ok := format["json_schema"].(map[string]any)
+	jsonSchema, ok := format["json_schema"].(map[string]interface{})
 	if !ok || jsonSchema["name"] != "answer" || jsonSchema["strict"] != true {
 		t.Fatalf("expected chat json_schema wrapper, got %#v", format["json_schema"])
 	}
@@ -430,16 +426,16 @@ func TestBuildOpenAIChatCompletionsStructuredOutputsAndVerbosity(t *testing.T) {
 }
 
 func TestBuildOpenAIChatCompletionsNativeToolOptions(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIChatCompletions, "mimo-v2.5-pro", portllm.EndpointChatCompletions, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "please introduce Jun Lei"}},
-		Options: map[string]any{
-			"tools": []any{
-				map[string]any{
+	payload := mustBuildRequestBody(t, AdapterOpenAIChatCompletions, "mimo-v2.5-pro", EndpointChatCompletions, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "please introduce Jun Lei"}},
+		Options: map[string]interface{}{
+			"tools": []interface{}{
+				map[string]interface{}{
 					"type":         "web_search",
 					"max_keyword":  float64(3),
 					"force_search": true,
 					"limit":        float64(1),
-					"user_location": map[string]any{
+					"user_location": map[string]interface{}{
 						"type":    "approximate",
 						"country": "China",
 						"region":  "Hubei",
@@ -453,7 +449,7 @@ func TestBuildOpenAIChatCompletionsNativeToolOptions(t *testing.T) {
 			"stop":                  nil,
 			"frequency_penalty":     float64(0),
 			"presence_penalty":      float64(0),
-			"thinking": map[string]any{
+			"thinking": map[string]interface{}{
 				"type": "disabled",
 			},
 		},
@@ -465,24 +461,24 @@ func TestBuildOpenAIChatCompletionsNativeToolOptions(t *testing.T) {
 	if payload["stop"] != nil {
 		t.Fatalf("expected stop=null, got %#v", payload["stop"])
 	}
-	streamOptions, ok := payload["stream_options"].(map[string]any)
+	streamOptions, ok := payload["stream_options"].(map[string]interface{})
 	if !ok || streamOptions["include_usage"] != true {
 		t.Fatalf("expected stream usage enabled by default, got %#v", payload["stream_options"])
 	}
-	thinking, ok := payload["thinking"].(map[string]any)
+	thinking, ok := payload["thinking"].(map[string]interface{})
 	if !ok || thinking["type"] != "disabled" {
 		t.Fatalf("expected native thinking config, got %#v", payload["thinking"])
 	}
-	tools, ok := payload["tools"].([]map[string]any)
+	tools, ok := payload["tools"].([]map[string]interface{})
 	if !ok || len(tools) != 1 || tools[0]["type"] != "web_search" {
 		t.Fatalf("expected native web_search tool, got %#v", payload["tools"])
 	}
 }
 
 func TestBuildOpenAIResponsesRequestBodyWebSearchDoesNotForwardPromptCacheRetention(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIResponses, "gpt-5", portllm.EndpointResponses, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "hello"}},
-		Options: map[string]any{
+	payload := mustBuildRequestBody(t, AdapterOpenAIResponses, "gpt-5", EndpointResponses, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "hello"}},
+		Options: map[string]interface{}{
 			"max_output_tokens":      2048,
 			"prompt_cache_retention": "in-memory",
 			"temperature":            0.3,
@@ -502,7 +498,7 @@ func TestBuildOpenAIResponsesRequestBodyWebSearchDoesNotForwardPromptCacheRetent
 	if payload["top_p"] != 0.7 {
 		t.Fatalf("expected top_p=0.7, got %#v", payload["top_p"])
 	}
-	text, ok := payload["text"].(map[string]any)
+	text, ok := payload["text"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected text config, got %#v", payload["text"])
 	}
@@ -513,7 +509,7 @@ func TestBuildOpenAIResponsesRequestBodyWebSearchDoesNotForwardPromptCacheRetent
 	if !ok || format["type"] != "json_object" {
 		t.Fatalf("expected text.format=json_object, got %#v", text["format"])
 	}
-	tools, ok := payload["tools"].([]map[string]any)
+	tools, ok := payload["tools"].([]map[string]interface{})
 	if !ok || len(tools) != 1 || tools[0]["type"] != "web_search" {
 		t.Fatalf("expected web_search tool, got %#v", payload["tools"])
 	}
@@ -527,16 +523,16 @@ func TestBuildOpenAIResponsesRequestBodyWebSearchDoesNotForwardPromptCacheRetent
 }
 
 func TestBuildOpenAIResponsesUsesConfiguredExplicitPromptCache(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIResponses, "future-openai-model", portllm.EndpointResponses, portllm.GenerateInput{
+	payload := mustBuildRequestBody(t, AdapterOpenAIResponses, "future-openai-model", EndpointResponses, GenerateInput{
 		PromptCacheKey: "session-456",
-		Messages: []portllm.Message{
-			{Role: "system", Content: "stable policy", CacheControl: &portllm.CacheControl{Type: "ephemeral"}},
-			{Role: "user", Content: "historical question", CacheControl: &portllm.CacheControl{Type: "ephemeral"}},
+		Messages: []Message{
+			{Role: "system", Content: "stable policy", CacheControl: &CacheControl{Type: "ephemeral"}},
+			{Role: "user", Content: "historical question", CacheControl: &CacheControl{Type: "ephemeral"}},
 			{Role: "assistant", Content: "historical answer"},
 			{Role: "user", Content: "dynamic rag context"},
 		},
-		Options: map[string]any{
-			"prompt_cache_options":   map[string]any{"mode": "explicit", "ttl": "30m"},
+		Options: map[string]interface{}{
+			"prompt_cache_options":   map[string]interface{}{"mode": "explicit", "ttl": "30m"},
 			"prompt_cache_retention": "24h",
 		},
 	}, false)
@@ -544,24 +540,24 @@ func TestBuildOpenAIResponsesUsesConfiguredExplicitPromptCache(t *testing.T) {
 	if payload["prompt_cache_key"] != "session-456" {
 		t.Fatalf("expected stable prompt_cache_key, got %#v", payload["prompt_cache_key"])
 	}
-	cacheOptions, ok := payload["prompt_cache_options"].(map[string]any)
+	cacheOptions, ok := payload["prompt_cache_options"].(map[string]interface{})
 	if !ok || cacheOptions["mode"] != "explicit" || cacheOptions["ttl"] != "30m" {
 		t.Fatalf("expected configured explicit cache options, got %#v", payload["prompt_cache_options"])
 	}
 	if _, ok := payload["prompt_cache_retention"]; ok {
 		t.Fatalf("expected explicit cache mode to omit implicit retention, got %#v", payload["prompt_cache_retention"])
 	}
-	items := payload["input"].([]map[string]any)
-	stableContent := items[0]["content"].([]map[string]any)
-	breakpoint, ok := stableContent[0]["prompt_cache_breakpoint"].(map[string]any)
+	items := payload["input"].([]map[string]interface{})
+	stableContent := items[0]["content"].([]map[string]interface{})
+	breakpoint, ok := stableContent[0]["prompt_cache_breakpoint"].(map[string]interface{})
 	if !ok || breakpoint["mode"] != "explicit" {
 		t.Fatalf("expected explicit Responses breakpoint, got %#v", stableContent[0])
 	}
-	historicalContent := items[1]["content"].([]map[string]any)
-	if _, ok := historicalContent[0]["prompt_cache_breakpoint"].(map[string]any); !ok {
+	historicalContent := items[1]["content"].([]map[string]interface{})
+	if _, ok := historicalContent[0]["prompt_cache_breakpoint"].(map[string]interface{}); !ok {
 		t.Fatalf("expected explicit Responses breakpoint on historical user, got %#v", historicalContent[0])
 	}
-	dynamicContent := items[3]["content"].([]map[string]any)
+	dynamicContent := items[3]["content"].([]map[string]interface{})
 	if _, ok := dynamicContent[0]["prompt_cache_breakpoint"]; ok {
 		t.Fatalf("expected current user content to remain outside explicit cache prefix, got %#v", dynamicContent[0])
 	}
@@ -574,31 +570,31 @@ func TestBuildOpenAIRequestsPreserveAllExplicitPromptCacheBreakpoints(t *testing
 		endpoint string
 		field    string
 	}{
-		{name: "responses", adapter: portllm.AdapterOpenAIResponses, endpoint: portllm.EndpointResponses, field: "input"},
-		{name: "chat completions", adapter: portllm.AdapterOpenAIChatCompletions, endpoint: portllm.EndpointChatCompletions, field: "messages"},
+		{name: "responses", adapter: AdapterOpenAIResponses, endpoint: EndpointResponses, field: "input"},
+		{name: "chat completions", adapter: AdapterOpenAIChatCompletions, endpoint: EndpointChatCompletions, field: "messages"},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			messages := make([]portllm.Message, 0, 6)
+			messages := make([]Message, 0, 6)
 			for index := 0; index < 6; index++ {
-				messages = append(messages, portllm.Message{
+				messages = append(messages, Message{
 					Role:         "system",
 					Content:      "stable",
-					CacheControl: &portllm.CacheControl{Type: "ephemeral"},
+					CacheControl: &CacheControl{Type: "ephemeral"},
 				})
 			}
-			payload := mustBuildRequestBody(t, test.adapter, "gpt-5.6", test.endpoint, portllm.GenerateInput{
+			payload := mustBuildRequestBody(t, test.adapter, "gpt-5.6", test.endpoint, GenerateInput{
 				PromptCacheKey: "session-789",
 				Messages:       messages,
-				Options: map[string]any{
-					"prompt_cache_options": map[string]any{"mode": "explicit"},
+				Options: map[string]interface{}{
+					"prompt_cache_options": map[string]interface{}{"mode": "explicit"},
 				},
 			}, false)
 
 			count := 0
-			for _, item := range payload[test.field].([]map[string]any) {
-				for _, block := range item["content"].([]map[string]any) {
+			for _, item := range payload[test.field].([]map[string]interface{}) {
+				for _, block := range item["content"].([]map[string]interface{}) {
 					if _, ok := block["prompt_cache_breakpoint"]; ok {
 						count++
 					}
@@ -612,16 +608,16 @@ func TestBuildOpenAIRequestsPreserveAllExplicitPromptCacheBreakpoints(t *testing
 }
 
 func TestBuildOpenAIResponsesRequestBodyMergesIncludeReasoningAndStructuredText(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIResponses, "gpt-5", portllm.EndpointResponses, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "return json"}},
-		Options: map[string]any{
-			"include":           []any{"file_search_call.results"},
+	payload := mustBuildRequestBody(t, AdapterOpenAIResponses, "gpt-5", EndpointResponses, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "return json"}},
+		Options: map[string]interface{}{
+			"include":           []interface{}{"file_search_call.results"},
 			"reasoning_effort":  "medium",
 			"reasoning_summary": "auto",
-			"response_format": map[string]any{
+			"response_format": map[string]interface{}{
 				"type":   "json_schema",
 				"name":   "answer",
-				"schema": map[string]any{"type": "object"},
+				"schema": map[string]interface{}{"type": "object"},
 				"strict": true,
 			},
 		},
@@ -631,15 +627,15 @@ func TestBuildOpenAIResponsesRequestBodyMergesIncludeReasoningAndStructuredText(
 	if !ok || len(include) != 2 || include[0] != "reasoning.encrypted_content" || include[1] != "file_search_call.results" {
 		t.Fatalf("expected default and configured include values, got %#v", payload["include"])
 	}
-	reasoning, ok := payload["reasoning"].(map[string]any)
+	reasoning, ok := payload["reasoning"].(map[string]interface{})
 	if !ok || reasoning["effort"] != "medium" || reasoning["summary"] != "auto" {
 		t.Fatalf("expected reasoning effort and summary, got %#v", payload["reasoning"])
 	}
-	text, ok := payload["text"].(map[string]any)
+	text, ok := payload["text"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected text config, got %#v", payload["text"])
 	}
-	format, ok := text["format"].(map[string]any)
+	format, ok := text["format"].(map[string]interface{})
 	if !ok || format["type"] != "json_schema" || format["name"] != "answer" || format["strict"] != true {
 		t.Fatalf("expected response_format mapped to text.format, got %#v", text["format"])
 	}
@@ -649,56 +645,56 @@ func TestBuildOpenAIResponsesRequestBodyMergesIncludeReasoningAndStructuredText(
 }
 
 func TestBuildOpenAIResponsesNestedProviderOptionsMergeAndOfficialFields(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIResponses, "gpt-5", portllm.EndpointResponses, portllm.GenerateInput{
+	payload := mustBuildRequestBody(t, AdapterOpenAIResponses, "gpt-5", EndpointResponses, GenerateInput{
 		RequestID:      "req-123",
 		ConversationID: 42,
-		Messages:       []portllm.Message{{Role: "user", Content: "hello"}},
-		Options: map[string]any{
+		Messages:       []Message{{Role: "user", Content: "hello"}},
+		Options: map[string]interface{}{
 			"verbosity": "low",
-			"text": map[string]any{
-				"format": map[string]any{"type": "json_schema"},
+			"text": map[string]interface{}{
+				"format": map[string]interface{}{"type": "json_schema"},
 			},
-			"metadata": map[string]any{
+			"metadata": map[string]interface{}{
 				"user_tag": "debug",
 			},
-			"stream_options": map[string]any{
+			"stream_options": map[string]interface{}{
 				"include_usage":       true,
 				"include_obfuscation": true,
 			},
-			"input":        []any{},
+			"input":        []interface{}{},
 			"instructions": "official developer instructions",
-			"prompt": map[string]any{
+			"prompt": map[string]interface{}{
 				"id": "pmpt_123",
 			},
 		},
 	}, true)
 
-	text, ok := payload["text"].(map[string]any)
+	text, ok := payload["text"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected text config, got %#v", payload["text"])
 	}
 	if text["verbosity"] != "low" {
 		t.Fatalf("expected normalized verbosity to remain, got %#v", text)
 	}
-	format, ok := text["format"].(map[string]any)
+	format, ok := text["format"].(map[string]interface{})
 	if !ok || format["type"] != "json_schema" {
 		t.Fatalf("expected nested text.format merge, got %#v", text["format"])
 	}
-	metadata, ok := payload["metadata"].(map[string]any)
+	metadata, ok := payload["metadata"].(map[string]interface{})
 	if !ok || metadata["user_tag"] != "debug" {
 		t.Fatalf("expected official metadata to pass through, got %#v", payload["metadata"])
 	}
-	if _, ok := payload["input"].([]map[string]any); !ok {
+	if _, ok := payload["input"].([]map[string]interface{}); !ok {
 		t.Fatalf("expected protected input messages, got %#v", payload["input"])
 	}
 	if payload["instructions"] != "official developer instructions" {
 		t.Fatalf("expected official instructions to pass through, got %#v", payload["instructions"])
 	}
-	prompt, ok := payload["prompt"].(map[string]any)
+	prompt, ok := payload["prompt"].(map[string]interface{})
 	if !ok || prompt["id"] != "pmpt_123" {
 		t.Fatalf("expected official prompt to pass through, got %#v", payload["prompt"])
 	}
-	streamOptions, ok := payload["stream_options"].(map[string]any)
+	streamOptions, ok := payload["stream_options"].(map[string]interface{})
 	if !ok || streamOptions["include_obfuscation"] != true {
 		t.Fatalf("expected official responses stream_options, got %#v", payload["stream_options"])
 	}
@@ -708,40 +704,40 @@ func TestBuildOpenAIResponsesNestedProviderOptionsMergeAndOfficialFields(t *test
 }
 
 func TestBuildOpenAIResponsesUsesManagedInstructions(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIResponses, "gpt-5", portllm.EndpointResponses, portllm.GenerateInput{
-		Messages:     []portllm.Message{{Role: "user", Content: "hello"}},
+	payload := mustBuildRequestBody(t, AdapterOpenAIResponses, "gpt-5", EndpointResponses, GenerateInput{
+		Messages:     []Message{{Role: "user", Content: "hello"}},
 		Instructions: "managed developer instructions",
-		Options: map[string]any{
+		Options: map[string]interface{}{
 			"instructions": "provider override",
-			"metadata":     map[string]any{"trace": "ok"},
-			"prompt":       map[string]any{"id": "pmpt_123"},
+			"metadata":     map[string]interface{}{"trace": "ok"},
+			"prompt":       map[string]interface{}{"id": "pmpt_123"},
 		},
 	}, true)
 
 	if payload["instructions"] != "managed developer instructions" {
 		t.Fatalf("expected managed instructions, got %#v", payload["instructions"])
 	}
-	metadata, ok := payload["metadata"].(map[string]any)
+	metadata, ok := payload["metadata"].(map[string]interface{})
 	if !ok || metadata["trace"] != "ok" {
 		t.Fatalf("expected metadata to remain available, got %#v", payload["metadata"])
 	}
-	prompt, ok := payload["prompt"].(map[string]any)
+	prompt, ok := payload["prompt"].(map[string]interface{})
 	if !ok || prompt["id"] != "pmpt_123" {
 		t.Fatalf("expected prompt to remain available, got %#v", payload["prompt"])
 	}
 }
 
 func TestBuildXAIResponsesOmitsUnsupportedSystemMetadata(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterXAIResponses, "grok-4.3", portllm.EndpointResponses, portllm.GenerateInput{
+	payload := mustBuildRequestBody(t, AdapterXAIResponses, "grok-4.3", EndpointResponses, GenerateInput{
 		RequestID:      "req-123",
 		ConversationID: 42,
-		Messages:       []portllm.Message{{Role: "user", Content: "上海今天的天气"}},
-		Options: map[string]any{
-			"metadata":     map[string]any{"user_tag": "debug"},
+		Messages:       []Message{{Role: "user", Content: "上海今天的天气"}},
+		Options: map[string]interface{}{
+			"metadata":     map[string]interface{}{"user_tag": "debug"},
 			"instructions": "custom instructions",
-			"prompt":       map[string]any{"id": "pmpt_123"},
-			"tools": []any{
-				map[string]any{"type": "x_search"},
+			"prompt":       map[string]interface{}{"id": "pmpt_123"},
+			"tools": []interface{}{
+				map[string]interface{}{"type": "x_search"},
 			},
 		},
 	}, true)
@@ -759,18 +755,18 @@ func TestBuildXAIResponsesOmitsUnsupportedSystemMetadata(t *testing.T) {
 	if !ok || len(include) != 1 || include[0] != "reasoning.encrypted_content" {
 		t.Fatalf("expected xAI responses encrypted reasoning include, got %#v", payload["include"])
 	}
-	tools, ok := payload["tools"].([]map[string]any)
+	tools, ok := payload["tools"].([]map[string]interface{})
 	if !ok || len(tools) != 1 || tools[0]["type"] != "x_search" {
 		t.Fatalf("expected x_search tool to be preserved, got %#v", payload["tools"])
 	}
 }
 
 func TestBuildXAIResponsesWebSearchRequestHasNoExtraIncludes(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterXAIResponses, "grok-4.3", portllm.EndpointResponses, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "今日新闻？"}},
-		Options: map[string]any{
-			"tools": []any{
-				map[string]any{"type": "web_search"},
+	payload := mustBuildRequestBody(t, AdapterXAIResponses, "grok-4.3", EndpointResponses, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "今日新闻？"}},
+		Options: map[string]interface{}{
+			"tools": []interface{}{
+				map[string]interface{}{"type": "web_search"},
 			},
 		},
 	}, true)
@@ -799,14 +795,14 @@ func TestBuildXAIResponsesWebSearchRequestHasNoExtraIncludes(t *testing.T) {
 }
 
 func TestBuildXAIResponsesIncludesSupportedNativeToolOutputs(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterXAIResponses, "grok-4.3", portllm.EndpointResponses, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "搜索新闻"}},
-		Options: map[string]any{
-			"include": []any{"custom.include"},
-			"tools": []any{
-				map[string]any{"type": "x_search"},
-				map[string]any{"type": "web_search"},
-				map[string]any{"type": "code_interpreter"},
+	payload := mustBuildRequestBody(t, AdapterXAIResponses, "grok-4.3", EndpointResponses, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "搜索新闻"}},
+		Options: map[string]interface{}{
+			"include": []interface{}{"custom.include"},
+			"tools": []interface{}{
+				map[string]interface{}{"type": "x_search"},
+				map[string]interface{}{"type": "web_search"},
+				map[string]interface{}{"type": "code_interpreter"},
 			},
 		},
 	}, true)
@@ -815,7 +811,7 @@ func TestBuildXAIResponsesIncludesSupportedNativeToolOutputs(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected include list, got %#v", payload["include"])
 	}
-	tools, ok := payload["tools"].([]map[string]any)
+	tools, ok := payload["tools"].([]map[string]interface{})
 	if !ok || len(tools) != 3 || tools[0]["type"] != "x_search" || tools[1]["type"] != "web_search" || tools[2]["type"] != "code_interpreter" {
 		t.Fatalf("expected xAI native tools to be preserved, got %#v", payload["tools"])
 	}
@@ -840,12 +836,12 @@ func TestBuildAnthropicRequestBodyWebSearchAndPromptCache(t *testing.T) {
 	for i := range longSystem {
 		longSystem[i] = 'a'
 	}
-	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4", portllm.GenerateInput{
-		Messages: []portllm.Message{
+	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4", GenerateInput{
+		Messages: []Message{
 			{Role: "system", Content: string(longSystem)},
 			{Role: "user", Content: "hello"},
 		},
-		Options: map[string]any{
+		Options: map[string]interface{}{
 			"max_output_tokens": 4096,
 			"prompt_cache":      true,
 			"temperature":       0.5,
@@ -872,7 +868,7 @@ func TestBuildAnthropicRequestBodyWebSearchAndPromptCache(t *testing.T) {
 	if !ok || len(stops) != 1 || stops[0] != "END" {
 		t.Fatalf("expected stop_sequences, got %#v", payload["stop_sequences"])
 	}
-	tools, ok := payload["tools"].([]map[string]any)
+	tools, ok := payload["tools"].([]map[string]interface{})
 	if !ok || len(tools) != 1 || tools[0]["type"] != "web_search_20250305" {
 		t.Fatalf("expected anthropic web search tool, got %#v", payload["tools"])
 	}
@@ -886,7 +882,7 @@ func TestBuildAnthropicRequestBodyWebSearchAndPromptCache(t *testing.T) {
 	if !ok || len(system) != len(longSystem) {
 		t.Fatalf("expected plain system string, got %#v", payload["system"])
 	}
-	cacheControl, ok := payload["cache_control"].(map[string]any)
+	cacheControl, ok := payload["cache_control"].(map[string]interface{})
 	if !ok || cacheControl["type"] != "ephemeral" {
 		t.Fatalf("expected top-level cache_control, got %#v", payload["cache_control"])
 	}
@@ -897,12 +893,12 @@ func TestBuildAnthropicRequestBodyPromptCacheDisabled(t *testing.T) {
 	for i := range longSystem {
 		longSystem[i] = 'a'
 	}
-	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4", portllm.GenerateInput{
-		Messages: []portllm.Message{
+	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4", GenerateInput{
+		Messages: []Message{
 			{Role: "system", Content: string(longSystem)},
 			{Role: "user", Content: "hello"},
 		},
-		Options: map[string]any{
+		Options: map[string]interface{}{
 			"prompt_cache": false,
 		},
 	}, false)
@@ -917,9 +913,9 @@ func TestBuildAnthropicRequestBodyPromptCacheDisabled(t *testing.T) {
 }
 
 func TestBuildAnthropicRequestBodyFastMode(t *testing.T) {
-	payload := mustBuildAnthropicRequestBody(t, "claude-opus-4-6", portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "hello"}},
-		Options: map[string]any{
+	payload := mustBuildAnthropicRequestBody(t, "claude-opus-4-6", GenerateInput{
+		Messages: []Message{{Role: "user", Content: "hello"}},
+		Options: map[string]interface{}{
 			"speed": "fast",
 		},
 	}, false)
@@ -930,35 +926,35 @@ func TestBuildAnthropicRequestBodyFastMode(t *testing.T) {
 }
 
 func TestBuildAnthropicRequestBodyPromptCacheEnabledByDefault(t *testing.T) {
-	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4", portllm.GenerateInput{
-		Messages: []portllm.Message{
+	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4", GenerateInput{
+		Messages: []Message{
 			{Role: "system", Content: "short system"},
 			{Role: "user", Content: "hello"},
 		},
 	}, false)
 
-	cacheControl, ok := payload["cache_control"].(map[string]any)
+	cacheControl, ok := payload["cache_control"].(map[string]interface{})
 	if !ok || cacheControl["type"] != "ephemeral" {
 		t.Fatalf("expected default top-level cache_control, got %#v", payload["cache_control"])
 	}
 }
 
 func TestBuildAnthropicRequestBodySystemBlockCacheControl(t *testing.T) {
-	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4", portllm.GenerateInput{
-		Messages: []portllm.Message{
-			{Role: "system", Content: "stable file context", CacheControl: &portllm.CacheControl{Type: "ephemeral"}},
+	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4", GenerateInput{
+		Messages: []Message{
+			{Role: "system", Content: "stable file context", CacheControl: &CacheControl{Type: "ephemeral"}},
 			{Role: "user", Content: "<ctx><rag>dynamic</rag></ctx><q>hello</q>"},
 		},
-		Options: map[string]any{
+		Options: map[string]interface{}{
 			"cache_timeout": "1h",
 		},
 	}, false)
 
-	system, ok := payload["system"].([]map[string]any)
+	system, ok := payload["system"].([]map[string]interface{})
 	if !ok || len(system) != 1 {
 		t.Fatalf("expected system blocks, got %#v", payload["system"])
 	}
-	cacheControl, ok := system[0]["cache_control"].(map[string]any)
+	cacheControl, ok := system[0]["cache_control"].(map[string]interface{})
 	if !ok || cacheControl["type"] != "ephemeral" || cacheControl["ttl"] != "1h" {
 		t.Fatalf("expected system block cache_control ttl=1h, got %#v", system[0])
 	}
@@ -972,12 +968,12 @@ func TestBuildAnthropicRequestBodyOpenWebUIAliases(t *testing.T) {
 	for i := range longSystem {
 		longSystem[i] = 'a'
 	}
-	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4-6", portllm.GenerateInput{
-		Messages: []portllm.Message{
+	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4-6", GenerateInput{
+		Messages: []Message{
 			{Role: "system", Content: string(longSystem)},
 			{Role: "user", Content: "hello"},
 		},
-		Options: map[string]any{
+		Options: map[string]interface{}{
 			"max_tokens":       64000,
 			"enable_thinking":  true,
 			"thinking_display": "omitted",
@@ -990,11 +986,11 @@ func TestBuildAnthropicRequestBodyOpenWebUIAliases(t *testing.T) {
 	if payload["max_tokens"] != 64000 {
 		t.Fatalf("expected max_tokens=64000, got %#v", payload["max_tokens"])
 	}
-	thinking, ok := payload["thinking"].(map[string]any)
+	thinking, ok := payload["thinking"].(map[string]interface{})
 	if !ok || thinking["type"] != "adaptive" || thinking["display"] != "omitted" {
 		t.Fatalf("expected alias thinking config, got %#v", payload["thinking"])
 	}
-	outputConfig, ok := payload["output_config"].(map[string]any)
+	outputConfig, ok := payload["output_config"].(map[string]interface{})
 	if !ok || outputConfig["effort"] != "xhigh" {
 		t.Fatalf("expected output_config.effort from alias, got %#v", payload["output_config"])
 	}
@@ -1002,61 +998,61 @@ func TestBuildAnthropicRequestBodyOpenWebUIAliases(t *testing.T) {
 	if !ok || len(system) != len(longSystem) {
 		t.Fatalf("expected plain system string, got %#v", payload["system"])
 	}
-	cacheControl, ok := payload["cache_control"].(map[string]any)
+	cacheControl, ok := payload["cache_control"].(map[string]interface{})
 	if !ok || cacheControl["type"] != "ephemeral" || cacheControl["ttl"] != "1h" {
 		t.Fatalf("expected top-level cache_control ttl=1h, got %#v", payload["cache_control"])
 	}
 }
 
 func TestBuildAnthropicRequestBodyAliasOverridesOfficialThinking(t *testing.T) {
-	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4-6", portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "hello"}},
-		Options: map[string]any{
-			"thinking":         map[string]any{"type": "disabled", "display": "summarized"},
+	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4-6", GenerateInput{
+		Messages: []Message{{Role: "user", Content: "hello"}},
+		Options: map[string]interface{}{
+			"thinking":         map[string]interface{}{"type": "disabled", "display": "summarized"},
 			"enable_thinking":  true,
 			"thinking_display": "omitted",
-			"output_config":    map[string]any{"effort": "high"},
+			"output_config":    map[string]interface{}{"effort": "high"},
 			"effort":           "max",
 		},
 	}, false)
 
-	thinking, ok := payload["thinking"].(map[string]any)
+	thinking, ok := payload["thinking"].(map[string]interface{})
 	if !ok || thinking["type"] != "adaptive" || thinking["display"] != "omitted" {
 		t.Fatalf("expected alias to override thinking type/display, got %#v", payload["thinking"])
 	}
-	outputConfig, ok := payload["output_config"].(map[string]any)
+	outputConfig, ok := payload["output_config"].(map[string]interface{})
 	if !ok || outputConfig["effort"] != "high" {
 		t.Fatalf("expected explicit output_config.effort to win, got %#v", payload["output_config"])
 	}
 }
 
 func TestBuildAnthropicRequestBodyStructuredOutputThinkingAndToolChoice(t *testing.T) {
-	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4-5", portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "return json"}},
-		Options: map[string]any{
+	payload := mustBuildAnthropicRequestBody(t, "claude-sonnet-4-5", GenerateInput{
+		Messages: []Message{{Role: "user", Content: "return json"}},
+		Options: map[string]interface{}{
 			"max_output_tokens": 4096,
-			"thinking": map[string]any{
+			"thinking": map[string]interface{}{
 				"type":          "enabled",
 				"budget_tokens": float64(2048),
 			},
 			"tool_choice":     "memory.save",
-			"response_format": map[string]any{"type": "json_object"},
+			"response_format": map[string]interface{}{"type": "json_object"},
 		},
 	}, false)
 
-	thinking, ok := payload["thinking"].(map[string]any)
+	thinking, ok := payload["thinking"].(map[string]interface{})
 	if !ok || thinking["type"] != "enabled" || thinking["budget_tokens"] != float64(2048) {
 		t.Fatalf("expected Anthropic thinking object, got %#v", payload["thinking"])
 	}
-	toolChoice, ok := payload["tool_choice"].(map[string]any)
+	toolChoice, ok := payload["tool_choice"].(map[string]interface{})
 	if !ok || toolChoice["type"] != "tool" || toolChoice["name"] != "memory.save" {
 		t.Fatalf("expected Anthropic named tool_choice, got %#v", payload["tool_choice"])
 	}
-	outputConfig, ok := payload["output_config"].(map[string]any)
+	outputConfig, ok := payload["output_config"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected output_config, got %#v", payload["output_config"])
 	}
-	format, ok := outputConfig["format"].(map[string]any)
+	format, ok := outputConfig["format"].(map[string]interface{})
 	if !ok || format["type"] != "json_object" {
 		t.Fatalf("expected response_format mapped to output_config.format, got %#v", payload["output_config"])
 	}
@@ -1066,9 +1062,9 @@ func TestBuildAnthropicRequestBodyStructuredOutputThinkingAndToolChoice(t *testi
 }
 
 func TestBuildGeminiRequestBodyWebSearch(t *testing.T) {
-	payload := mustBuildGeminiRequestBody(t, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "hello"}},
-		Options: map[string]any{
+	payload := mustBuildGeminiRequestBody(t, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "hello"}},
+		Options: map[string]interface{}{
 			"max_output_tokens": 2048,
 			"temperature":       0.4,
 			"top_p":             0.6,
@@ -1079,7 +1075,7 @@ func TestBuildGeminiRequestBodyWebSearch(t *testing.T) {
 		},
 	})
 
-	generationConfig, ok := payload["generationConfig"].(map[string]any)
+	generationConfig, ok := payload["generationConfig"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected generationConfig, got %#v", payload["generationConfig"])
 	}
@@ -1102,7 +1098,7 @@ func TestBuildGeminiRequestBodyWebSearch(t *testing.T) {
 	if generationConfig["responseMimeType"] != "application/json" {
 		t.Fatalf("expected responseMimeType=application/json, got %#v", generationConfig["responseMimeType"])
 	}
-	tools, ok := payload["tools"].([]map[string]any)
+	tools, ok := payload["tools"].([]map[string]interface{})
 	if !ok || len(tools) != 1 {
 		t.Fatalf("expected gemini tools, got %#v", payload["tools"])
 	}
@@ -1112,9 +1108,9 @@ func TestBuildGeminiRequestBodyWebSearch(t *testing.T) {
 }
 
 func TestBuildGeminiRequestBodyStructuredOutputAndGenerationConfig(t *testing.T) {
-	payload := mustBuildGeminiRequestBody(t, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "hello"}},
-		Options: map[string]any{
+	payload := mustBuildGeminiRequestBody(t, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "hello"}},
+		Options: map[string]interface{}{
 			"max_completion_tokens": 1024,
 			"candidate_count":       2,
 			"presence_penalty":      0.3,
@@ -1122,22 +1118,22 @@ func TestBuildGeminiRequestBodyStructuredOutputAndGenerationConfig(t *testing.T)
 			"seed":                  42,
 			"response_logprobs":     true,
 			"logprobs":              3,
-			"response_modalities":   []any{"TEXT"},
-			"response_format": map[string]any{
+			"response_modalities":   []interface{}{"TEXT"},
+			"response_format": map[string]interface{}{
 				"type": "json_schema",
 				"name": "answer",
-				"schema": map[string]any{
+				"schema": map[string]interface{}{
 					"type": "object",
-					"properties": map[string]any{
-						"answer": map[string]any{"type": "string"},
+					"properties": map[string]interface{}{
+						"answer": map[string]interface{}{"type": "string"},
 					},
-					"required": []any{"answer"},
+					"required": []interface{}{"answer"},
 				},
 			},
 		},
 	})
 
-	generationConfig, ok := payload["generationConfig"].(map[string]any)
+	generationConfig, ok := payload["generationConfig"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected generationConfig, got %#v", payload["generationConfig"])
 	}
@@ -1157,7 +1153,7 @@ func TestBuildGeminiRequestBodyStructuredOutputAndGenerationConfig(t *testing.T)
 	if generationConfig["responseMimeType"] != "application/json" {
 		t.Fatalf("expected responseMimeType=application/json, got %#v", generationConfig["responseMimeType"])
 	}
-	schema, ok := generationConfig["responseSchema"].(map[string]any)
+	schema, ok := generationConfig["responseSchema"].(map[string]interface{})
 	if !ok || schema["type"] != "object" {
 		t.Fatalf("expected responseSchema object, got %#v", generationConfig["responseSchema"])
 	}
@@ -1172,22 +1168,22 @@ func TestBuildGeminiRequestBodyStructuredOutputAndGenerationConfig(t *testing.T)
 }
 
 func TestBuildGeminiRequestBodyMapsNativeGenerationConfigAliases(t *testing.T) {
-	payload := mustBuildGeminiRequestBody(t, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "hello"}},
-		Options: map[string]any{
+	payload := mustBuildGeminiRequestBody(t, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "hello"}},
+		Options: map[string]interface{}{
 			"maxOutputTokens":  2048,
 			"topP":             0.8,
 			"topK":             64,
-			"stopSequences":    []any{"DONE"},
+			"stopSequences":    []interface{}{"DONE"},
 			"responseMimeType": "text/plain",
-			"thinkingConfig": map[string]any{
+			"thinkingConfig": map[string]interface{}{
 				"includeThoughts": true,
 				"thinkingBudget":  256,
 			},
 		},
 	})
 
-	generationConfig, ok := payload["generationConfig"].(map[string]any)
+	generationConfig, ok := payload["generationConfig"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected generationConfig, got %#v", payload["generationConfig"])
 	}
@@ -1201,7 +1197,7 @@ func TestBuildGeminiRequestBodyMapsNativeGenerationConfigAliases(t *testing.T) {
 	if generationConfig["responseMimeType"] != "text/plain" {
 		t.Fatalf("expected responseMimeType mapped, got %#v", generationConfig["responseMimeType"])
 	}
-	thinkingConfig, ok := generationConfig["thinkingConfig"].(map[string]any)
+	thinkingConfig, ok := generationConfig["thinkingConfig"].(map[string]interface{})
 	if !ok || thinkingConfig["includeThoughts"] != true || thinkingConfig["thinkingBudget"] != 256 {
 		t.Fatalf("expected thinkingConfig mapped, got %#v", generationConfig["thinkingConfig"])
 	}
@@ -1213,18 +1209,18 @@ func TestBuildGeminiRequestBodyMapsNativeGenerationConfigAliases(t *testing.T) {
 }
 
 func TestBuildGeminiRequestBodyRootAliasesAndThinkingConfig(t *testing.T) {
-	payload := mustBuildGeminiRequestBody(t, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "hello"}},
-		Options: map[string]any{
-			"tool_config": map[string]any{
-				"functionCallingConfig": map[string]any{"mode": "ANY"},
+	payload := mustBuildGeminiRequestBody(t, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "hello"}},
+		Options: map[string]interface{}{
+			"tool_config": map[string]interface{}{
+				"functionCallingConfig": map[string]interface{}{"mode": "ANY"},
 			},
-			"safety_settings": []any{
-				map[string]any{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
+			"safety_settings": []interface{}{
+				map[string]interface{}{"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_ONLY_HIGH"},
 			},
 			"cached_content": "cachedContents/abc",
 			"service_tier":   "flex",
-			"thinking": map[string]any{
+			"thinking": map[string]interface{}{
 				"include_thoughts": true,
 				"thinking_budget":  512,
 			},
@@ -1235,18 +1231,18 @@ func TestBuildGeminiRequestBodyRootAliasesAndThinkingConfig(t *testing.T) {
 	if _, ok := payload["tool_config"]; ok {
 		t.Fatalf("expected tool_config not to leak, got %#v", payload["tool_config"])
 	}
-	toolConfig, ok := payload["toolConfig"].(map[string]any)
+	toolConfig, ok := payload["toolConfig"].(map[string]interface{})
 	if !ok || len(toolConfig) == 0 {
 		t.Fatalf("expected toolConfig, got %#v", payload["toolConfig"])
 	}
 	if payload["cachedContent"] != "cachedContents/abc" || payload["serviceTier"] != "flex" {
 		t.Fatalf("expected cachedContent/serviceTier, got %#v", payload)
 	}
-	if _, ok := payload["safetySettings"].([]any); !ok {
+	if _, ok := payload["safetySettings"].([]interface{}); !ok {
 		t.Fatalf("expected safetySettings passthrough, got %#v", payload["safetySettings"])
 	}
-	generationConfig := payload["generationConfig"].(map[string]any)
-	thinkingConfig, ok := generationConfig["thinkingConfig"].(map[string]any)
+	generationConfig := payload["generationConfig"].(map[string]interface{})
+	thinkingConfig, ok := generationConfig["thinkingConfig"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected thinkingConfig, got %#v", generationConfig["thinkingConfig"])
 	}
@@ -1256,27 +1252,27 @@ func TestBuildGeminiRequestBodyRootAliasesAndThinkingConfig(t *testing.T) {
 }
 
 func TestBuildGeminiRequestBodyAllowsNestedGenerationConfig(t *testing.T) {
-	payload := mustBuildGeminiRequestBody(t, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "hello"}},
-		Options: map[string]any{
-			"generationConfig": map[string]any{
+	payload := mustBuildGeminiRequestBody(t, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "hello"}},
+		Options: map[string]interface{}{
+			"generationConfig": map[string]interface{}{
 				"candidateCount": float64(2),
 			},
-			"contents":          []any{},
+			"contents":          []interface{}{},
 			"model":             "attacker-model",
 			"prompt":            "override prompt",
-			"systemInstruction": map[string]any{"parts": []map[string]string{{"text": "override"}}},
+			"systemInstruction": map[string]interface{}{"parts": []map[string]string{{"text": "override"}}},
 		},
 	})
 
-	generationConfig, ok := payload["generationConfig"].(map[string]any)
+	generationConfig, ok := payload["generationConfig"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected generationConfig, got %#v", payload["generationConfig"])
 	}
 	if generationConfig["candidateCount"] != float64(2) {
 		t.Fatalf("expected candidateCount merge, got %#v", generationConfig["candidateCount"])
 	}
-	contents, ok := payload["contents"].([]map[string]any)
+	contents, ok := payload["contents"].([]map[string]interface{})
 	if !ok || len(contents) != 1 {
 		t.Fatalf("expected protected contents, got %#v", payload["contents"])
 	}
@@ -1294,19 +1290,19 @@ func TestBuildGeminiRequestBodyAllowsNestedGenerationConfig(t *testing.T) {
 // preserve_thinking 是阿里百炼的私有顶层入参，由会话层按厂商自动补发。
 // 这里确认它原样落到请求体顶层，且不会被 stream_options 的复制逻辑顺带吞进去。
 func TestBuildOpenAIChatCompletionsPassesPreserveThinking(t *testing.T) {
-	payload := mustBuildRequestBody(t, portllm.AdapterOpenAIChatCompletions, "qwen3.6-plus", portllm.EndpointChatCompletions, portllm.GenerateInput{
-		Messages: []portllm.Message{
+	payload := mustBuildRequestBody(t, AdapterOpenAIChatCompletions, "qwen3.6-plus", EndpointChatCompletions, GenerateInput{
+		Messages: []Message{
 			{Role: "user", Content: "hello"},
 			{Role: "assistant", Content: "hi", ReasoningContent: "thinking"},
 			{Role: "user", Content: "again"},
 		},
-		Options: map[string]any{"preserve_thinking": true},
+		Options: map[string]interface{}{"preserve_thinking": true},
 	}, true)
 
 	if payload["preserve_thinking"] != true {
 		t.Fatalf("expected preserve_thinking at the top level, got %#v", payload["preserve_thinking"])
 	}
-	streamOptions, ok := payload["stream_options"].(map[string]any)
+	streamOptions, ok := payload["stream_options"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("expected stream_options to remain a map, got %#v", payload["stream_options"])
 	}
@@ -1314,7 +1310,7 @@ func TestBuildOpenAIChatCompletionsPassesPreserveThinking(t *testing.T) {
 		t.Fatalf("vendor option leaked into stream_options: %#v", streamOptions)
 	}
 
-	messages, ok := payload["messages"].([]map[string]any)
+	messages, ok := payload["messages"].([]map[string]interface{})
 	if !ok || len(messages) != 3 {
 		t.Fatalf("unexpected messages payload: %#v", payload["messages"])
 	}

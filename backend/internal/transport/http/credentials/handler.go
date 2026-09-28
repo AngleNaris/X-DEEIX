@@ -106,7 +106,7 @@ func (h *Handler) ListCredentials(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	views, err := h.service.ListCredentials(c.Request.Context(), userID)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "list credentials failed")
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, CredentialListResponse{Results: toCredentialResponseItems(views)})
@@ -142,9 +142,9 @@ func (h *Handler) CreateCredential(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, appcredentials.ErrNameConflict):
-			response.Error(c, http.StatusConflict, "credential name already exists")
+			response.ErrorFrom(c, http.StatusConflict, appcredentials.ErrNameConflict)
 		default:
-			response.Error(c, http.StatusBadRequest, err.Error())
+			response.ErrorFrom(c, http.StatusBadRequest, err)
 		}
 		return
 	}
@@ -184,11 +184,11 @@ func (h *Handler) UpdateCredential(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, appcredentials.ErrCredentialNotFound):
-			response.Error(c, http.StatusNotFound, "credential not found")
+			response.ErrorFrom(c, http.StatusNotFound, appcredentials.ErrCredentialNotFound)
 		case errors.Is(err, appcredentials.ErrNameConflict):
-			response.Error(c, http.StatusConflict, "credential name already exists")
+			response.ErrorFrom(c, http.StatusConflict, appcredentials.ErrNameConflict)
 		default:
-			response.Error(c, http.StatusBadRequest, err.Error())
+			response.ErrorFrom(c, http.StatusBadRequest, err)
 		}
 		return
 	}
@@ -212,10 +212,10 @@ func (h *Handler) DeleteCredential(c *gin.Context) {
 	publicID := strings.TrimSpace(c.Param("id"))
 	if err := h.service.DeleteCredential(c.Request.Context(), userID, publicID); err != nil {
 		if errors.Is(err, appcredentials.ErrCredentialNotFound) {
-			response.Error(c, http.StatusNotFound, "credential not found")
+			response.ErrorFrom(c, http.StatusNotFound, appcredentials.ErrCredentialNotFound)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "delete credential failed")
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, map[string]bool{"deleted": true})

@@ -28,7 +28,7 @@ func (h *Handler) CreateArtifact(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	var req CreateArtifactRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.InvalidRequestBody(c, err)
 		return
 	}
 	input := appartifact.CreateInput{
@@ -45,7 +45,7 @@ func (h *Handler) CreateArtifact(c *gin.Context) {
 		item, err = h.svc.CreateArtifact(c, userID, "", input)
 	}
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorFrom(c, http.StatusBadRequest, err)
 		return
 	}
 	response.Success(c, appartifact.ToDetailView(item.(*domainartifact.Artifact)))
@@ -56,12 +56,12 @@ func (h *Handler) ListArtifacts(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	var query PaginationQuery
 	if err := c.ShouldBindQuery(&query); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorFrom(c, http.StatusBadRequest, err)
 		return
 	}
 	items, total, err := h.svc.ListArtifacts(c, userID, query.page(), query.pageSize())
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, err.Error())
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, gin.H{"total": total, "page": query.page(), "items": items})
@@ -72,12 +72,12 @@ func (h *Handler) GetArtifact(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	var param ArtifactIDParam
 	if err := c.ShouldBindUri(&param); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorFrom(c, http.StatusBadRequest, err)
 		return
 	}
 	item, err := h.svc.GetArtifact(c, userID, param.ID)
 	if err != nil {
-		response.Error(c, http.StatusNotFound, "artifact not found")
+		response.ErrorWithCode(c, http.StatusNotFound, response.CodeResourceNotFound)
 		return
 	}
 	response.Success(c, appartifact.ToDetailView(item))
@@ -88,11 +88,11 @@ func (h *Handler) DeleteArtifact(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	var param ArtifactIDParam
 	if err := c.ShouldBindUri(&param); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorFrom(c, http.StatusBadRequest, err)
 		return
 	}
 	if err := h.svc.DeleteArtifact(c, userID, param.ID); err != nil {
-		response.Error(c, http.StatusNotFound, "artifact not found")
+		response.ErrorWithCode(c, http.StatusNotFound, response.CodeResourceNotFound)
 		return
 	}
 	response.Success(c, gin.H{"deleted": true})
@@ -103,12 +103,12 @@ func (h *Handler) CreateShare(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	var param ArtifactIDParam
 	if err := c.ShouldBindUri(&param); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorFrom(c, http.StatusBadRequest, err)
 		return
 	}
 	share, err := h.svc.CreateShare(c, userID, param.ID)
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorFrom(c, http.StatusBadRequest, err)
 		return
 	}
 	response.Success(c, share)
@@ -119,12 +119,12 @@ func (h *Handler) GetShare(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	var param ArtifactIDParam
 	if err := c.ShouldBindUri(&param); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorFrom(c, http.StatusBadRequest, err)
 		return
 	}
 	share, err := h.svc.GetShare(c, userID, param.ID)
 	if err != nil {
-		response.Error(c, http.StatusNotFound, "no active share")
+		response.ErrorWithCode(c, http.StatusNotFound, response.CodeResourceNotFound)
 		return
 	}
 	response.Success(c, share)
@@ -135,11 +135,11 @@ func (h *Handler) RevokeShare(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	var param ArtifactIDParam
 	if err := c.ShouldBindUri(&param); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorFrom(c, http.StatusBadRequest, err)
 		return
 	}
 	if err := h.svc.RevokeShare(c, userID, param.ID); err != nil {
-		response.Error(c, http.StatusNotFound, "no active share")
+		response.ErrorWithCode(c, http.StatusNotFound, response.CodeResourceNotFound)
 		return
 	}
 	response.Success(c, gin.H{"revoked": true})
@@ -150,7 +150,7 @@ func (h *Handler) CreateRenderToken(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	var req RenderTokenRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.InvalidRequestBody(c, err)
 		return
 	}
 	view, err := h.svc.CreateRenderToken(userID, req.Document)
@@ -159,7 +159,7 @@ func (h *Handler) CreateRenderToken(c *gin.Context) {
 		if errors.Is(err, appartifact.ErrRenderCapacity) {
 			status = http.StatusServiceUnavailable
 		}
-		response.Error(c, status, err.Error())
+		response.ErrorFrom(c, status, err)
 		return
 	}
 	response.Success(c, view)
@@ -169,12 +169,12 @@ func (h *Handler) CreateRenderToken(c *gin.Context) {
 func (h *Handler) GetArtifactRender(c *gin.Context) {
 	var param RenderTokenParam
 	if err := c.ShouldBindUri(&param); err != nil {
-		response.Error(c, http.StatusNotFound, "artifact render not found")
+		response.ErrorWithCode(c, http.StatusNotFound, response.CodeResourceNotFound)
 		return
 	}
 	document, err := h.svc.ConsumeRenderToken(param.Token)
 	if err != nil {
-		response.Error(c, http.StatusNotFound, "artifact render not found")
+		response.ErrorWithCode(c, http.StatusNotFound, response.CodeResourceNotFound)
 		return
 	}
 	c.Header("Cache-Control", "no-store")
@@ -191,12 +191,12 @@ func (h *Handler) GetArtifactRender(c *gin.Context) {
 func (h *Handler) GetPublicShare(c *gin.Context) {
 	var param ShareIDParam
 	if err := c.ShouldBindUri(&param); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorFrom(c, http.StatusBadRequest, err)
 		return
 	}
 	view, err := h.svc.GetPublicShare(c, param.ShareID)
 	if err != nil {
-		response.Error(c, http.StatusNotFound, "share not found")
+		response.ErrorWithCode(c, http.StatusNotFound, response.CodeResourceNotFound)
 		return
 	}
 	c.Header("Cache-Control", "no-store")

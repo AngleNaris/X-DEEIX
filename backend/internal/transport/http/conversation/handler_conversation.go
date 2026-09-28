@@ -10,6 +10,7 @@ import (
 	"time"
 
 	appconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/conversation"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
 	"github.com/gin-gonic/gin"
@@ -42,18 +43,18 @@ func (h *Handler) CreateConversation(c *gin.Context) {
 	item, err := h.service.CreateConversation(c.Request.Context(), userID, req.Title, req.Model, req.ProjectID, req.RoleID, req.AgentGroupID)
 	if err != nil {
 		if errors.Is(err, appconversation.ErrConversationProjectNotFound) {
-			response.Error(c, http.StatusNotFound, "conversation project not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationProjectNotFound)
 			return
 		}
 		if errors.Is(err, appconversation.ErrConversationAgentGroupNotFound) {
-			response.Error(c, http.StatusNotFound, "conversation agent group not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationAgentGroupNotFound)
 			return
 		}
 		if errors.Is(err, appconversation.ErrConversationModelNotAllowedWithGroup) {
-			response.Error(c, http.StatusBadRequest, "agent group conversation constraints violated")
+			response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrConversationModelNotAllowedWithGroup)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "create conversation failed")
+		response.InternalError(c)
 		return
 	}
 
@@ -93,9 +94,13 @@ func (h *Handler) ListConversations(c *gin.Context) {
 	projectFilter := normalizeConversationProjectQuery(c.Query("project"))
 	searchQuery := c.Query("q")
 
-	items, total, err := h.service.ListConversations(c.Request.Context(), userID, page, pageSize, statusFilter, starredFilter, shareFilter, projectFilter, searchQuery)
+	items, total, err := h.service.ListConversations(c.Request.Context(), appconversation.ListConversationsInput{
+		UserID: userID, Page: page, PageSize: pageSize,
+		StatusFilter: statusFilter, StarredFilter: starredFilter, ShareFilter: shareFilter,
+		ProjectFilter: projectFilter, SearchQuery: searchQuery,
+	})
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "list conversations failed")
+		response.InternalError(c)
 		return
 	}
 	results := make([]ConversationResponse, 0, len(items))
@@ -125,7 +130,7 @@ func (h *Handler) SearchConversations(c *gin.Context) {
 	page, pageSize := pageParams(c)
 	searchQuery := strings.TrimSpace(c.Query("q"))
 	if len([]rune(searchQuery)) > maxConversationSearchQueryRunes {
-		response.ErrorWithCode(c, http.StatusBadRequest, response.CodeRequestInvalidQuery, "search query is too long")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidQuery, "search query is too long"))
 		return
 	}
 	items, hasMore, err := h.service.SearchConversations(
@@ -136,7 +141,7 @@ func (h *Handler) SearchConversations(c *gin.Context) {
 		searchQuery,
 	)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "search conversations failed")
+		response.InternalError(c)
 		return
 	}
 	results := make([]ConversationSearchResultResponse, 0, len(items))
@@ -188,17 +193,17 @@ func (h *Handler) GetConversation(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation id"))
 		return
 	}
 
 	item, err := h.service.GetConversationByPublicID(c.Request.Context(), userID, publicID)
 	if err != nil {
 		if errors.Is(err, appconversation.ErrConversationNotFound) {
-			response.Error(c, http.StatusNotFound, "conversation not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationNotFound)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "get conversation failed")
+		response.InternalError(c)
 		return
 	}
 
@@ -221,17 +226,17 @@ func (h *Handler) MarkConversationRead(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation id"))
 		return
 	}
 
 	item, err := h.service.MarkConversationRead(c.Request.Context(), userID, publicID)
 	if err != nil {
 		if errors.Is(err, appconversation.ErrConversationNotFound) {
-			response.Error(c, http.StatusNotFound, "conversation not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationNotFound)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "mark conversation read failed")
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, toConversationResponse(item))
@@ -254,17 +259,17 @@ func (h *Handler) ExportConversation(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation id"))
 		return
 	}
 
 	item, err := h.service.ExportConversation(c.Request.Context(), userID, publicID)
 	if err != nil {
 		if errors.Is(err, appconversation.ErrConversationNotFound) {
-			response.Error(c, http.StatusNotFound, "conversation not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationNotFound)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "export conversation failed")
+		response.InternalError(c)
 		return
 	}
 
@@ -373,7 +378,7 @@ func (h *Handler) RenameConversation(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation id"))
 		return
 	}
 
@@ -387,13 +392,13 @@ func (h *Handler) RenameConversation(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, appconversation.ErrInvalidConversationTitle):
-			response.Error(c, http.StatusBadRequest, "invalid conversation title")
+			response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrInvalidConversationTitle)
 			return
 		case errors.Is(err, appconversation.ErrConversationNotFound):
-			response.Error(c, http.StatusNotFound, "conversation not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationNotFound)
 			return
 		default:
-			response.Error(c, http.StatusInternalServerError, "rename conversation failed")
+			response.InternalError(c)
 			return
 		}
 	}
@@ -424,7 +429,7 @@ func (h *Handler) RegenerateConversationTitle(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation id"))
 		return
 	}
 
@@ -432,13 +437,13 @@ func (h *Handler) RegenerateConversationTitle(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, appconversation.ErrInvalidConversationTitle):
-			response.Error(c, http.StatusBadRequest, "conversation has no titleable content")
+			response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrInvalidConversationTitle)
 			return
 		case errors.Is(err, appconversation.ErrConversationNotFound):
-			response.Error(c, http.StatusNotFound, "conversation not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationNotFound)
 			return
 		default:
-			response.Error(c, http.StatusInternalServerError, "regenerate conversation title failed")
+			response.InternalError(c)
 			return
 		}
 	}
@@ -470,7 +475,7 @@ func (h *Handler) UpdateConversationLabels(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation id"))
 		return
 	}
 
@@ -480,7 +485,7 @@ func (h *Handler) UpdateConversationLabels(c *gin.Context) {
 		return
 	}
 	if req.Labels == nil {
-		response.Error(c, http.StatusBadRequest, "labels are required")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestRequired, "labels are required"))
 		return
 	}
 
@@ -488,13 +493,13 @@ func (h *Handler) UpdateConversationLabels(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, appconversation.ErrInvalidConversationLabels):
-			response.Error(c, http.StatusBadRequest, "invalid conversation labels")
+			response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrInvalidConversationLabels)
 			return
 		case errors.Is(err, appconversation.ErrConversationNotFound):
-			response.Error(c, http.StatusNotFound, "conversation not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationNotFound)
 			return
 		default:
-			response.Error(c, http.StatusInternalServerError, "update conversation labels failed")
+			response.InternalError(c)
 			return
 		}
 	}
@@ -526,7 +531,7 @@ func (h *Handler) SetConversationStar(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation id"))
 		return
 	}
 
@@ -539,10 +544,10 @@ func (h *Handler) SetConversationStar(c *gin.Context) {
 	item, err := h.service.SetConversationStar(c.Request.Context(), userID, publicID, *req.Starred)
 	if err != nil {
 		if errors.Is(err, appconversation.ErrConversationNotFound) {
-			response.Error(c, http.StatusNotFound, "conversation not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationNotFound)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "update conversation star failed")
+		response.InternalError(c)
 		return
 	}
 
@@ -573,7 +578,7 @@ func (h *Handler) SetConversationArchive(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation id"))
 		return
 	}
 
@@ -586,10 +591,10 @@ func (h *Handler) SetConversationArchive(c *gin.Context) {
 	item, err := h.service.SetConversationArchived(c.Request.Context(), userID, publicID, *req.Archived)
 	if err != nil {
 		if errors.Is(err, appconversation.ErrConversationNotFound) {
-			response.Error(c, http.StatusNotFound, "conversation not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationNotFound)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "update conversation archive failed")
+		response.InternalError(c)
 		return
 	}
 
@@ -620,7 +625,7 @@ func (h *Handler) DeleteConversation(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation id"))
 		return
 	}
 	deleteFiles := c.Query("delete_files") == "true"
@@ -630,10 +635,10 @@ func (h *Handler) DeleteConversation(c *gin.Context) {
 	})
 	if err != nil {
 		if errors.Is(err, appconversation.ErrConversationNotFound) {
-			response.Error(c, http.StatusNotFound, "conversation not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationNotFound)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "delete conversation failed")
+		response.InternalError(c)
 		return
 	}
 
@@ -669,12 +674,12 @@ func (h *Handler) ForkConversationFromMessage(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	conversationID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation id"))
 		return
 	}
 	messageID, err := stringParam(c, "message_id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid message id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid message id"))
 		return
 	}
 
@@ -682,15 +687,15 @@ func (h *Handler) ForkConversationFromMessage(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, appconversation.ErrConversationNotFound):
-			response.Error(c, http.StatusNotFound, "conversation not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationNotFound)
 		case errors.Is(err, appconversation.ErrMessageNotFound):
-			response.Error(c, http.StatusNotFound, "message not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrMessageNotFound)
 		case errors.Is(err, appconversation.ErrMessageForkStateInvalid):
-			response.ErrorWithCode(c, http.StatusBadRequest, "conversation.message_fork_state_invalid", "message is still generating")
+			response.ErrorFrom(c, http.StatusBadRequest, apperr.New("conversation.message_fork_state_invalid", "message is still generating"))
 		case errors.Is(err, appconversation.ErrMessageForkHistoryIncomplete):
-			response.ErrorWithCode(c, http.StatusBadRequest, "conversation.message_fork_history_incomplete", "message history is too deep or incomplete")
+			response.ErrorFrom(c, http.StatusBadRequest, apperr.New("conversation.message_fork_history_incomplete", "message history is too deep or incomplete"))
 		default:
-			response.Error(c, http.StatusInternalServerError, "fork conversation failed")
+			response.InternalError(c)
 		}
 		return
 	}

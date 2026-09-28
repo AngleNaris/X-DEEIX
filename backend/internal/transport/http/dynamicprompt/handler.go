@@ -39,7 +39,7 @@ func (h *Handler) CreatePrompt(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	var req UpsertPromptRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.InvalidRequestBody(c, err)
 		return
 	}
 	item, err := h.svc.UpsertDynamicPrompt(c, userID, "", appdynamicprompt.UpsertInput{
@@ -49,7 +49,7 @@ func (h *Handler) CreatePrompt(c *gin.Context) {
 		Enabled: req.Enabled,
 	}, "user")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorFrom(c, http.StatusBadRequest, err)
 		return
 	}
 	response.Success(c, item)
@@ -60,12 +60,12 @@ func (h *Handler) UpdatePrompt(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	var param PromptIDParam
 	if err := c.ShouldBindUri(&param); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorFrom(c, http.StatusBadRequest, err)
 		return
 	}
 	var req UpsertPromptRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.InvalidRequestBody(c, err)
 		return
 	}
 	item, err := h.svc.UpsertDynamicPrompt(c, userID, param.ID, appdynamicprompt.UpsertInput{
@@ -76,10 +76,10 @@ func (h *Handler) UpdatePrompt(c *gin.Context) {
 	}, "user")
 	if err != nil {
 		if errors.Is(err, appdynamicprompt.ErrPromptNameTooLong) || errors.Is(err, appdynamicprompt.ErrPromptContentTooLong) {
-			response.Error(c, http.StatusBadRequest, err.Error())
+			response.ErrorFrom(c, http.StatusBadRequest, err)
 			return
 		}
-		response.Error(c, http.StatusNotFound, "dynamic prompt not found")
+		response.ErrorFrom(c, http.StatusNotFound, appdynamicprompt.ErrPromptNotFound)
 		return
 	}
 	response.Success(c, item)
@@ -90,7 +90,7 @@ func (h *Handler) ListPrompts(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	items, err := h.svc.ListDynamicPrompts(c, userID)
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, err.Error())
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, items)
@@ -101,16 +101,16 @@ func (h *Handler) RunPrompt(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	var param PromptIDParam
 	if err := c.ShouldBindUri(&param); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorFrom(c, http.StatusBadRequest, err)
 		return
 	}
 	result, err := h.svc.RunDynamicPrompt(c, userID, param.ID)
 	if err != nil {
 		if errors.Is(err, appdynamicprompt.ErrPromptNotFound) {
-			response.Error(c, http.StatusNotFound, "dynamic prompt not found")
+			response.ErrorFrom(c, http.StatusNotFound, appdynamicprompt.ErrPromptNotFound)
 			return
 		}
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorFrom(c, http.StatusBadRequest, err)
 		return
 	}
 	response.Success(c, gin.H{"result": result})
@@ -121,11 +121,11 @@ func (h *Handler) DeletePrompt(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	var param PromptIDParam
 	if err := c.ShouldBindUri(&param); err != nil {
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorFrom(c, http.StatusBadRequest, err)
 		return
 	}
 	if err := h.svc.DeleteDynamicPrompt(c, userID, param.ID); err != nil {
-		response.Error(c, http.StatusNotFound, "dynamic prompt not found")
+		response.ErrorFrom(c, http.StatusNotFound, appdynamicprompt.ErrPromptNotFound)
 		return
 	}
 	response.Success(c, gin.H{"deleted": true})

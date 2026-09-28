@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	appconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/conversation"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/filecontent"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
@@ -16,7 +17,7 @@ import (
 func (h *Handler) GetProjectWorkspace(c *gin.Context) {
 	view, err := h.service.GetProjectWorkspace(c.Request.Context(), middleware.MustUserID(c), c.Param("id"))
 	if err != nil {
-		response.Error(c, http.StatusNotFound, "project workspace not found")
+		response.ErrorFrom(c, http.StatusNotFound, apperr.New(response.CodeResourceNotFound, "project workspace not found"))
 		return
 	}
 	response.Success(c, view)
@@ -26,7 +27,7 @@ func (h *Handler) GetProjectWorkspace(c *gin.Context) {
 func (h *Handler) ListProjectFiles(c *gin.Context) {
 	items, err := h.service.ListProjectFiles(c.Request.Context(), middleware.MustUserID(c), c.Param("id"))
 	if err != nil {
-		response.Error(c, http.StatusNotFound, "project files not found")
+		response.ErrorFrom(c, http.StatusNotFound, apperr.New(response.CodeResourceNotFound, "project files not found"))
 		return
 	}
 	response.Success(c, gin.H{"items": items, "total": len(items)})
@@ -38,18 +39,18 @@ func (h *Handler) ImportProjectZIP(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 101<<20)
 	file, err := c.FormFile("file")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "ZIP file is required")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestRequired, "ZIP file is required"))
 		return
 	}
 	reader, err := file.Open()
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid ZIP file")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalid, "invalid ZIP file"))
 		return
 	}
 	defer reader.Close()
 	item, err := h.service.ImportProjectArchive(c.Request.Context(), appconversation.ProjectArchiveInput{UserID: userID, ProjectPublicID: c.Param("id"), ArchiveName: file.Filename, Reader: reader})
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid project archive")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalid, "invalid project archive"))
 		return
 	}
 	response.Success(c, item)
@@ -59,7 +60,7 @@ func (h *Handler) ImportProjectZIP(c *gin.Context) {
 func (h *Handler) GetProjectFileContent(c *gin.Context) {
 	result, err := h.service.OpenProjectFileContent(c.Request.Context(), middleware.MustUserID(c), c.Param("id"), c.Param("file_id"))
 	if err != nil {
-		response.Error(c, http.StatusNotFound, "project file not found")
+		response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrProjectFileNotFound)
 		return
 	}
 	_ = filecontent.Write(c, result, false)
@@ -76,11 +77,11 @@ func (h *Handler) WriteProjectFile(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, appconversation.ErrInvalidFileReference), errors.Is(err, appconversation.ErrFileTooLarge):
-			response.Error(c, http.StatusBadRequest, "invalid project file")
+			response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalid, "invalid project file"))
 		case errors.Is(err, appconversation.ErrConversationProjectNotFound):
-			response.Error(c, http.StatusNotFound, "conversation project not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationProjectNotFound)
 		default:
-			response.Error(c, http.StatusInternalServerError, "write project file failed")
+			response.InternalError(c)
 		}
 		return
 	}
@@ -92,10 +93,10 @@ func (h *Handler) DeleteProjectFile(c *gin.Context) {
 	deleted, err := h.service.DeleteProjectFile(c.Request.Context(), middleware.MustUserID(c), c.Param("id"), c.Param("file_id"))
 	if err != nil {
 		if errors.Is(err, appconversation.ErrProjectFileNotFound) || errors.Is(err, appconversation.ErrConversationProjectNotFound) {
-			response.Error(c, http.StatusNotFound, "project file not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrProjectFileNotFound)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "delete project file failed")
+		response.InternalError(c)
 		return
 	}
 	response.Success(c, gin.H{"deleted": true, "file": deleted})
@@ -106,13 +107,13 @@ func (h *Handler) DownloadProjectArchive(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	projectID := strings.TrimSpace(c.Param("id"))
 	if projectID == "" {
-		response.Error(c, http.StatusBadRequest, "invalid project id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid project id"))
 		return
 	}
 	c.Header("Content-Type", "application/zip")
 	c.Header("Content-Disposition", `attachment; filename="project-`+projectID+`.zip"`)
 	if err := h.service.ArchiveProjectFiles(c.Request.Context(), userID, projectID, c.Writer); err != nil && errors.Is(err, appconversation.ErrConversationProjectNotFound) {
-		response.Error(c, http.StatusNotFound, "conversation project not found")
+		response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationProjectNotFound)
 	}
 }
 
@@ -130,7 +131,7 @@ func (h *Handler) ListConversationProjects(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	items, err := h.service.ListConversationProjects(c.Request.Context(), userID, c.Query("status"))
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "list conversation projects failed")
+		response.InternalError(c)
 		return
 	}
 	results := make([]ConversationProjectResponse, 0, len(items))
@@ -163,6 +164,7 @@ func (h *Handler) CreateConversationProject(c *gin.Context) {
 		Name:                    req.Name,
 		Description:             req.Description,
 		SystemPrompt:            req.SystemPrompt,
+		DefaultModel:            req.DefaultModel,
 		MCPDefaultMode:          req.MCPDefaultMode,
 		DefaultMCPToolIDs:       req.DefaultMCPToolIDs,
 		DefaultSkillIDs:         req.DefaultSkillIDs,
@@ -172,14 +174,15 @@ func (h *Handler) CreateConversationProject(c *gin.Context) {
 	})
 	if err != nil {
 		if errors.Is(err, appconversation.ErrInvalidConversationProject) {
-			response.Error(c, http.StatusBadRequest, "invalid conversation project")
+			response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrInvalidConversationProject)
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "create conversation project failed")
+		response.InternalError(c)
 		return
 	}
 	h.recordAudit(c, "create_conversation_project", "conversation_project", item.PublicID, map[string]interface{}{
 		"name":                         item.Name,
+		"default_model":                item.DefaultModel,
 		"mcp_default_mode":             item.MCPDefaultMode,
 		"default_mcp_tool_count":       len(item.DefaultMCPToolIDs),
 		"default_skill_count":          len(item.DefaultSkillIDs),
@@ -206,7 +209,7 @@ func (h *Handler) UpdateConversationProject(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation project id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation project id"))
 		return
 	}
 	var req UpdateConversationProjectRequest
@@ -218,6 +221,7 @@ func (h *Handler) UpdateConversationProject(c *gin.Context) {
 		Name:                    req.Name,
 		Description:             req.Description,
 		SystemPrompt:            req.SystemPrompt,
+		DefaultModel:            req.DefaultModel,
 		MCPDefaultMode:          req.MCPDefaultMode,
 		DefaultMCPToolIDs:       req.DefaultMCPToolIDs,
 		DefaultSkillIDs:         req.DefaultSkillIDs,
@@ -229,18 +233,19 @@ func (h *Handler) UpdateConversationProject(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, appconversation.ErrInvalidConversationProject):
-			response.Error(c, http.StatusBadRequest, "invalid conversation project")
+			response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrInvalidConversationProject)
 			return
 		case errors.Is(err, appconversation.ErrConversationProjectNotFound):
-			response.Error(c, http.StatusNotFound, "conversation project not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationProjectNotFound)
 			return
 		default:
-			response.Error(c, http.StatusInternalServerError, "update conversation project failed")
+			response.InternalError(c)
 			return
 		}
 	}
 	h.recordAudit(c, "update_conversation_project", "conversation_project", item.PublicID, map[string]interface{}{
 		"name":                         item.Name,
+		"default_model":                item.DefaultModel,
 		"mcp_default_mode":             item.MCPDefaultMode,
 		"default_mcp_tool_count":       len(item.DefaultMCPToolIDs),
 		"default_skill_count":          len(item.DefaultSkillIDs),
@@ -268,7 +273,7 @@ func (h *Handler) DeleteConversationProject(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation project id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation project id"))
 		return
 	}
 	deleteConversations := c.Query("delete_conversations") == "true"
@@ -282,14 +287,14 @@ func (h *Handler) DeleteConversationProject(c *gin.Context) {
 	)
 	if err != nil {
 		if errors.Is(err, appconversation.ErrConversationProjectNotFound) {
-			response.Error(c, http.StatusNotFound, "conversation project not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationProjectNotFound)
 			return
 		}
 		if errors.Is(err, appconversation.ErrConversationProjectInUseByAgentGroup) {
-			response.ErrorWithCode(c, http.StatusConflict, "conversation.agent_group_project_in_use", "conversation project is in use by agent group")
+			response.ErrorFrom(c, http.StatusConflict, apperr.New("conversation.agent_group_project_in_use", "conversation project is in use by agent group"))
 			return
 		}
-		response.Error(c, http.StatusInternalServerError, "delete conversation project failed")
+		response.InternalError(c)
 		return
 	}
 	h.recordAudit(c, "delete_conversation_project", "conversation_project", publicID, map[string]interface{}{
@@ -324,19 +329,19 @@ func (h *Handler) ReorderConversationProjects(c *gin.Context) {
 	if err := h.service.ReorderConversationProjects(c.Request.Context(), userID, req.ProjectIDs); err != nil {
 		switch {
 		case errors.Is(err, appconversation.ErrInvalidConversationProject):
-			response.Error(c, http.StatusBadRequest, "invalid conversation project")
+			response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrInvalidConversationProject)
 			return
 		case errors.Is(err, appconversation.ErrConversationProjectNotFound):
-			response.Error(c, http.StatusNotFound, "conversation project not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationProjectNotFound)
 			return
 		default:
-			response.Error(c, http.StatusInternalServerError, "reorder conversation projects failed")
+			response.InternalError(c)
 			return
 		}
 	}
 	items, err := h.service.ListConversationProjects(c.Request.Context(), userID, "active")
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "list conversation projects failed")
+		response.InternalError(c)
 		return
 	}
 	results := make([]ConversationProjectResponse, 0, len(items))
@@ -365,7 +370,7 @@ func (h *Handler) SetConversationProject(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid conversation id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid conversation id"))
 		return
 	}
 	var req SetConversationProjectRequest
@@ -377,16 +382,16 @@ func (h *Handler) SetConversationProject(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, appconversation.ErrConversationProjectNotFound):
-			response.Error(c, http.StatusNotFound, "conversation project not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationProjectNotFound)
 			return
 		case errors.Is(err, appconversation.ErrConversationNotFound):
-			response.Error(c, http.StatusNotFound, "conversation not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationNotFound)
 			return
 		case errors.Is(err, appconversation.ErrConversationGroupImmutable):
-			response.Error(c, http.StatusConflict, "agent group conversation project is immutable")
+			response.ErrorFrom(c, http.StatusConflict, appconversation.ErrConversationGroupImmutable)
 			return
 		default:
-			response.Error(c, http.StatusInternalServerError, "set conversation project failed")
+			response.InternalError(c)
 			return
 		}
 	}
@@ -418,19 +423,19 @@ func (h *Handler) BatchSetConversationProject(c *gin.Context) {
 	if err != nil {
 		switch {
 		case errors.Is(err, appconversation.ErrInvalidConversationProject):
-			response.Error(c, http.StatusBadRequest, "invalid conversation project")
+			response.ErrorFrom(c, http.StatusBadRequest, appconversation.ErrInvalidConversationProject)
 			return
 		case errors.Is(err, appconversation.ErrConversationProjectNotFound):
-			response.Error(c, http.StatusNotFound, "conversation project not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationProjectNotFound)
 			return
 		case errors.Is(err, appconversation.ErrConversationNotFound):
-			response.Error(c, http.StatusNotFound, "conversation not found")
+			response.ErrorFrom(c, http.StatusNotFound, appconversation.ErrConversationNotFound)
 			return
 		case errors.Is(err, appconversation.ErrConversationGroupImmutable):
-			response.Error(c, http.StatusConflict, "agent group conversation project is immutable")
+			response.ErrorFrom(c, http.StatusConflict, appconversation.ErrConversationGroupImmutable)
 			return
 		default:
-			response.Error(c, http.StatusInternalServerError, "batch set conversation project failed")
+			response.InternalError(c)
 			return
 		}
 	}

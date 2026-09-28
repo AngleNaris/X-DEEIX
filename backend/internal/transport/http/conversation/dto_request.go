@@ -20,6 +20,7 @@ type CreateConversationProjectRequest struct {
 	Name                    string   `json:"name" binding:"required,max=80"`
 	Description             string   `json:"description,omitempty" binding:"max=255"`
 	SystemPrompt            string   `json:"systemPrompt,omitempty" binding:"max=12000"`
+	DefaultModel            string   `json:"defaultModel,omitempty" binding:"max=128"`
 	MCPDefaultMode          string   `json:"mcpDefaultMode,omitempty" binding:"omitempty,oneof=inherit custom"`
 	DefaultMCPToolIDs       []uint   `json:"defaultMCPToolIDs,omitempty"`
 	DefaultSkillIDs         []uint   `json:"defaultSkillIDs,omitempty" binding:"max=128"`
@@ -33,6 +34,7 @@ type UpdateConversationProjectRequest struct {
 	Name                    *string   `json:"name,omitempty" binding:"omitempty,max=80"`
 	Description             *string   `json:"description,omitempty" binding:"omitempty,max=255"`
 	SystemPrompt            *string   `json:"systemPrompt,omitempty" binding:"omitempty,max=12000"`
+	DefaultModel            *string   `json:"defaultModel,omitempty" binding:"omitempty,max=128"`
 	MCPDefaultMode          *string   `json:"mcpDefaultMode,omitempty" binding:"omitempty,oneof=inherit custom"`
 	DefaultMCPToolIDs       *[]uint   `json:"defaultMCPToolIDs,omitempty" binding:"omitempty"`
 	DefaultSkillIDs         *[]uint   `json:"defaultSkillIDs,omitempty" binding:"omitempty,max=128"`
@@ -159,9 +161,11 @@ type SendMessageRequest struct {
 	SkillIDs                []uint                 `json:"skillIDs,omitempty" binding:"max=128"`
 	KnowledgeBaseIDs        []string               `json:"knowledgeBaseIDs,omitempty" binding:"max=8,dive,required,max=32"`
 	HTMLVisualPromptEnabled bool                   `json:"htmlVisualPrompt,omitempty"`
-	ParentMessagePublicID   string                 `json:"parentMessagePublicID,omitempty" binding:"omitempty,max=32"`
-	SourceMessagePublicID   string                 `json:"sourceMessagePublicID,omitempty" binding:"omitempty,max=32"`
-	BranchReason            string                 `json:"branchReason,omitempty" binding:"omitempty,oneof=default retry edit"`
+	// UIComponentIDs 是本次会话勾选的交互式组件；后端据此注入组件目录提示词，不可见的 ID 被忽略。
+	UIComponentIDs        []uint  `json:"uiComponentIDs,omitempty" binding:"max=32"`
+	ParentMessagePublicID string  `json:"parentMessagePublicID,omitempty" binding:"omitempty,max=32"`
+	SourceMessagePublicID string  `json:"sourceMessagePublicID,omitempty" binding:"omitempty,max=32"`
+	BranchReason          string  `json:"branchReason,omitempty" binding:"omitempty,oneof=default retry edit"`
 }
 
 // MediaImageRequest 图片生成/编辑请求。

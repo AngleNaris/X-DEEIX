@@ -135,6 +135,9 @@ func buildOpenRouterImageRequestBody(model string, input portllm.GenerateInput, 
 
 // openRouterImageReferencePayload 将内部图片输入转换为 OpenRouter 要求的 image_url 内容块。
 func openRouterImageReferencePayload(image portllm.ContentPart) map[string]any {
+	if len(image.Data) == 0 && strings.TrimSpace(image.URL) != "" {
+		return map[string]any{"type": "image_url", "image_url": map[string]any{"url": strings.TrimSpace(image.URL)}}
+	}
 	mimeType := strings.TrimSpace(image.MimeType)
 	if mimeType == "" {
 		mimeType = "image/png"

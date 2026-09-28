@@ -426,46 +426,29 @@ func (r *Repo) GetActiveDefaultPriceByPlanID(ctx context.Context, planID uint) (
 }
 
 // CreateWithCredential 在同一事务中创建用户与凭据。
-func (r *Repo) CreateWithCredential(
-	ctx context.Context,
-	user *domainuser.User,
-	credential domainuser.Credential,
-	subscriptionPlanID uint,
-	subscriptionPriceID uint,
-	subscriptionEndAt *time.Time,
-	autoRenew bool,
-) error {
+func (r *Repo) CreateWithCredential(ctx context.Context, input repository.CreateWithCredentialInput) error {
 	return translateError(r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return r.createWithCredentialTx(tx, user, credential, subscriptionPlanID, subscriptionPriceID, subscriptionEndAt, autoRenew)
+		return r.createWithCredentialTx(tx, input.User, input.Credential, input.SubscriptionPlanID, input.SubscriptionPriceID, input.SubscriptionEndAt, input.AutoRenew)
 	}))
 }
 
 // CreateWithCredentialAndIdentity 在同一事务中创建用户、凭据与第三方身份。
-func (r *Repo) CreateWithCredentialAndIdentity(
-	ctx context.Context,
-	user *domainuser.User,
-	credential domainuser.Credential,
-	identity *domainuser.UserIdentity,
-	subscriptionPlanID uint,
-	subscriptionPriceID uint,
-	subscriptionEndAt *time.Time,
-	autoRenew bool,
-) error {
+func (r *Repo) CreateWithCredentialAndIdentity(ctx context.Context, input repository.CreateWithCredentialAndIdentityInput) error {
 	return translateError(r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := r.createWithCredentialTx(tx, user, credential, subscriptionPlanID, subscriptionPriceID, subscriptionEndAt, autoRenew); err != nil {
+		if err := r.createWithCredentialTx(tx, input.User, input.Credential, input.SubscriptionPlanID, input.SubscriptionPriceID, input.SubscriptionEndAt, input.AutoRenew); err != nil {
 			return err
 		}
-		if identity == nil {
+		if input.Identity == nil {
 			return nil
 		}
-		identity.UserID = user.ID
-		dbIdentity := toModelUserIdentity(identity)
+		input.Identity.UserID = input.User.ID
+		dbIdentity := toModelUserIdentity(input.Identity)
 		if err := tx.Create(dbIdentity).Error; err != nil {
 			return translateError(err)
 		}
-		identity.ID = dbIdentity.ID
-		identity.CreatedAt = dbIdentity.CreatedAt
-		identity.UpdatedAt = dbIdentity.UpdatedAt
+		input.Identity.ID = dbIdentity.ID
+		input.Identity.CreatedAt = dbIdentity.CreatedAt
+		input.Identity.UpdatedAt = dbIdentity.UpdatedAt
 		return nil
 	}))
 }
@@ -1243,6 +1226,68 @@ func (r *Repo) DeleteAccountHardWithStoragePaths(ctx context.Context, userID uin
 	return storagePaths, nil
 }
 
+// ListDistinctFileStoragePathsByUserID 查询用户文件与技能包对象路径（去重排序）。
+func (r *Repo) ListDistinctFileStoragePathsByUserID(ctx context.Context, userID uint) ([]string, error) {
+	paths := make([]string, 0)
+	if err := r.db.WithContext(ctx).
+		Model(&model.FileObject{}).
+		Distinct("storage_path").
+		Where("user_id = ? AND storage_path <> ''", userID).
+		Pluck("storage_path", &paths).Error; err != nil {
+		return nil, translateError(err)
+	}
+	var skills []model.Skill
+	if err := r.db.WithContext(ctx).
+		Select("id", "scope", "package_storage_version", "package_files_json").
+		Where("scope = ? AND owner_user_id = ? AND package_type = ?", domainskill.ScopeUser, userID, domainskill.PackageTypePackage).
+		Find(&skills).Error; err != nil {
+		return nil, translateError(err)
+	}
+	for _, item := range skills {
+		var files []skillPackageFileRecord
+		rawFiles := strings.TrimSpace(item.PackageFilesJSON)
+		if rawFiles == "" {
+			continue
+		}
+		if err := json.Unmarshal([]byte(rawFiles), &files); err != nil {
+			return nil, fmt.Errorf("decode skill %d package files: %w", item.ID, err)
+		}
+		prefix := "skills/" + strings.TrimSpace(item.Scope) + "/" + strconv.FormatUint(uint64(item.ID), 10)
+		if version := strings.TrimSpace(item.PackageStorageVersion); version != "" {
+			prefix += "/versions/" + version
+		}
+		for _, file := range files {
+			if relPath := normalizeSkillPackagePath(file.Path); relPath != "" {
+				paths = append(paths, prefix+"/"+relPath)
+			}
+		}
+	}
+	seen := make(map[string]struct{}, len(paths))
+	distinct := make([]string, 0, len(paths))
+	for _, rawPath := range paths {
+		path := strings.TrimSpace(rawPath)
+		if path == "" {
+			continue
+		}
+		if _, exists := seen[path]; exists {
+			continue
+		}
+		seen[path] = struct{}{}
+		distinct = append(distinct, path)
+	}
+	sort.Strings(distinct)
+	return distinct, nil
+}
+
+func normalizeSkillPackagePath(value string) string {
+	normalized := strings.ReplaceAll(strings.TrimSpace(value), "\\", "/")
+	cleanName := pathpkg.Clean(normalized)
+	if cleanName == "." || cleanName == "" || strings.HasPrefix(cleanName, "../") || strings.HasPrefix(cleanName, "/") {
+		return ""
+	}
+	return cleanName
+}
+
 type fileStoragePaths struct {
 	StoragePath        string
 	ExtractStoragePath string
@@ -1395,26 +1440,16 @@ func filterUnreferencedFileStoragePaths(db *gorm.DB, candidates map[string]struc
 }
 
 // RecordAuthEvent 写入认证事件。
-func (r *Repo) RecordAuthEvent(
-	ctx context.Context,
-	userID uint,
-	requestID string,
-	eventType string,
-	result string,
-	reason string,
-	clientIP string,
-	userAgent string,
-	detailJSON string,
-) error {
+func (r *Repo) RecordAuthEvent(ctx context.Context, input repository.AuthEventInput) error {
 	item := &model.UserAuthEvent{
-		RequestID:  requestID,
-		UserID:     userID,
-		EventType:  eventType,
-		Result:     result,
-		Reason:     reason,
-		ClientIP:   clientIP,
-		UserAgent:  userAgent,
-		DetailJSON: detailJSON,
+		RequestID:  input.RequestID,
+		UserID:     input.UserID,
+		EventType:  input.EventType,
+		Result:     input.Result,
+		Reason:     input.Reason,
+		ClientIP:   input.ClientIP,
+		UserAgent:  input.UserAgent,
+		DetailJSON: input.DetailJSON,
 		OccurredAt: time.Now(),
 	}
 	return translateError(r.db.WithContext(ctx).Create(item).Error)
@@ -1445,7 +1480,10 @@ func (r *Repo) GetSessionByUserAndSessionID(ctx context.Context, userID uint, se
 
 // RotateSessionTokens 以会话行锁原子校验并轮换令牌信息。
 func (r *Repo) RotateSessionTokens(ctx context.Context, input repository.RotateSessionTokensInput) error {
-	return translateError(r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	// 重用检测的吊销必须被提交，因此不能通过"回调返回错误"来表达（那会回滚整个事务）。
+	// 用局部变量把裁决带出事务，提交后再向调用方报告。
+	reuseDetected := false
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var item model.UserSession
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
 			Where("user_id = ? AND session_id = ?", input.UserID, input.SessionID).
@@ -1453,11 +1491,22 @@ func (r *Repo) RotateSessionTokens(ctx context.Context, input repository.RotateS
 			return translateError(err)
 		}
 
-		if !sessionAcceptsPresentedRefreshHash(item, input.PresentedRefreshHash, input.Now, input.PreviousTokenGrace) {
+		switch classifyPresentedRefreshHash(item, input.PresentedRefreshHash, input.Now, input.PreviousTokenGrace) {
+		case refreshHashCurrent, refreshHashPreviousInGrace:
+			// fall through to rotation
+		case refreshHashReused:
+			// 已轮换的令牌在宽限期外再次出现：要么是被盗令牌，要么是持有旧令牌的
+			// 客户端与持有新令牌的攻击者并存。无法区分，因此吊销整个会话（OAuth 2.1 §4.3.1）。
+			reuseDetected = true
+			return translateError(tx.Model(&model.UserSession{}).
+				Where("id = ?", item.ID).
+				Updates(map[string]any{"revoked_at": input.Now, "revoke_reason": "refresh_token_reuse"}).
+				Error)
+		default:
 			return repository.ErrInvalidInput
 		}
 
-		updates := map[string]interface{}{
+		updates := map[string]any{
 			"previous_refresh_token_hash": item.RefreshTokenHash,
 			"refresh_token_hash":          input.NextRefreshHash,
 			"refresh_rotated_at":          input.Now,
@@ -1472,29 +1521,53 @@ func (r *Repo) RotateSessionTokens(ctx context.Context, input repository.RotateS
 			Where("id = ?", item.ID).
 			Updates(updates).
 			Error)
-	}))
+	})
+	if err != nil {
+		return translateError(err)
+	}
+	if reuseDetected {
+		return repository.ErrRefreshTokenReuse
+	}
+	return nil
 }
 
-func sessionAcceptsPresentedRefreshHash(
+type refreshHashMatch int
+
+const (
+	// refreshHashUnknown 表示令牌与该会话无关（或会话已失效）。
+	refreshHashUnknown refreshHashMatch = iota
+	// refreshHashCurrent 表示当前有效令牌。
+	refreshHashCurrent
+	// refreshHashPreviousInGrace 表示上一枚令牌且仍在轮换宽限期内（容忍丢失的轮换响应）。
+	refreshHashPreviousInGrace
+	// refreshHashReused 表示上一枚令牌在宽限期外被使用：视为令牌重用。
+	refreshHashReused
+)
+
+func classifyPresentedRefreshHash(
 	item model.UserSession,
 	presentedHash string,
 	now time.Time,
 	previousTokenGrace time.Duration,
-) bool {
+) refreshHashMatch {
 	normalizedPresentedHash := strings.TrimSpace(presentedHash)
 	if normalizedPresentedHash == "" {
-		return false
+		return refreshHashUnknown
 	}
 	if item.RevokedAt != nil || !item.ExpiresAt.After(now) {
-		return false
+		return refreshHashUnknown
 	}
 	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(item.RefreshTokenHash)), []byte(normalizedPresentedHash)) == 1 {
-		return true
+		return refreshHashCurrent
 	}
-	if previousTokenGrace <= 0 || item.RefreshRotatedAt == nil || now.Sub(*item.RefreshRotatedAt) > previousTokenGrace {
-		return false
+	previous := strings.TrimSpace(item.PreviousRefreshTokenHash)
+	if previous == "" || subtle.ConstantTimeCompare([]byte(previous), []byte(normalizedPresentedHash)) != 1 {
+		return refreshHashUnknown
 	}
-	return subtle.ConstantTimeCompare([]byte(strings.TrimSpace(item.PreviousRefreshTokenHash)), []byte(normalizedPresentedHash)) == 1
+	if previousTokenGrace > 0 && item.RefreshRotatedAt != nil && now.Sub(*item.RefreshRotatedAt) <= previousTokenGrace {
+		return refreshHashPreviousInGrace
+	}
+	return refreshHashReused
 }
 
 // TouchSessionActivity 更新会话最近活跃时间及审计元数据。
@@ -1613,26 +1686,19 @@ func (r *Repo) ListActiveSessionsByUserID(ctx context.Context, userID uint, now 
 }
 
 // ListAuthEvents 查询用户认证事件。
-func (r *Repo) ListAuthEvents(
-	ctx context.Context,
-	userID uint,
-	eventType string,
-	result string,
-	offset int,
-	limit int,
-) ([]domainuser.AuthEvent, int64, error) {
+func (r *Repo) ListAuthEvents(ctx context.Context, input repository.AuthEventListInput) ([]domainuser.AuthEvent, int64, error) {
 	items := make([]model.UserAuthEvent, 0)
 	var total int64
 
 	query := r.db.WithContext(ctx).Model(&model.UserAuthEvent{})
-	if userID > 0 {
-		query = query.Where("user_id = ?", userID)
+	if input.UserID > 0 {
+		query = query.Where("user_id = ?", input.UserID)
 	}
-	if eventType != "" {
-		query = query.Where("event_type = ?", eventType)
+	if input.EventType != "" {
+		query = query.Where("event_type = ?", input.EventType)
 	}
-	if result != "" {
-		query = query.Where("result = ?", result)
+	if input.Result != "" {
+		query = query.Where("result = ?", input.Result)
 	}
 
 	if err := query.Count(&total).Error; err != nil {
@@ -1641,8 +1707,8 @@ func (r *Repo) ListAuthEvents(
 	if err := query.
 		Order("occurred_at DESC").
 		Order("id DESC").
-		Offset(offset).
-		Limit(limit).
+		Offset(input.Offset).
+		Limit(input.Limit).
 		Find(&items).Error; err != nil {
 		return nil, 0, translateError(err)
 	}
@@ -2207,7 +2273,6 @@ func toDomainPlan(item model.BillingPlan) *domainbilling.Plan {
 		Description:         item.Description,
 		FeatureJSON:         item.FeatureJSON,
 		PeriodCreditNanousd: item.PeriodCreditNanousd,
-		DiscountPercent:     item.DiscountPercent,
 		SortOrder:           item.SortOrder,
 		IsActive:            item.IsActive,
 		CreatedAt:           item.CreatedAt,

@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"encoding/json"
+	appembedding "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/embedding"
 	"strings"
 	"time"
 
@@ -241,6 +242,7 @@ type ConversationProjectResponse struct {
 	Name                    string    `json:"name"`
 	Description             string    `json:"description"`
 	SystemPrompt            string    `json:"systemPrompt"`
+	DefaultModel            string    `json:"defaultModel"`
 	MCPDefaultMode          string    `json:"mcpDefaultMode"`
 	DefaultMCPToolIDs       []uint    `json:"defaultMCPToolIDs"`
 	DefaultSkillIDs         []uint    `json:"defaultSkillIDs"`
@@ -262,6 +264,7 @@ func toConversationProjectResponse(item *model.ConversationProject) Conversation
 		Name:                    item.Name,
 		Description:             item.Description,
 		SystemPrompt:            item.SystemPrompt,
+		DefaultModel:            item.DefaultModel,
 		MCPDefaultMode:          item.MCPDefaultMode,
 		DefaultMCPToolIDs:       append([]uint{}, item.DefaultMCPToolIDs...),
 		DefaultSkillIDs:         append([]uint{}, item.DefaultSkillIDs...),
@@ -596,6 +599,8 @@ func toConversationDeleteResponse(result *appconversation.DeleteConversationResu
 
 // FileObjectResponse 文件对象响应 DTO。
 type FileObjectResponse struct {
+	CanVectorize           bool       `json:"canVectorize"`
+	VectorizationReason    string     `json:"vectorizationReason"`
 	FileID                 string     `json:"fileID"`
 	Purpose                string     `json:"purpose"`
 	FileName               string     `json:"fileName"`
@@ -646,12 +651,14 @@ func buildFileMediaURLs(uploadSvc *appupload.Service, userID uint, item *model.F
 	return FileMediaURLs{}
 }
 
-func toFileObjectResponse(item *model.FileObject, urls ...FileMediaURLs) FileObjectResponse {
+func toFileObjectResponse(item *model.FileObject, capability appembedding.FileVectorizationCapability, urls ...FileMediaURLs) FileObjectResponse {
 	var mediaURLs FileMediaURLs
 	if len(urls) > 0 {
 		mediaURLs = urls[0]
 	}
 	return FileObjectResponse{
+		CanVectorize:           capability.CanVectorize,
+		VectorizationReason:    capability.Reason,
 		FileID:                 item.FileID,
 		Purpose:                item.Purpose,
 		FileName:               item.FileName,
@@ -740,15 +747,16 @@ func toDeleteFileResponse(r *appupload.DeleteFileResult) DeleteFileResponse {
 
 // MessageTraceBlockResponse 消息轨迹块响应 DTO。
 type MessageTraceBlockResponse struct {
-	Title           string    `json:"title"`
-	Summary         string    `json:"summary"`
-	ContentMarkdown string    `json:"contentMarkdown"`
-	Status          string    `json:"status"`
-	Stage           string    `json:"stage,omitempty"`
-	RoundID         string    `json:"roundID,omitempty"`
-	ParentEventID   string    `json:"parentEventID,omitempty"`
-	UpdatedAt       time.Time `json:"updatedAt"`
-	PayloadJSON     string    `json:"payloadJSON,omitempty"`
+	StartedAt       *time.Time `json:"startedAt,omitempty"`
+	Title           string     `json:"title"`
+	Summary         string     `json:"summary"`
+	ContentMarkdown string     `json:"contentMarkdown"`
+	Status          string     `json:"status"`
+	Stage           string     `json:"stage,omitempty"`
+	RoundID         string     `json:"roundID,omitempty"`
+	ParentEventID   string     `json:"parentEventID,omitempty"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
+	PayloadJSON     string     `json:"payloadJSON,omitempty"`
 }
 
 // MessageTraceEventResponse 消息轨迹事件响应 DTO。
@@ -1038,11 +1046,19 @@ type MessageModerationResponse struct {
 	Categories []string `json:"categories,omitempty"`
 }
 
+func traceStartedAt(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	return &value
+}
+
 func toTraceBlockResponse(b *model.MessageTraceBlock) *MessageTraceBlockResponse {
 	if b == nil {
 		return nil
 	}
 	return &MessageTraceBlockResponse{
+		StartedAt:       traceStartedAt(b.StartedAt),
 		Title:           b.Title,
 		Summary:         b.Summary,
 		ContentMarkdown: b.ContentMarkdown,
@@ -1060,6 +1076,7 @@ func toPublicTraceBlockResponse(b *model.MessageTraceBlock) *MessageTraceBlockRe
 		return nil
 	}
 	return &MessageTraceBlockResponse{
+		StartedAt:       traceStartedAt(b.StartedAt),
 		Title:           b.Title,
 		Summary:         b.Summary,
 		ContentMarkdown: b.ContentMarkdown,
@@ -1534,44 +1551,54 @@ func toRunResponse(r model.Run) RunResponse {
 
 // FileProcessingStatusResponse 文件处理状态响应 DTO。
 type FileProcessingStatusResponse struct {
-	FileID           string     `json:"fileID"`
-	DetectedMIME     string     `json:"detectedMIME"`
-	FileCategory     string     `json:"fileCategory"`
-	ProcessingStatus string     `json:"processingStatus"`
-	ProcessingReady  bool       `json:"processingReady"`
-	ExtractStatus    string     `json:"extractStatus"`
-	EmbedStatus      string     `json:"embedStatus"`
-	PreviewText      string     `json:"previewText"`
-	OCRUsed          bool       `json:"ocrUsed"`
-	RAGReady         bool       `json:"ragReady"`
-	RAGReason        string     `json:"ragReason"`
-	ErrorCode        string     `json:"errorCode"`
-	ErrorMessage     string     `json:"errorMessage"`
-	ExtractChars     int        `json:"extractChars"`
-	ExtractPages     int        `json:"extractPages"`
-	StartedAt        *time.Time `json:"startedAt" extensions:"x-nullable,!x-omitempty"`
-	CompletedAt      *time.Time `json:"completedAt" extensions:"x-nullable,!x-omitempty"`
+	ChunkCount          int        `json:"chunkCount"`
+	EmbedError          string     `json:"embedError"`
+	CanVectorize        bool       `json:"canVectorize"`
+	VectorizationReason string     `json:"vectorizationReason"`
+	UpdatedAt           time.Time  `json:"updatedAt"`
+	FileID              string     `json:"fileID"`
+	DetectedMIME        string     `json:"detectedMIME"`
+	FileCategory        string     `json:"fileCategory"`
+	ProcessingStatus    string     `json:"processingStatus"`
+	ProcessingReady     bool       `json:"processingReady"`
+	ExtractStatus       string     `json:"extractStatus"`
+	EmbedStatus         string     `json:"embedStatus"`
+	PreviewText         string     `json:"previewText"`
+	OCRUsed             bool       `json:"ocrUsed"`
+	RAGReady            bool       `json:"ragReady"`
+	RAGReason           string     `json:"ragReason"`
+	ErrorCode           string     `json:"errorCode"`
+	ErrorMessage        string     `json:"errorMessage"`
+	ExtractChars        int        `json:"extractChars"`
+	ExtractPages        int        `json:"extractPages"`
+	StartedAt           *time.Time `json:"startedAt" extensions:"x-nullable,!x-omitempty"`
+	CompletedAt         *time.Time `json:"completedAt" extensions:"x-nullable,!x-omitempty"`
 }
 
 func toFileProcessingStatusResponse(d *appprocessing.FileProcessingStatusDTO) FileProcessingStatusResponse {
 	return FileProcessingStatusResponse{
-		FileID:           d.FileID,
-		DetectedMIME:     d.DetectedMIME,
-		FileCategory:     d.FileCategory,
-		ProcessingStatus: d.ProcessingStatus,
-		ProcessingReady:  d.ProcessingReady,
-		ExtractStatus:    d.ExtractStatus,
-		EmbedStatus:      d.EmbedStatus,
-		PreviewText:      d.PreviewText,
-		OCRUsed:          d.OCRUsed,
-		RAGReady:         d.RAGReady,
-		RAGReason:        d.RAGReason,
-		ErrorCode:        d.ErrorCode,
-		ErrorMessage:     appprocessing.HumanizeFileProcessingError(d.FileCategory, d.ErrorCode, d.ErrorMessage),
-		ExtractChars:     d.ExtractChars,
-		ExtractPages:     d.ExtractPages,
-		StartedAt:        d.StartedAt,
-		CompletedAt:      d.CompletedAt,
+		ChunkCount:          d.ChunkCount,
+		EmbedError:          d.EmbedError,
+		CanVectorize:        d.CanVectorize,
+		VectorizationReason: d.VectorizationReason,
+		UpdatedAt:           d.UpdatedAt,
+		FileID:              d.FileID,
+		DetectedMIME:        d.DetectedMIME,
+		FileCategory:        d.FileCategory,
+		ProcessingStatus:    d.ProcessingStatus,
+		ProcessingReady:     d.ProcessingReady,
+		ExtractStatus:       d.ExtractStatus,
+		EmbedStatus:         d.EmbedStatus,
+		PreviewText:         d.PreviewText,
+		OCRUsed:             d.OCRUsed,
+		RAGReady:            d.RAGReady,
+		RAGReason:           d.RAGReason,
+		ErrorCode:           d.ErrorCode,
+		ErrorMessage:        appprocessing.HumanizeFileProcessingError(d.FileCategory, d.ErrorCode, d.ErrorMessage),
+		ExtractChars:        d.ExtractChars,
+		ExtractPages:        d.ExtractPages,
+		StartedAt:           d.StartedAt,
+		CompletedAt:         d.CompletedAt,
 	}
 }
 
@@ -1764,6 +1791,18 @@ type ConversationRunListResponseDoc struct {
 		Total   int64         `json:"total"`
 		Results []RunResponse `json:"results"`
 	} `json:"data"`
+}
+
+// MessageDeleteResponse 删除消息响应。
+type MessageDeleteResponse struct {
+	Deleted                bool  `json:"deleted"`
+	ReparentedMessageCount int64 `json:"reparentedMessageCount"`
+}
+
+// MessageDeleteResponseDoc 删除消息响应文档。
+type MessageDeleteResponseDoc struct {
+	ErrorMsg string                `json:"errorMsg"`
+	Data     MessageDeleteResponse `json:"data"`
 }
 
 // ContextArtifactResponseDoc 上下文证据详情响应文档。

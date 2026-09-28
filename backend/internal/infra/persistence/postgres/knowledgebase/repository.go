@@ -624,7 +624,7 @@ func toFileDomain(item model.FileObject) domainconversation.FileObject {
 		ProcessingStatus: item.ProcessingStatus, ProcessingReady: item.ProcessingReady,
 		ProcessingErrorCode: item.ProcessingErrorCode, ProcessingErrorMessage: item.ProcessingErrorMessage,
 		ExtractStatus: item.ExtractStatus, EmbedStatus: item.EmbedStatus, EmbedSignature: item.EmbedSignature,
-		EmbedError: item.EmbedError, RAGOptOut: item.RAGOptOut,
+		EmbedError: item.EmbedError, RagOptOut: item.RagOptOut,
 		ChunkCount: item.ChunkCount, PageCount: item.PageCount, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 	}
 }

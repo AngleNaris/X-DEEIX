@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	appagentgroup "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/agentgroup"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
 	"github.com/gin-gonic/gin"
@@ -39,15 +40,15 @@ func (h *Handler) recordAudit(c *gin.Context, action string, resource string, re
 func resolveError(c *gin.Context, err error, defaultStatus int, defaultMsg string) {
 	switch {
 	case errors.Is(err, appagentgroup.ErrAgentGroupFeatureDisabled):
-		response.ErrorWithCode(c, http.StatusForbidden, "FEATURE_DISABLED", "agent group feature disabled")
+		response.ErrorFrom(c, http.StatusForbidden, apperr.New("FEATURE_DISABLED", "agent group feature disabled"))
 	case errors.Is(err, appagentgroup.ErrAgentGroupNotFound),
 		errors.Is(err, appagentgroup.ErrAgentGroupRunNotFound),
 		errors.Is(err, appagentgroup.ErrAgentGroupRoleNotFound):
-		response.Error(c, http.StatusNotFound, "agent group not found")
+		response.ErrorFrom(c, http.StatusNotFound, apperr.New("agent_group.not_found", "agent group not found"))
 	case errors.Is(err, appagentgroup.ErrAgentGroupHistoryExists),
 		errors.Is(err, appagentgroup.ErrAgentGroupRunActive),
 		errors.Is(err, appagentgroup.ErrAgentGroupDuplicateRun):
-		response.Error(c, http.StatusConflict, err.Error())
+		response.ErrorFrom(c, http.StatusConflict, err)
 	case errors.Is(err, appagentgroup.ErrInvalidAgentGroupName),
 		errors.Is(err, appagentgroup.ErrInvalidAgentGroupDescription),
 		errors.Is(err, appagentgroup.ErrInvalidCoordinationPrompt),
@@ -62,8 +63,8 @@ func resolveError(c *gin.Context, err error, defaultStatus int, defaultMsg strin
 		errors.Is(err, appagentgroup.ErrAgentGroupSupervisorNotRemovable),
 		errors.Is(err, appagentgroup.ErrAgentGroupSupervisorProtected),
 		errors.Is(err, appagentgroup.ErrAgentGroupInvalidMemberOrder):
-		response.Error(c, http.StatusBadRequest, err.Error())
+		response.ErrorFrom(c, http.StatusBadRequest, err)
 	default:
-		response.Error(c, defaultStatus, defaultMsg)
+		response.ErrorFrom(c, defaultStatus, err)
 	}
 }

@@ -264,7 +264,7 @@ func toKnowledgeBaseFileProcessingStatusResponses(
 			FileID: item.FileID, DetectedMIME: item.DetectedMIME, FileCategory: item.FileCategory,
 			ProcessingStatus: item.ProcessingStatus, Processing: domainconversation.IsFileProcessing(item), ProcessingReady: item.ProcessingReady,
 			ExtractStatus: item.ExtractStatus, EmbedStatus: item.EmbedStatus, EmbedError: item.EmbedError,
-			ChunkCount: item.ChunkCount, RAGOptOut: item.RAGOptOut,
+			ChunkCount: item.ChunkCount, RAGOptOut: item.RagOptOut,
 			CanVectorize:        capabilities[item.FileID].CanVectorize,
 			VectorizationReason: capabilities[item.FileID].Reason,
 			UpdatedAt:           item.UpdatedAt,
@@ -282,7 +282,7 @@ func toKnowledgeBaseFileResponse(
 		FileCategory: item.FileCategory, SizeBytes: item.SizeBytes, ProcessingStatus: item.ProcessingStatus,
 		Processing: domainconversation.IsFileProcessing(item), ProcessingReady: item.ProcessingReady,
 		ExtractStatus: item.ExtractStatus, EmbedStatus: item.EmbedStatus, EmbedError: item.EmbedError,
-		ChunkCount: item.ChunkCount, RAGOptOut: item.RAGOptOut,
+		ChunkCount: item.ChunkCount, RAGOptOut: item.RagOptOut,
 		CanVectorize: capability.CanVectorize, VectorizationReason: capability.Reason,
 		CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
 	}

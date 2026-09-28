@@ -33,7 +33,7 @@ func NewHandler(service *appconversation.Service) *Handler {
 func (h *Handler) GetApproval(c *gin.Context) {
 	approvalID := c.Param("approval_id")
 	if approvalID == "" {
-		response.Error(c, http.StatusBadRequest, "approval_id is required")
+		response.ErrorWithCode(c, http.StatusBadRequest, "request.required")
 		return
 	}
 	summary, err := h.service.GetPlatformWriteApproval(approvalID, middleware.MustUserID(c))
@@ -78,7 +78,7 @@ func (h *Handler) Reject(c *gin.Context) {
 func (h *Handler) act(c *gin.Context, approve bool) {
 	approvalID := c.Param("approval_id")
 	if approvalID == "" {
-		response.Error(c, http.StatusBadRequest, "approval_id is required")
+		response.ErrorWithCode(c, http.StatusBadRequest, "request.required")
 		return
 	}
 	userID := middleware.MustUserID(c)

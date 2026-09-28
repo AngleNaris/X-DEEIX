@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	appagentgroup "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/agentgroup"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
 	"github.com/gin-gonic/gin"
@@ -50,7 +51,7 @@ func (h *Handler) GetAgentGroup(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid agent group id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid agent group id"))
 		return
 	}
 	group, err := h.service.GetAgentGroup(c.Request.Context(), userID, publicID)
@@ -128,7 +129,7 @@ func (h *Handler) UpdateAgentGroup(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid agent group id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid agent group id"))
 		return
 	}
 	var req UpdateAgentGroupRequest
@@ -168,7 +169,7 @@ func (h *Handler) DeleteAgentGroup(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	publicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid agent group id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid agent group id"))
 		return
 	}
 	if err = h.service.DeleteAgentGroup(c.Request.Context(), userID, publicID); err != nil {
@@ -198,7 +199,7 @@ func (h *Handler) AddAgentGroupMember(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	groupPublicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid agent group id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid agent group id"))
 		return
 	}
 	var req AddAgentGroupMemberRequest
@@ -240,12 +241,12 @@ func (h *Handler) UpdateAgentGroupMember(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	groupPublicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid agent group id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid agent group id"))
 		return
 	}
 	memberPublicID, err := stringParam(c, "member_id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid member id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid member id"))
 		return
 	}
 	var req UpdateAgentGroupMemberRequest
@@ -288,12 +289,12 @@ func (h *Handler) RemoveAgentGroupMember(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	groupPublicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid agent group id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid agent group id"))
 		return
 	}
 	memberPublicID, err := stringParam(c, "member_id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid member id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid member id"))
 		return
 	}
 	group, err := h.service.RemoveAgentGroupMember(c.Request.Context(), userID, groupPublicID, memberPublicID)
@@ -324,7 +325,7 @@ func (h *Handler) ReorderAgentGroupMembers(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	groupPublicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid agent group id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid agent group id"))
 		return
 	}
 	var req ReorderAgentGroupMembersRequest
@@ -360,7 +361,7 @@ func (h *Handler) ChangeAgentGroupSupervisor(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	groupPublicID, err := stringParam(c, "id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid agent group id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid agent group id"))
 		return
 	}
 	var req ChangeAgentGroupSupervisorRequest

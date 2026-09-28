@@ -7,17 +7,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
-	portllm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
 func TestBuildOpenAIImageGenerationRequestBody(t *testing.T) {
-	payload, err := buildOpenAIImageGenerationRequestBody("gpt-image-1", portllm.GenerateInput{
-		Messages: []portllm.Message{
+	payload, err := buildOpenAIImageGenerationRequestBody("gpt-image-1", GenerateInput{
+		Messages: []Message{
 			{Role: "system", Content: "ignore"},
 			{Role: "user", Content: "A clean product render"},
 		},
-		Options: map[string]any{
+		Options: map[string]interface{}{
 			"size":               "1024x1024",
 			"quality":            "high",
 			"response_format":    "b64_json",
@@ -52,9 +50,9 @@ func TestBuildOpenAIImageGenerationRequestBody(t *testing.T) {
 }
 
 func TestBuildOpenAIImageGenerationStreamRequestBody(t *testing.T) {
-	payload, err := buildOpenAIImageGenerationStreamRequestBody("gpt-image-1", portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "A clean product render"}},
-		Options: map[string]any{
+	payload, err := buildOpenAIImageGenerationStreamRequestBody("gpt-image-1", GenerateInput{
+		Messages: []Message{{Role: "user", Content: "A clean product render"}},
+		Options: map[string]interface{}{
 			"output_format":  "webp",
 			"partial_images": 2,
 		},
@@ -68,8 +66,8 @@ func TestBuildOpenAIImageGenerationStreamRequestBody(t *testing.T) {
 }
 
 func TestBuildOpenAIImageGenerationStreamRequestBodyOmitsDefaultPartialImages(t *testing.T) {
-	payload, err := buildOpenAIImageGenerationStreamRequestBody("gpt-image-1", portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "A clean product render"}},
+	payload, err := buildOpenAIImageGenerationStreamRequestBody("gpt-image-1", GenerateInput{
+		Messages: []Message{{Role: "user", Content: "A clean product render"}},
 	})
 	if err != nil {
 		t.Fatalf("build image stream request body: %v", err)
@@ -83,9 +81,9 @@ func TestBuildOpenAIImageGenerationStreamRequestBodyOmitsDefaultPartialImages(t 
 }
 
 func TestBuildOpenAIImageGenerationStreamRequestBodyOmitsZeroPartialImages(t *testing.T) {
-	payload, err := buildOpenAIImageGenerationStreamRequestBody("gpt-image-1", portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "A clean product render"}},
-		Options:  map[string]any{"partial_images": 0},
+	payload, err := buildOpenAIImageGenerationStreamRequestBody("gpt-image-1", GenerateInput{
+		Messages: []Message{{Role: "user", Content: "A clean product render"}},
+		Options:  map[string]interface{}{"partial_images": 0},
 	})
 	if err != nil {
 		t.Fatalf("build image stream request body: %v", err)
@@ -96,9 +94,9 @@ func TestBuildOpenAIImageGenerationStreamRequestBodyOmitsZeroPartialImages(t *te
 }
 
 func TestBuildOpenAIImageGenerationRequestBodyDallEParams(t *testing.T) {
-	payload, err := buildOpenAIImageGenerationRequestBody("dall-e-3", portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "A clean product render"}},
-		Options: map[string]any{
+	payload, err := buildOpenAIImageGenerationRequestBody("dall-e-3", GenerateInput{
+		Messages: []Message{{Role: "user", Content: "A clean product render"}},
+		Options: map[string]interface{}{
 			"response_format":    "url",
 			"style":              "natural",
 			"output_format":      "webp",
@@ -121,8 +119,8 @@ func TestBuildOpenAIImageGenerationRequestBodyDallEParams(t *testing.T) {
 }
 
 func TestBuildOpenAIImageGenerationRequestBodyDefaultsDallEToBase64(t *testing.T) {
-	payload, err := buildOpenAIImageGenerationRequestBody("dall-e-3", portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "A clean product render"}},
+	payload, err := buildOpenAIImageGenerationRequestBody("dall-e-3", GenerateInput{
+		Messages: []Message{{Role: "user", Content: "A clean product render"}},
 	})
 	if err != nil {
 		t.Fatalf("build image request body: %v", err)
@@ -133,16 +131,16 @@ func TestBuildOpenAIImageGenerationRequestBodyDefaultsDallEToBase64(t *testing.T
 }
 
 func TestBuildOpenAIImageEditMultipartRequest(t *testing.T) {
-	body, contentType, debugBody, err := buildOpenAIImageEditMultipartRequest("gpt-image-1", portllm.GenerateInput{
-		Messages: []portllm.Message{{
+	body, contentType, debugBody, err := buildOpenAIImageEditMultipartRequest("gpt-image-1", GenerateInput{
+		Messages: []Message{{
 			Role: "user",
-			Parts: []portllm.ContentPart{
-				{Kind: portllm.ContentPartText, Text: "Replace the background"},
-				{Kind: portllm.ContentPartImage, MimeType: "image/png", FileName: "source.png", Data: []byte("source")},
+			Parts: []ContentPart{
+				{Kind: ContentPartText, Text: "Replace the background"},
+				{Kind: ContentPartImage, MimeType: "image/png", FileName: "source.png", Data: []byte("source")},
 			},
 		}},
-		ImageEditMask: &portllm.ContentPart{Kind: portllm.ContentPartImage, MimeType: "image/png", FileName: "mask.png", Data: []byte("mask")},
-		Options: map[string]any{
+		ImageEditMask: &ContentPart{Kind: ContentPartImage, MimeType: "image/png", FileName: "mask.png", Data: []byte("mask")},
+		Options: map[string]interface{}{
 			"size":               "1024x1024",
 			"quality":            "high",
 			"output_format":      "webp",
@@ -177,7 +175,7 @@ func TestBuildOpenAIImageEditMultipartRequest(t *testing.T) {
 	if len(form.File["image[]"]) != 1 || len(form.File["mask"]) != 1 {
 		t.Fatalf("expected image[] and mask files, got %#v", form.File)
 	}
-	var debug map[string]any
+	var debug map[string]interface{}
 	if err = json.Unmarshal(debugBody, &debug); err != nil {
 		t.Fatalf("parse debug body: %v", err)
 	}
@@ -187,12 +185,12 @@ func TestBuildOpenAIImageEditMultipartRequest(t *testing.T) {
 }
 
 func TestBuildOpenAIImageEditMultipartRequestDefaultsDallEToBase64(t *testing.T) {
-	body, contentType, _, err := buildOpenAIImageEditMultipartRequest("dall-e-2", portllm.GenerateInput{
-		Messages: []portllm.Message{{
+	body, contentType, _, err := buildOpenAIImageEditMultipartRequest("dall-e-2", GenerateInput{
+		Messages: []Message{{
 			Role: "user",
-			Parts: []portllm.ContentPart{
-				{Kind: portllm.ContentPartText, Text: "Replace the background"},
-				{Kind: portllm.ContentPartImage, MimeType: "image/png", Data: []byte("source")},
+			Parts: []ContentPart{
+				{Kind: ContentPartText, Text: "Replace the background"},
+				{Kind: ContentPartImage, MimeType: "image/png", Data: []byte("source")},
 			},
 		}},
 	}, false)
@@ -210,15 +208,15 @@ func TestBuildOpenAIImageEditMultipartRequestDefaultsDallEToBase64(t *testing.T)
 }
 
 func TestBuildOpenAIImageEditStreamMultipartRequest(t *testing.T) {
-	body, contentType, _, err := buildOpenAIImageEditMultipartRequest("gpt-image-1", portllm.GenerateInput{
-		Messages: []portllm.Message{{
+	body, contentType, _, err := buildOpenAIImageEditMultipartRequest("gpt-image-1", GenerateInput{
+		Messages: []Message{{
 			Role: "user",
-			Parts: []portllm.ContentPart{
-				{Kind: portllm.ContentPartText, Text: "Replace the background"},
-				{Kind: portllm.ContentPartImage, MimeType: "image/png", Data: []byte("source")},
+			Parts: []ContentPart{
+				{Kind: ContentPartText, Text: "Replace the background"},
+				{Kind: ContentPartImage, MimeType: "image/png", Data: []byte("source")},
 			},
 		}},
-		Options: map[string]any{"partial_images": 2},
+		Options: map[string]interface{}{"partial_images": 2},
 	}, true)
 	if err != nil {
 		t.Fatalf("build image edit stream multipart request: %v", err)
@@ -234,15 +232,15 @@ func TestBuildOpenAIImageEditStreamMultipartRequest(t *testing.T) {
 }
 
 func TestBuildOpenAIImageEditStreamMultipartRequestOmitsZeroPartialImages(t *testing.T) {
-	body, contentType, _, err := buildOpenAIImageEditMultipartRequest("gpt-image-1", portllm.GenerateInput{
-		Messages: []portllm.Message{{
+	body, contentType, _, err := buildOpenAIImageEditMultipartRequest("gpt-image-1", GenerateInput{
+		Messages: []Message{{
 			Role: "user",
-			Parts: []portllm.ContentPart{
-				{Kind: portllm.ContentPartText, Text: "Replace the background"},
-				{Kind: portllm.ContentPartImage, MimeType: "image/png", Data: []byte("source")},
+			Parts: []ContentPart{
+				{Kind: ContentPartText, Text: "Replace the background"},
+				{Kind: ContentPartImage, MimeType: "image/png", Data: []byte("source")},
 			},
 		}},
-		Options: map[string]any{"partial_images": 0},
+		Options: map[string]interface{}{"partial_images": 0},
 	}, true)
 	if err != nil {
 		t.Fatalf("build image edit stream multipart request: %v", err)
@@ -301,13 +299,13 @@ func TestParseOpenAIImageGenerationOutputDoesNotInventUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse image output: %v", err)
 	}
-	if output.Usage != (portllm.Usage{}) {
+	if output.Usage != (Usage{}) {
 		t.Fatalf("expected missing upstream usage to remain empty, got %#v", output.Usage)
 	}
 }
 
 func TestOpenAIImageGenerationStream(t *testing.T) {
-	var requestPayload map[string]any
+	var requestPayload map[string]interface{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/images/generations" {
 			t.Fatalf("unexpected path: %s", r.URL.Path)
@@ -327,18 +325,18 @@ func TestOpenAIImageGenerationStream(t *testing.T) {
 	defer server.Close()
 
 	client := newTestClient()
-	var partials []portllm.GenerateStreamEvent
-	output, err := client.GenerateStream(context.Background(), portllm.RouteConfig{
-		Protocol:      portllm.AdapterOpenAIImageGenerations,
+	var partials []GenerateStreamEvent
+	output, err := client.GenerateStream(context.Background(), RouteConfig{
+		Protocol:      AdapterOpenAIImageGenerations,
 		BaseURL:       server.URL,
 		UpstreamModel: "gpt-image-1",
-	}, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "A clean product render"}},
-		Options: map[string]any{
+	}, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "A clean product render"}},
+		Options: map[string]interface{}{
 			"output_format":  "webp",
 			"partial_images": 2,
 		},
-	}, func(event portllm.GenerateStreamEvent) error {
+	}, func(event GenerateStreamEvent) error {
 		if event.GeneratedImage != nil {
 			partials = append(partials, event)
 		}
@@ -382,15 +380,15 @@ func TestOpenAIImageGenerationStreamFallsBackToJSONResponse(t *testing.T) {
 	defer server.Close()
 
 	client := newTestClient()
-	var usageEvents []portllm.Usage
-	output, err := client.GenerateStream(context.Background(), portllm.RouteConfig{
-		Protocol:      portllm.AdapterOpenAIImageGenerations,
+	var usageEvents []Usage
+	output, err := client.GenerateStream(context.Background(), RouteConfig{
+		Protocol:      AdapterOpenAIImageGenerations,
 		BaseURL:       server.URL,
 		UpstreamModel: "gpt-image-1",
-	}, portllm.GenerateInput{
-		Messages: []portllm.Message{{Role: "user", Content: "A clean product render"}},
-	}, func(event portllm.GenerateStreamEvent) error {
-		if event.Usage != (portllm.Usage{}) {
+	}, GenerateInput{
+		Messages: []Message{{Role: "user", Content: "A clean product render"}},
+	}, func(event GenerateStreamEvent) error {
+		if event.Usage != (Usage{}) {
 			usageEvents = append(usageEvents, event.Usage)
 		}
 		return nil
@@ -437,24 +435,24 @@ func TestOpenAIImageEditStream(t *testing.T) {
 	defer server.Close()
 
 	client := newTestClient()
-	var partials []portllm.GenerateStreamEvent
-	output, err := client.GenerateStream(context.Background(), portllm.RouteConfig{
-		Protocol:      portllm.AdapterOpenAIImageEdits,
+	var partials []GenerateStreamEvent
+	output, err := client.GenerateStream(context.Background(), RouteConfig{
+		Protocol:      AdapterOpenAIImageEdits,
 		BaseURL:       server.URL,
 		UpstreamModel: "gpt-image-1",
-	}, portllm.GenerateInput{
-		Messages: []portllm.Message{{
+	}, GenerateInput{
+		Messages: []Message{{
 			Role: "user",
-			Parts: []portllm.ContentPart{
-				{Kind: portllm.ContentPartText, Text: "Replace the background"},
-				{Kind: portllm.ContentPartImage, MimeType: "image/png", Data: []byte("source")},
+			Parts: []ContentPart{
+				{Kind: ContentPartText, Text: "Replace the background"},
+				{Kind: ContentPartImage, MimeType: "image/png", Data: []byte("source")},
 			},
 		}},
-		Options: map[string]any{
+		Options: map[string]interface{}{
 			"output_format":  "webp",
 			"partial_images": 2,
 		},
-	}, func(event portllm.GenerateStreamEvent) error {
+	}, func(event GenerateStreamEvent) error {
 		if event.GeneratedImage != nil {
 			partials = append(partials, event)
 		}

@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 
 	appconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/conversation"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
 	"github.com/gin-gonic/gin"
@@ -41,7 +42,7 @@ func resolveRunControlError(c *gin.Context, err error, defaultStatus int, defaul
 	if status >= http.StatusInternalServerError && !errors.Is(err, appconversation.ErrAgentGroupRunStateCorrupt) {
 		status, message = defaultStatus, defaultMsg
 	}
-	response.ErrorWithCode(c, status, code, message)
+	response.ErrorFrom(c, status, apperr.New(code, message))
 }
 
 // runControlStreamErrorPayload 构建 NDJSON 错误事件（稳定错误码，不暴露内部细节）。
@@ -74,22 +75,22 @@ func (h *Handler) RetryAgentGroupRunStep(c *gin.Context) {
 	userID := middleware.MustUserID(c)
 	runPublicID, err := stringParam(c, "run_id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid run id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid run id"))
 		return
 	}
 	stepPublicID, err := stringParam(c, "step_id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid step id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid step id"))
 		return
 	}
 	var req AgentGroupStepRetryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid request body")
+		response.InvalidRequestBody(c, err)
 		return
 	}
 	retryRequestID := strings.TrimSpace(req.RetryRequestID)
 	if retryRequestID == "" {
-		response.Error(c, http.StatusBadRequest, "retry request id is required")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New("agent_group.retry_request_id_required", "retry request id is required"))
 		return
 	}
 
@@ -169,7 +170,7 @@ func (h *Handler) RetryAgentGroupRunStep(c *gin.Context) {
 func (h *Handler) CancelAgentGroupRun(c *gin.Context) {
 	runPublicID, err := stringParam(c, "run_id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid run id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid run id"))
 		return
 	}
 	canceled, err := h.runControl.CancelAgentGroupRun(c.Request.Context(), middleware.MustUserID(c), runPublicID)
@@ -198,7 +199,7 @@ func (h *Handler) CancelAgentGroupRun(c *gin.Context) {
 func (h *Handler) AbandonAgentGroupRun(c *gin.Context) {
 	runPublicID, err := stringParam(c, "run_id")
 	if err != nil {
-		response.Error(c, http.StatusBadRequest, "invalid run id")
+		response.ErrorFrom(c, http.StatusBadRequest, apperr.New(response.CodeRequestInvalidID, "invalid run id"))
 		return
 	}
 	if _, err := h.runControl.AbandonAgentGroupRun(c.Request.Context(), middleware.MustUserID(c), runPublicID); err != nil {

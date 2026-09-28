@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	portllm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
 // geminiImageGenerationAdapter 实现 Google Gemini 图片生成/编辑协议。
@@ -18,30 +16,30 @@ type geminiImageGenerationAdapter struct {
 	client *Client
 }
 
-func (a *geminiImageGenerationAdapter) Name() string { return portllm.AdapterGoogleImageGeneration }
+func (a *geminiImageGenerationAdapter) Name() string { return AdapterGoogleImageGeneration }
 
 // Generate 调用 Gemini generateContent 图片能力，返回结构化图片结果。
-func (a *geminiImageGenerationAdapter) Generate(ctx context.Context, route portllm.RouteConfig, input portllm.GenerateInput) (*portllm.GenerateOutput, error) {
+func (a *geminiImageGenerationAdapter) Generate(ctx context.Context, route RouteConfig, input GenerateInput) (*GenerateOutput, error) {
 	return a.client.generateGeminiImageGeneration(ctx, route, input)
 }
 
 // GenerateStream 调用 Gemini streamGenerateContent；最终图片仍由媒体任务落库。
 func (a *geminiImageGenerationAdapter) GenerateStream(
 	ctx context.Context,
-	route portllm.RouteConfig,
-	input portllm.GenerateInput,
-	onEvent func(portllm.GenerateStreamEvent) error,
-) (*portllm.GenerateOutput, error) {
+	route RouteConfig,
+	input GenerateInput,
+	onEvent func(GenerateStreamEvent) error,
+) (*GenerateOutput, error) {
 	return a.client.generateGeminiImageGenerationStream(ctx, route, input, onEvent)
 }
 
 // ListModels 复用 Gemini models 目录，供渠道校验和展示使用。
-func (a *geminiImageGenerationAdapter) ListModels(ctx context.Context, route portllm.RouteConfig) ([]portllm.ModelItem, error) {
+func (a *geminiImageGenerationAdapter) ListModels(ctx context.Context, route RouteConfig) ([]ModelItem, error) {
 	return a.client.listModelsGemini(ctx, route)
 }
 
 // generateGeminiImageGeneration 调用 generateContent，并强制请求图片模态输出。
-func (c *Client) generateGeminiImageGeneration(ctx context.Context, route portllm.RouteConfig, input portllm.GenerateInput) (*portllm.GenerateOutput, error) {
+func (c *Client) generateGeminiImageGeneration(ctx context.Context, route RouteConfig, input GenerateInput) (*GenerateOutput, error) {
 	base := geminiBaseURL(route)
 	model := strings.TrimSpace(route.UpstreamModel)
 	requestURL := buildGeminiGenerateURL(base, model)
@@ -83,10 +81,10 @@ func (c *Client) generateGeminiImageGeneration(ctx context.Context, route portll
 // generateGeminiImageGenerationStream 调用 Gemini 图片 SSE 输出并复用 GenerateContentResponse 解析。
 func (c *Client) generateGeminiImageGenerationStream(
 	ctx context.Context,
-	route portllm.RouteConfig,
-	input portllm.GenerateInput,
-	onEvent func(portllm.GenerateStreamEvent) error,
-) (*portllm.GenerateOutput, error) {
+	route RouteConfig,
+	input GenerateInput,
+	onEvent func(GenerateStreamEvent) error,
+) (*GenerateOutput, error) {
 	base := geminiBaseURL(route)
 	model := strings.TrimSpace(route.UpstreamModel)
 	requestURL := buildGeminiStreamURL(base, model)
@@ -124,8 +122,8 @@ func (c *Client) generateGeminiImageGenerationStream(
 		return nil, parseGeminiError(resp.StatusCode, body, upstreamDebugSnapshot(req, payload, resp, body))
 	}
 
-	result := &portllm.GenerateOutput{
-		ToolCalls: make([]portllm.ToolCall, 0),
+	result := &GenerateOutput{
+		ToolCalls: make([]ToolCall, 0),
 	}
 	idleReader := newIdleTimeoutReader(resp.Body, resolveStreamIdleTimeout(route.StreamIdleTimeoutMS))
 	streamBody := newUpstreamBodyRecorder(idleReader)
@@ -139,7 +137,7 @@ func (c *Client) generateGeminiImageGenerationStream(
 }
 
 // buildGeminiImageGenerationRequestBody 构造 Gemini 图片生成/编辑请求字段。
-func buildGeminiImageGenerationRequestBody(model string, input portllm.GenerateInput) (map[string]any, error) {
+func buildGeminiImageGenerationRequestBody(model string, input GenerateInput) (map[string]interface{}, error) {
 	prompt := buildOpenAIImageGenerationPrompt(input.Messages)
 	if strings.TrimSpace(prompt) == "" {
 		return nil, fmt.Errorf("image generation prompt required")
@@ -149,8 +147,8 @@ func buildGeminiImageGenerationRequestBody(model string, input portllm.GenerateI
 		return nil, err
 	}
 
-	payload := map[string]any{
-		"contents": []map[string]any{
+	payload := map[string]interface{}{
+		"contents": []map[string]interface{}{
 			{
 				"role":  "user",
 				"parts": buildGeminiImageGenerationParts(prompt, collectImageInputParts(input.Messages)),
@@ -167,8 +165,8 @@ func buildGeminiImageGenerationRequestBody(model string, input portllm.GenerateI
 	return payload, nil
 }
 
-func buildGeminiImageGenerationConfig(model string, options map[string]any) map[string]any {
-	generationConfig := map[string]any{
+func buildGeminiImageGenerationConfig(model string, options map[string]interface{}) map[string]interface{} {
+	generationConfig := map[string]interface{}{
 		"responseModalities": []string{"TEXT", "IMAGE"},
 	}
 	if len(options) == 0 {
@@ -184,11 +182,11 @@ func buildGeminiImageGenerationConfig(model string, options map[string]any) map[
 	return generationConfig
 }
 
-func buildGeminiImageConfig(model string, raw map[string]any) map[string]any {
+func buildGeminiImageConfig(model string, raw map[string]interface{}) map[string]interface{} {
 	if len(raw) == 0 {
 		return nil
 	}
-	imageConfig := map[string]any{}
+	imageConfig := map[string]interface{}{}
 	if aspectRatio := geminiImageAspectRatio(getString(raw["aspectRatio"])); aspectRatio != "" {
 		imageConfig["aspectRatio"] = aspectRatio
 	}
@@ -201,24 +199,24 @@ func buildGeminiImageConfig(model string, raw map[string]any) map[string]any {
 	return imageConfig
 }
 
-func geminiImageResponseModalities(raw any) []string {
+func geminiImageResponseModalities(raw interface{}) []string {
 	switch value := raw.(type) {
 	case string:
-		return geminiImageResponseModalitiesList([]any{value})
+		return geminiImageResponseModalitiesList([]interface{}{value})
 	case []string:
-		items := make([]any, 0, len(value))
+		items := make([]interface{}, 0, len(value))
 		for _, item := range value {
 			items = append(items, item)
 		}
 		return geminiImageResponseModalitiesList(items)
-	case []any:
+	case []interface{}:
 		return geminiImageResponseModalitiesList(value)
 	default:
 		return nil
 	}
 }
 
-func geminiImageResponseModalitiesList(raw []any) []string {
+func geminiImageResponseModalitiesList(raw []interface{}) []string {
 	result := make([]string, 0, len(raw))
 	seen := map[string]struct{}{}
 	for _, item := range raw {
@@ -272,8 +270,8 @@ func geminiImageModelDisallowsImageSize(model string) bool {
 }
 
 // buildGeminiImageGenerationParts 按 Google GenerateContent 格式组合文本提示词和编辑输入图。
-func buildGeminiImageGenerationParts(prompt string, images []portllm.ContentPart) []map[string]any {
-	parts := []map[string]any{
+func buildGeminiImageGenerationParts(prompt string, images []ContentPart) []map[string]interface{} {
+	parts := []map[string]interface{}{
 		{"text": strings.TrimSpace(prompt)},
 	}
 	for _, image := range images {
@@ -284,8 +282,8 @@ func buildGeminiImageGenerationParts(prompt string, images []portllm.ContentPart
 		if mimeType == "" {
 			mimeType = "image/jpeg"
 		}
-		parts = append(parts, map[string]any{
-			"inline_data": map[string]any{
+		parts = append(parts, map[string]interface{}{
+			"inline_data": map[string]interface{}{
 				"mime_type": mimeType,
 				"data":      base64.StdEncoding.EncodeToString(image.Data),
 			},
@@ -295,18 +293,18 @@ func buildGeminiImageGenerationParts(prompt string, images []portllm.ContentPart
 }
 
 // parseGeminiImageGenerationOutput 抽取 Gemini inlineData 图片，文本片段只作为 revised prompt。
-func parseGeminiImageGenerationOutput(body []byte) (*portllm.GenerateOutput, error) {
-	parsed := make(map[string]any)
+func parseGeminiImageGenerationOutput(body []byte) (*GenerateOutput, error) {
+	parsed := make(map[string]interface{})
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil, err
 	}
 	revisedPrompt := extractGeminiText(parsed)
-	result := &portllm.GenerateOutput{
+	result := &GenerateOutput{
 		ResponseID:      strings.TrimSpace(getString(parsed["responseId"])),
 		Text:            revisedPrompt,
 		Usage:           parseGeminiUsage(parsed),
-		ToolCalls:       make([]portllm.ToolCall, 0),
-		ServerToolCalls: make([]portllm.ToolCall, 0),
+		ToolCalls:       make([]ToolCall, 0),
+		ServerToolCalls: make([]ToolCall, 0),
 		GeneratedImages: extractGeminiGeneratedImages(parsed, revisedPrompt),
 		RawJSON:         string(body),
 	}
@@ -314,8 +312,8 @@ func parseGeminiImageGenerationOutput(body []byte) (*portllm.GenerateOutput, err
 }
 
 // extractGeminiGeneratedImages 扫描所有候选内容，避免只读取第一个候选导致丢图。
-func extractGeminiGeneratedImages(parsed map[string]any, revisedPrompt string) []portllm.GeneratedImage {
-	images := make([]portllm.GeneratedImage, 0)
+func extractGeminiGeneratedImages(parsed map[string]interface{}, revisedPrompt string) []GeneratedImage {
+	images := make([]GeneratedImage, 0)
 	for _, rawCandidate := range asSlice(parsed["candidates"]) {
 		candidate := asMap(rawCandidate)
 		content := asMap(candidate["content"])
@@ -343,7 +341,7 @@ func extractGeminiGeneratedImages(parsed map[string]any, revisedPrompt string) [
 			if mimeType == "" {
 				mimeType = "image/png"
 			}
-			images = append(images, portllm.GeneratedImage{
+			images = append(images, GeneratedImage{
 				B64JSON:       b64,
 				MIMEType:      mimeType,
 				RevisedPrompt: revisedPrompt,
@@ -353,7 +351,7 @@ func extractGeminiGeneratedImages(parsed map[string]any, revisedPrompt string) [
 	return images
 }
 
-func isGeminiThoughtPart(part map[string]any) bool {
+func isGeminiThoughtPart(part map[string]interface{}) bool {
 	thought, ok := part["thought"].(bool)
 	return ok && thought
 }
