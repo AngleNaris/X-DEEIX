@@ -27,6 +27,8 @@ export interface SessionStore {
   readRevision(): number;
   write(credentials: SessionCredentials): void;
   clear(): void;
+  /** Wait briefly for a newer session published by another browser context. */
+  waitForPeerSnapshot?: () => Promise<void>;
 }
 
 /** Cross-context mutual exclusion (e.g. Web Locks across browser tabs). Optional. */
@@ -105,7 +107,11 @@ export function createAuthClient(host: AuthHost): AuthClient {
   function refreshUnlessReplaced(failedToken: string): Promise<string> {
     const run = async () => {
       // Another tab/caller may already have rotated the token while we waited for the lock.
-      const currentToken = store.readAccessToken();
+      let currentToken = store.readAccessToken();
+      if ((!currentToken || currentToken === failedToken) && store.waitForPeerSnapshot) {
+        await store.waitForPeerSnapshot();
+        currentToken = store.readAccessToken();
+      }
       if (currentToken && currentToken !== failedToken) {
         return currentToken;
       }

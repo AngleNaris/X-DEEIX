@@ -3,7 +3,13 @@
 import { type AuthHost, type SessionStore, classifyAuthError, createAuthClient } from "@deeix/core";
 import type { LoginData } from "@/shared/api/auth.types";
 import { ApiError, apiRequest } from "@/shared/api/http-client";
-import { clearSessionSnapshot, readAccessToken, readSessionRevision, writeSessionSnapshot } from "@/shared/auth/session";
+import {
+  clearSessionSnapshot,
+  readAccessToken,
+  readSessionRevision,
+  waitForPeerSessionSnapshot,
+  writeSessionSnapshot,
+} from "@/shared/auth/session";
 import { isDesktopApp } from "@/shared/platform";
 import { isShellSessionError, refreshSession } from "@/shared/platform/desktop-shell";
 
@@ -26,6 +32,7 @@ const sessionStore: SessionStore = {
   readAccessToken,
   readRevision: readSessionRevision,
   write: (credentials) => writeSessionSnapshot(credentials),
+  waitForPeerSnapshot: waitForPeerSessionSnapshot,
   // Refresh-driven clears never fan out to peers: each tab's own refresh
   // will fail on the same server state, and a peer may already hold a newer session.
   clear: () => clearSessionSnapshot({ syncPeers: false }),

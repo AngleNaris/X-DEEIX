@@ -12,15 +12,21 @@ export const SESSION_CLEARED_EVENT = "deeix-chat:session-cleared";
 
 const SESSION_CHANNEL_NAME = "deeix-chat:session-snapshot";
 const SESSION_CHANNEL_MESSAGE_TYPE = "session_snapshot";
+const SESSION_CHANNEL_REQUEST_TYPE = "session_snapshot_request";
+const SESSION_PEER_WAIT_MS = 100;
 
 type SessionSnapshotWriteOptions = {
   syncPeers?: boolean;
 };
 
-type SessionChannelMessage = {
-  type: typeof SESSION_CHANNEL_MESSAGE_TYPE;
-  snapshot: SessionSnapshot;
-};
+type SessionChannelMessage =
+  | {
+      type: typeof SESSION_CHANNEL_MESSAGE_TYPE;
+      snapshot: SessionSnapshot;
+    }
+  | {
+      type: typeof SESSION_CHANNEL_REQUEST_TYPE;
+    };
 
 let sessionRevision = 0;
 let sessionChannel: BroadcastChannel | null = null;
@@ -60,6 +66,15 @@ function ensureSessionChannel(): BroadcastChannel | null {
     sessionChannel = new BroadcastChannel(SESSION_CHANNEL_NAME);
     sessionChannel.onmessage = (event: MessageEvent<SessionChannelMessage>) => {
       const message = event.data;
+      if (message?.type === SESSION_CHANNEL_REQUEST_TYPE) {
+        if (sessionSnapshot.accessToken && sessionSnapshot.sessionID) {
+          sessionChannel?.postMessage({
+            type: SESSION_CHANNEL_MESSAGE_TYPE,
+            snapshot: readSessionSnapshot(),
+          } satisfies SessionChannelMessage);
+        }
+        return;
+      }
       if (message?.type !== SESSION_CHANNEL_MESSAGE_TYPE || !isSessionSnapshot(message.snapshot)) {
         return;
       }
@@ -124,6 +139,43 @@ export function readSessionSnapshot(): SessionSnapshot {
 export function readSessionRevision(): number {
   ensureSessionChannel();
   return sessionRevision;
+}
+
+/**
+ * Ask another browser tab for its in-memory access token before rotating the
+ * shared HttpOnly refresh cookie. This prevents simultaneous cold tabs from
+ * consuming the same refresh token chain one after another.
+ */
+export function waitForPeerSessionSnapshot(): Promise<void> {
+  const channel = ensureSessionChannel();
+  if (!channel || readAccessToken()) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let timeoutID: number | null = null;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (timeoutID !== null) {
+        window.clearTimeout(timeoutID);
+      }
+      window.removeEventListener(SESSION_SNAPSHOT_CHANGED_EVENT, handleSnapshotChanged);
+      resolve();
+    };
+    const handleSnapshotChanged = () => {
+      if (readAccessToken()) {
+        finish();
+      }
+    };
+
+    window.addEventListener(SESSION_SNAPSHOT_CHANGED_EVENT, handleSnapshotChanged);
+    channel.postMessage({ type: SESSION_CHANNEL_REQUEST_TYPE } satisfies SessionChannelMessage);
+    timeoutID = window.setTimeout(finish, SESSION_PEER_WAIT_MS);
+  });
 }
 
 export function writeSessionSnapshot(next: Partial<SessionSnapshot>, options: SessionSnapshotWriteOptions = {}): void {

@@ -8,6 +8,7 @@ class MemoryStore implements SessionStore {
   sessionID = "";
   revision = 0;
   cleared = 0;
+  peerWaitForSnapshot?: () => Promise<void>;
 
   readAccessToken() {
     return this.accessToken;
@@ -25,6 +26,10 @@ class MemoryStore implements SessionStore {
     this.sessionID = "";
     this.revision += 1;
     this.cleared += 1;
+  }
+
+  waitForPeerSnapshot() {
+    return this.peerWaitForSnapshot?.() ?? Promise.resolve();
   }
 }
 
@@ -127,7 +132,7 @@ describe("refreshAccessToken", () => {
     assert.equal(store.cleared, 0);
   });
 
-  it("does not clear a session that was replaced while refreshing", async () => {
+  it("adopts a session that was replaced while waiting for refresh", async () => {
     const gate = deferred<SessionCredentials | null>();
     const { client, store } = makeHost({ refreshSession: () => gate.promise });
     store.write({ accessToken: "x", sessionID: "s" });
@@ -135,9 +140,20 @@ describe("refreshAccessToken", () => {
     // Another tab logs in with a new session before our refresh answers.
     store.write({ accessToken: "new-login", sessionID: "s2" });
     gate.resolve(null);
-    assert.equal(await pending, "");
+    assert.equal(await pending, "new-login");
     assert.equal(store.accessToken, "new-login");
     assert.equal(store.cleared, 0);
+  });
+
+  it("uses a peer token received while waiting before rotating", async () => {
+    const peerReady = deferred<void>();
+    const { client, store, calls } = makeHost();
+    store.peerWaitForSnapshot = () => peerReady.promise;
+    const pending = client.refreshAccessToken("stale");
+    store.write({ accessToken: "peer-token", sessionID: "peer-session" });
+    peerReady.resolve();
+    assert.equal(await pending, "peer-token");
+    assert.equal(calls.refresh, 0);
   });
 
   it("runs the refresh inside the provided lock", async () => {
