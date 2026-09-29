@@ -31,35 +31,35 @@ import { useChatArtifactResize } from "@/features/chat/hooks/use-chat-artifact-r
 import { useChatArtifacts } from "@/features/chat/hooks/use-chat-artifacts";
 import { useChatAttachments } from "@/features/chat/hooks/use-chat-attachments";
 import { useChatComposerSelection } from "@/features/chat/hooks/use-chat-composer-selection";
-import { useChatConversationActions } from "@/features/chat/hooks/use-chat-conversation-actions";
-import { useChatFileDrag } from "@/features/chat/hooks/use-chat-file-drag";
-import { useChatMCPTools } from "@/features/chat/hooks/use-chat-mcp-tools";
-import { useChatUIComponents } from "@/features/chat/hooks/use-chat-ui-components";
-import { UIBlockRegistryProvider } from "@/shared/components/markdown/ui-blocks";
-import { useChatMediaAttachmentActions } from "@/features/chat/hooks/use-chat-media-attachment-actions";
-import { useChatModelOptionState } from "@/features/chat/hooks/use-chat-model-option-state";
-import { useChatScreenshotPreview } from "@/features/chat/hooks/use-chat-screenshot-preview";
 import {
   resolveConversationComposerKey,
   useChatComposerState,
 } from "@/features/chat/hooks/use-chat-composer-state";
+import { useChatConversationActions } from "@/features/chat/hooks/use-chat-conversation-actions";
+import { useChatConversationDefaults } from "@/features/chat/hooks/use-chat-conversation-defaults";
 import { useChatData } from "@/features/chat/hooks/use-chat-data";
+import { useChatFileDrag } from "@/features/chat/hooks/use-chat-file-drag";
+import { useChatMCPTools } from "@/features/chat/hooks/use-chat-mcp-tools";
+import { useChatMediaAttachmentActions } from "@/features/chat/hooks/use-chat-media-attachment-actions";
+import { useChatModelOptionState } from "@/features/chat/hooks/use-chat-model-option-state";
 import { useChatModelOptions } from "@/features/chat/hooks/use-chat-model-options";
 import { useChatRuntime } from "@/features/chat/hooks/use-chat-runtime";
 import { useChatScreenshot } from "@/features/chat/hooks/use-chat-screenshot";
+import { useChatScreenshotPreview } from "@/features/chat/hooks/use-chat-screenshot-preview";
+import { useChatTemporaryRuntime } from "@/features/chat/hooks/use-chat-temporary-runtime";
+import { useChatUIComponents } from "@/features/chat/hooks/use-chat-ui-components";
 import { useChatViewerProfile } from "@/features/chat/hooks/use-chat-viewer-profile";
 import { useChatVisualPrompt } from "@/features/chat/hooks/use-chat-visual-prompt";
-import { useChatConversationDefaults } from "@/features/chat/hooks/use-chat-conversation-defaults";
-import { useChatTemporaryRuntime } from "@/features/chat/hooks/use-chat-temporary-runtime";
 import { filterAvailableMCPToolIDs } from "@/features/chat/model/chat-mcp-tool-defaults";
 import type { ChatAreaMessage, } from "@/features/chat/types/messages";
 import { useSettingsChatPreferences } from "@/features/settings";
 import { cn } from "@/lib/utils";
 import { getConversation } from "@/shared/api/conversation";
 import type { ConversationDTO, ConversationOptions } from "@/shared/api/conversation.types";
-import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import { useAuthSession } from "@/shared/auth/auth-session-context";
+import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import { DeleteFilesOption } from "@/shared/components/delete-files-option";
+import { UIBlockRegistryProvider } from "@/shared/components/markdown/ui-blocks";
 import {
   hasMultipleImageAttachmentProcessors,
   normalizeImageAttachmentProcessorSelection,
@@ -148,6 +148,7 @@ export function AppChatArea() {
   const projectsLoading = useSidebarConversationField("projectsLoading");
   const prependNewConversation = useSidebarConversationField("prependNewConversation");
   const touchByPublicID = useSidebarConversationField("touchByPublicID");
+  const markReadByPublicID = useSidebarConversationField("markReadByPublicID");
   const renameByPublicID = useSidebarConversationField("renameByPublicID");
   const upsertConversation = useSidebarConversationField("upsertConversation");
   const {
@@ -501,6 +502,13 @@ export function AppChatArea() {
     resumingRunID,
   });
   const generating = sending;
+  React.useEffect(() => {
+    const normalizedConversationID = conversationID?.trim() || "";
+    if (!normalizedConversationID || sending || resumingRunID) {
+      return;
+    }
+    void markReadByPublicID(normalizedConversationID).catch(() => undefined);
+  }, [conversationID, markReadByPublicID, resumingRunID, sending]);
   const uploadDropDisabled = loading || uploading;
   const onStopActiveMessage = React.useCallback(() => {
     const visibleRunID = currentLeafMessage?.runID?.trim() || "";
