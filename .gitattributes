@@ -1,4 +1,11 @@
 # Auto detect text files and perform LF normalization
- * text=auto
- # 发布脚本必须保持 LF，否则 Linux 远端执行失败（CRLF 会破坏 shebang/heredoc）。
- *.sh text eol=lf
+* text=auto
+
+# Content-hashed by apps/web/scripts/sync-*.mjs, and the generated manifests
+# those scripts write with LF only. A CRLF checkout (core.autocrlf=true on
+# Windows) changes the hash and dirties the tree on every start.
+*.svg text eol=lf
+apps/web/shared/generated/** text eol=lf
+
+# 发布脚本必须保持 LF，否则 Linux 远端执行失败（CRLF 会破坏 shebang/heredoc）。
+*.sh text eol=lf

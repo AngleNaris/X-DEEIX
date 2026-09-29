@@ -198,6 +198,7 @@ func (s *Service) RetrieveWithStatus(ctx context.Context, input RetrieveInput) (
 			FileName:   idToName[c.FileObjID],
 			FileID:     idToFileID[c.FileObjID],
 			ChunkIndex: c.ChunkIndex,
+			Modality:   c.Modality,
 			Score:      retrievalScore(c, cfg.RAGHybridEnabled),
 		})
 	}
@@ -440,7 +441,17 @@ func (s *Service) embedTexts(ctx context.Context, texts []string, cfg config.Con
 		if end > len(texts) {
 			end = len(texts)
 		}
-		batchEmbeddings, batchErr := s.embedClient.CallAPI(ctx, portembedding.Request{APIBase: apiBase, APIKey: apiKey, Model: model, Texts: texts[start:end], Dimensions: cfg.EmbeddingOutputDimensions, OmitDimensions: cfg.EmbeddingDimensionsPolicy == config.EmbeddingDimensionsPolicyOmit, TimeoutSeconds: cfg.EmbeddingTimeoutSeconds})
+		batchEmbeddings, batchErr := s.embedClient.CallAPI(ctx, portembedding.Request{
+			Protocol:       portembedding.Protocol(cfg.EmbeddingProtocol),
+			APIBase:        apiBase,
+			APIKey:         apiKey,
+			Model:          model,
+			Inputs:         portembedding.TextInputs(texts[start:end]),
+			Purpose:        portembedding.PurposeQuery,
+			Dimensions:     cfg.EmbeddingOutputDimensions,
+			OmitDimensions: cfg.EmbeddingDimensionsPolicy == config.EmbeddingDimensionsPolicyOmit,
+			TimeoutSeconds: cfg.EmbeddingTimeoutSeconds,
+		})
 		if batchErr != nil {
 			return nil, batchErr
 		}

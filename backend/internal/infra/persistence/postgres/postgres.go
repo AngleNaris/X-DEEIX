@@ -145,7 +145,6 @@ func migrate(db *gorm.DB, cfg config.Config) error {
 		"billing_model_prices":           "平台模型按量单价配置表",
 		"billing_usage_ledgers":          "按量用量账本表",
 		"audit_logs":                     "可追溯审计日志表",
-		"system_events":                  "后台系统事件表",
 		"system_announcements":           "站点公告表",
 		"announcement_user_states":       "用户公告展示状态表",
 		"prompt_presets":                 "内置与用户自定义预制提示词表",

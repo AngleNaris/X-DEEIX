@@ -9,18 +9,15 @@ import type {
   AdminConversationEventDTO,
   AdminPaymentOrderDTO,
   AdminRedemptionRecordDTO,
-  AdminSystemEventDTO,
   AdminUsageLogDTO,
   AdminUserAuthEventDTO,
 } from "@/features/admin/api/admin.types";
 import {
-  cleanupAdminConversationRuns,
   cleanupAdminLogs,
   getAdminConversationEvent,
   type AdminLogCleanupType,
 } from "@/features/admin/api/audit";
 import { getAdminBillingConfig } from "@/features/admin/api/billing";
-import type { useAdminConversationEvents } from "@/features/admin/hooks/use-admin-logs";
 import { resolveAdminErrorMessage } from "@/features/admin/utils/admin-error";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import {
@@ -28,13 +25,12 @@ import {
   type BillingDisplayOptions,
 } from "@/shared/lib/billing-display";
 
-const RUN_CLEANUP_MAX_SELECTION = 100;
+const _RUN_CLEANUP_MAX_SELECTION = 100;
 
 export type LogDetail =
   | { kind: "audit"; item: AdminAuditLogDTO }
   | { kind: "auth"; item: AdminUserAuthEventDTO }
   | { kind: "usage"; item: AdminUsageLogDTO }
-  | { kind: "system"; item: AdminSystemEventDTO }
   | { kind: "order"; item: AdminPaymentOrderDTO }
   | { kind: "redemption"; item: AdminRedemptionRecordDTO }
   | { kind: "conversation"; item: AdminConversationEventDTO };
@@ -60,90 +56,6 @@ export function cleanupDateToISOString(value: string): string | null {
   return date.toISOString();
 }
 
-// useAdminConversationRunsCleanup 承载会话运行日志的选择与批量清理编排。
-export function useAdminConversationRunsCleanup(logs: ReturnType<typeof useAdminConversationEvents>) {
-  const t = useTranslations("adminLogs");
-  const [selectedRunIDs, setSelectedRunIDs] = React.useState<Set<string>>(new Set());
-  const [cleanupOpen, setCleanupOpen] = React.useState(false);
-  const [cleanupPending, setCleanupPending] = React.useState(false);
-
-  const visibleRunIDs = React.useMemo(
-    () => [...new Set(logs.events.map((item) => item.runID.trim()).filter(Boolean))],
-    [logs.events],
-  );
-  const allVisibleSelected = visibleRunIDs.length > 0 && visibleRunIDs.every((runID) => selectedRunIDs.has(runID));
-  const someVisibleSelected = visibleRunIDs.some((runID) => selectedRunIDs.has(runID));
-
-  React.useEffect(() => {
-    setSelectedRunIDs(new Set());
-  }, [logs.events]);
-
-  const toggleRun = React.useCallback((runID: string, selected: boolean) => {
-    if (!runID) return;
-    setSelectedRunIDs((current) => {
-      const next = new Set(current);
-      if (selected) {
-        if (next.size >= RUN_CLEANUP_MAX_SELECTION && !next.has(runID)) {
-          toast.error(t("conversation.cleanup.maxSelection"));
-          return current;
-        }
-        next.add(runID);
-      } else {
-        next.delete(runID);
-      }
-      return next;
-    });
-  }, [t]);
-
-  const toggleVisibleRuns = React.useCallback((selected: boolean) => {
-    if (!selected) {
-      setSelectedRunIDs(new Set());
-      return;
-    }
-    if (visibleRunIDs.length > RUN_CLEANUP_MAX_SELECTION) {
-      toast.error(t("conversation.cleanup.maxSelection"));
-    }
-    setSelectedRunIDs(new Set(visibleRunIDs.slice(0, RUN_CLEANUP_MAX_SELECTION)));
-  }, [t, visibleRunIDs]);
-
-  const cleanupSelectedRuns = React.useCallback(async () => {
-    const runIDs = [...selectedRunIDs];
-    if (runIDs.length === 0) return;
-    setCleanupPending(true);
-    try {
-      const token = await resolveAccessToken();
-      if (!token) {
-        toast.error(t("toast.sessionExpired"), { description: t("toast.signInAgain") });
-        return;
-      }
-      const result = await cleanupAdminConversationRuns(token, { runIDs });
-      toast.success(t("conversation.cleanup.success", {
-        runs: result.runCount,
-        events: result.deletedCount,
-      }));
-      setCleanupOpen(false);
-      setSelectedRunIDs(new Set());
-      await logs.loadConversationEvents(logs.page, logs.pageSize);
-    } catch (error) {
-      toast.error(t("conversation.cleanup.failed"), { description: resolveAdminErrorMessage(error) });
-    } finally {
-      setCleanupPending(false);
-    }
-  }, [logs, selectedRunIDs, t]);
-
-  return {
-    selectedRunIDs,
-    visibleRunIDs,
-    allVisibleSelected,
-    someVisibleSelected,
-    cleanupOpen,
-    setCleanupOpen,
-    cleanupPending,
-    toggleRun,
-    toggleVisibleRuns,
-    cleanupSelectedRuns,
-  };
-}
 
 // useAdminLogCleanupDialog 承载日志清理弹窗的表单状态与提交编排。
 export function useAdminLogCleanupDialog({

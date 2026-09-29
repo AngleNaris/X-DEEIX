@@ -23,6 +23,8 @@ type PermissionGroupSelectorProps = {
   emptyLabel: string;
   autoBadgeLabel: string;
   onSelectedIDsChange: (ids: number[]) => void;
+  // "inline" renders the trigger as plain text for use inside a sentence or status line.
+  variant?: "outline" | "inline";
 };
 
 export function PermissionGroupSelector({
@@ -36,6 +38,7 @@ export function PermissionGroupSelector({
   emptyLabel,
   autoBadgeLabel,
   onSelectedIDsChange,
+  variant = "outline",
 }: PermissionGroupSelectorProps) {
   const selectedSet = React.useMemo(() => new Set(selectedIDs), [selectedIDs]);
   const matchedSet = React.useMemo(() => new Set(matchedIDs), [matchedIDs]);
@@ -65,13 +68,20 @@ export function PermissionGroupSelector({
         <PopoverTrigger asChild>
           <Button
             type="button"
-            variant="outline"
+            variant={variant === "inline" ? "ghost" : "outline"}
             role="combobox"
             disabled={disabled || loading}
-            className="h-8 w-full justify-between gap-2 border-input/40 bg-transparent px-3 py-1 text-xs font-normal hover:bg-transparent focus-visible:border-ring/60 focus-visible:ring-[1px] focus-visible:ring-ring/40 has-[>svg]:px-3"
+            className={cn(
+              "justify-between gap-2 text-xs font-normal focus-visible:ring-[1px] focus-visible:ring-ring/40",
+              variant === "inline"
+                ? "h-6 w-auto max-w-full rounded-md px-1.5 py-0 hover:bg-muted/60 has-[>svg]:px-1.5"
+                : "h-8 w-full border-input/40 bg-transparent px-3 py-1 hover:bg-transparent focus-visible:border-ring/60 has-[>svg]:px-3",
+            )}
           >
             {triggerPrefix ? (
-              <span className="shrink-0 text-muted-foreground">{triggerPrefix}</span>
+              <span className={cn("shrink-0", variant === "inline" ? "font-medium text-foreground" : "text-muted-foreground")}>
+                {triggerPrefix}
+              </span>
             ) : null}
             <span className={cn("min-w-0 flex-1 truncate text-left", selectedLabel ? "text-foreground/75" : "text-muted-foreground")}>
               {triggerLabel}

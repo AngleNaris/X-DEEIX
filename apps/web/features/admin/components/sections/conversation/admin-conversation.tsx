@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { exportAllConversations, getAdminReferenceData, listAdminSettings, patchAdminSettings } from "@/features/admin/api";
+import { overrideFeaturePolicy } from "@/shared/hooks/use-feature-policy";
 import { ConversationPromptPresetsSection } from "@/features/admin/components/sections/conversation/conversation-prompt-presets";
 import {
   buildConversationSettingsFields,
@@ -497,6 +498,7 @@ export function AdminConversationSettingsPage() {
       const flattened = flattenConversationSettings(grouped);
       setSettingsMap(flattened);
       setSavedMap(flattened);
+      overrideFeaturePolicy({ processTraceEnabled: flattened["chat.process_trace_enabled"] !== "false" });
       toast.success(t("toast.updated"));
     } catch (error) {
       toast.error(t("toast.saveFailed"), { description: resolveAdminErrorMessage(error) });

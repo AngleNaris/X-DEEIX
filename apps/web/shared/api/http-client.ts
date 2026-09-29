@@ -1,4 +1,4 @@
-import { resolveApiBaseUrl } from "@deeix/core";
+import { FEATURE_DISABLED_ERROR_CODE, resolveApiBaseUrl } from "@deeix/core";
 import { CLIENT_PLATFORM_HEADER, resolveClientPlatform } from "@/shared/platform";
 import type { ApiEnvelope } from "@/shared/api/common.types";
 
@@ -86,6 +86,15 @@ function normalizeApiErrorMessage(message: string, status: number): string {
     return "errors.auth.forbidden";
   }
   return normalized;
+}
+
+// Notified when the server answers feature.disabled, so the capabilities cache
+// can be refreshed; registered by the capabilities layer to keep this module
+// free of React.
+let featureDisabledListener: (() => void) | null = null;
+
+export function registerFeatureDisabledListener(listener: () => void): void {
+  featureDisabledListener = listener;
 }
 
 // Runtime API base URL source, registered by the platform layer (desktop reads
@@ -244,6 +253,9 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     : ({ errorMsg: response.ok ? "" : await response.text(), requestId: responseRequestId } as ApiEnvelope<T>);
 
   if (!response.ok) {
+    if (payload.errorCode === FEATURE_DISABLED_ERROR_CODE) {
+      featureDisabledListener?.();
+    }
     throw new ApiError(
       payload.errorMsg?.trim() || `request failed: ${response.status}`,
       response.status,

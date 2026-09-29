@@ -1,5 +1,30 @@
 basePath: /api/v1
 definitions:
+  ActiveMessageGenerationEventResponse:
+    properties:
+      conversationPublicID:
+        type: string
+      runID:
+        type: string
+      runs:
+        items:
+          $ref: '#/definitions/ActiveMessageGenerationResponse'
+        type: array
+      type:
+        type: string
+    required:
+    - type
+    type: object
+  ActiveMessageGenerationResponse:
+    properties:
+      conversationPublicID:
+        type: string
+      runID:
+        type: string
+    required:
+    - conversationPublicID
+    - runID
+    type: object
   ActiveSessionListResponse:
     properties:
       results:
@@ -1682,6 +1707,63 @@ definitions:
     - data
     - errorMsg
     type: object
+  Capabilities:
+    properties:
+      accountSecurity:
+        description: AccountSecurity 密码、邮箱、两步验证、会话、注销账号。
+        type: boolean
+      announcements:
+        description: Announcements 系统公告。
+        type: boolean
+      billingGating:
+        description: BillingGating 计费规则可以拒绝请求：套餐、余额、兑换码、支付。
+        type: boolean
+      contentModeration:
+        description: ContentModeration 内容审核。
+        type: boolean
+      identityProviders:
+        description: IdentityProviders 第三方登录与身份绑定。
+        type: boolean
+      multiUser:
+        description: MultiUser 存在多个账号：账号管理、权限组。
+        type: boolean
+      registration:
+        description: Registration 可自行注册账号。
+        type: boolean
+      sharing:
+        description: Sharing 对话公开分享链接；只监听回环的服务器没有可分享的对象。
+        type: boolean
+      usageMetering:
+        description: UsageMetering 记录用量与费用。
+        type: boolean
+    required:
+    - accountSecurity
+    - announcements
+    - billingGating
+    - contentModeration
+    - identityProviders
+    - multiUser
+    - registration
+    - sharing
+    - usageMetering
+    type: object
+  CapabilitiesResponse:
+    properties:
+      features:
+        $ref: '#/definitions/Capabilities'
+    required:
+    - features
+    type: object
+  CapabilitiesResponseDoc:
+    properties:
+      data:
+        $ref: '#/definitions/CapabilitiesResponse'
+      errorMsg:
+        type: string
+    required:
+    - data
+    - errorMsg
+    type: object
   ChangeAgentGroupSupervisorRequest:
     properties:
       memberPublicID:
@@ -1775,37 +1857,6 @@ definitions:
         type: boolean
     required:
     - reset
-    type: object
-  CleanupConversationRunsRequest:
-    properties:
-      runIDs:
-        items:
-          type: string
-        maxItems: 100
-        minItems: 1
-        type: array
-    required:
-    - runIDs
-    type: object
-  CleanupConversationRunsResponse:
-    properties:
-      deletedCount:
-        type: integer
-      runCount:
-        type: integer
-    required:
-    - deletedCount
-    - runCount
-    type: object
-  CleanupConversationRunsResponseDoc:
-    properties:
-      data:
-        $ref: '#/definitions/CleanupConversationRunsResponse'
-      errorMsg:
-        type: string
-    required:
-    - data
-    - errorMsg
     type: object
   CleanupLogsRequest:
     properties:
@@ -5181,6 +5232,8 @@ definitions:
         type: string
       fileName:
         type: string
+      modality:
+        type: string
       preview:
         type: string
       score:
@@ -5480,7 +5533,6 @@ definitions:
         type: string
     required:
     - contentMarkdown
-    - startedAt
     - status
     - summary
     - title
@@ -7250,6 +7302,31 @@ definitions:
     - data
     - errorMsg
     type: object
+  ProviderBindBridgeStartRequest:
+    properties:
+      clientID:
+        maxLength: 128
+        type: string
+      clientState:
+        maxLength: 128
+        minLength: 43
+        type: string
+      codeChallenge:
+        maxLength: 128
+        minLength: 43
+        type: string
+      next:
+        maxLength: 2048
+        type: string
+      redirectURI:
+        maxLength: 2048
+        type: string
+    required:
+    - clientID
+    - clientState
+    - codeChallenge
+    - redirectURI
+    type: object
   PublicFileShareResponseDoc:
     properties:
       data:
@@ -8414,6 +8491,12 @@ definitions:
       sourceMessagePublicID:
         maxLength: 32
         type: string
+      uiComponentIDs:
+        description: UIComponentIDs 是本次会话勾选的交互式组件；后端据此注入组件目录提示词，不可见的 ID 被忽略。
+        items:
+          type: integer
+        maxItems: 32
+        type: array
       userModelID:
         type: integer
     required:
@@ -9082,66 +9165,6 @@ definitions:
     required:
     - data
     - errorMsg
-    type: object
-  SystemEventListResponseDoc:
-    properties:
-      data:
-        properties:
-          results:
-            items:
-              $ref: '#/definitions/SystemEventResponse'
-            type: array
-          total:
-            type: integer
-        required:
-        - results
-        - total
-        type: object
-      errorMsg:
-        type: string
-    required:
-    - data
-    - errorMsg
-    type: object
-  SystemEventResponse:
-    properties:
-      createdAt:
-        type: string
-      detailJSON:
-        type: string
-      event:
-        type: string
-      id:
-        type: integer
-      level:
-        type: string
-      message:
-        type: string
-      requestID:
-        type: string
-      resource:
-        type: string
-      resourceID:
-        type: string
-      source:
-        type: string
-      traceID:
-        type: string
-      updatedAt:
-        type: string
-    required:
-    - createdAt
-    - detailJSON
-    - event
-    - id
-    - level
-    - message
-    - requestID
-    - resource
-    - resourceID
-    - source
-    - traceID
-    - updatedAt
     type: object
   TemporaryChatHistoryMessage:
     properties:
@@ -11251,6 +11274,62 @@ definitions:
     required:
     - errorMsg
     type: object
+  UserIdentityResponse:
+    properties:
+      email:
+        type: string
+      emailVerified:
+        type: boolean
+      id:
+        type: integer
+      lastLoginAt:
+        type: string
+        x-nullable: true
+        x-omitempty: false
+      linkedAt:
+        type: string
+      providerDisplayName:
+        type: string
+      providerID:
+        type: integer
+      providerLogoURL:
+        type: string
+      providerName:
+        type: string
+      providerSlug:
+        type: string
+      providerType:
+        type: string
+    required:
+    - email
+    - emailVerified
+    - id
+    - lastLoginAt
+    - linkedAt
+    - providerDisplayName
+    - providerID
+    - providerLogoURL
+    - providerName
+    - providerSlug
+    - providerType
+    type: object
+  UserIdentityResponseData:
+    properties:
+      identity:
+        $ref: '#/definitions/UserIdentityResponse'
+    required:
+    - identity
+    type: object
+  UserIdentityResponseDoc:
+    properties:
+      data:
+        $ref: '#/definitions/UserIdentityResponseData'
+      errorMsg:
+        type: string
+    required:
+    - data
+    - errorMsg
+    type: object
   UserListResponseDoc:
     properties:
       data:
@@ -11454,7 +11533,7 @@ info:
   contact: {}
   description: DEEIX Chat 后端 API 文档
   title: DEEIX Chat API
-  version: "0.4.4-beta.1"
+  version: "0.4.4-beta.2"
 paths:
   /admin/announcements:
     get:
@@ -12593,38 +12672,6 @@ paths:
       security:
       - BearerAuth: []
       summary: 管理员查询对话事件详情
-      tags:
-      - admin
-  /admin/conversation-events/cleanup:
-    post:
-      consumes:
-      - application/json
-      description: 物理删除指定运行的全部对话事件；保留消息、附件、调用与计费记录
-      parameters:
-      - description: 运行轨迹清理参数
-        in: body
-        name: body
-        required: true
-        schema:
-          $ref: '#/definitions/CleanupConversationRunsRequest'
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/CleanupConversationRunsResponseDoc'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/AdminErrorDoc'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/AdminErrorDoc'
-      security:
-      - BearerAuth: []
-      summary: 管理员按运行清理对话事件
       tags:
       - admin
   /admin/conversations/export:
@@ -16356,68 +16403,6 @@ paths:
       summary: 管理员解析技能包（zip 预览）
       tags:
       - admin-skills
-  /admin/system-events:
-    get:
-      consumes:
-      - application/json
-      description: 管理员分页查看后台结构化系统事件
-      parameters:
-      - description: 页码
-        in: query
-        name: page
-        type: integer
-      - description: 每页数量
-        in: query
-        name: page_size
-        type: integer
-      - description: 搜索关键词
-        in: query
-        name: query
-        type: string
-      - description: 级别
-        in: query
-        name: level
-        type: string
-      - description: 来源
-        in: query
-        name: source
-        type: string
-      - description: 事件
-        in: query
-        name: event
-        type: string
-      - description: 创建时间起点(RFC3339)
-        in: query
-        name: created_from
-        type: string
-      - description: 创建时间终点(RFC3339)
-        in: query
-        name: created_to
-        type: string
-      - description: 排序方式
-        in: query
-        name: sort
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/SystemEventListResponseDoc'
-        "400":
-          description: Bad Request
-          schema:
-            $ref: '#/definitions/AdminErrorDoc'
-        "500":
-          description: Internal Server Error
-          schema:
-            $ref: '#/definitions/AdminErrorDoc'
-      security:
-      - BearerAuth: []
-      summary: 管理员查询系统事件
-      tags:
-      - admin
   /admin/ui-components:
     get:
       consumes:
@@ -17970,6 +17955,19 @@ paths:
       summary: 查询品牌 Web App Manifest
       tags:
       - settings
+  /capabilities:
+    get:
+      description: 返回这台服务器提供哪些功能。客户端据此决定显示什么；能力关闭的功能其端点返回 404 feature.disabled。
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/CapabilitiesResponseDoc'
+      summary: 查询服务器能力声明
+      tags:
+      - system
   /context-artifacts/{id}:
     get:
       consumes:
@@ -19029,6 +19027,26 @@ paths:
       security:
       - BearerAuth: []
       summary: 批量查询会话运行状态
+      tags:
+      - chat
+  /conversation-runs/stream:
+    get:
+      description: Sends an authoritative snapshot followed by live user-scoped run
+        state events
+      produces:
+      - text/event-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/ActiveMessageGenerationEventResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: Stream active conversation generations
       tags:
       - chat
   /conversations:
@@ -21202,6 +21220,80 @@ paths:
       summary: 开始删除账号验证
       tags:
       - auth
+  /me/identities/providers/{slug}/authorize:
+    post:
+      consumes:
+      - application/json
+      description: 为当前登录用户创建 PKCE 保护的绑定事务；外部身份源仅回调当前 DEEIX 实例，绑定在兑换时才生效
+      parameters:
+      - description: 身份源 slug
+        in: path
+        name: slug
+        required: true
+        type: string
+      - description: 授权桥参数
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/ProviderBindBridgeStartRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/ProviderAuthBridgeStartResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/AuthErrorDoc'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/AuthErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 创建第三方身份绑定授权桥事务
+      tags:
+      - auth
+  /me/identities/providers/{slug}/exchange:
+    post:
+      consumes:
+      - application/json
+      description: 使用客户端 PKCE verifier 兑换绑定授权码，将身份绑到当前登录用户
+      parameters:
+      - description: 身份源 slug
+        in: path
+        name: slug
+        required: true
+        type: string
+      - description: 授权码兑换参数
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/ProviderAuthBridgeExchangeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/UserIdentityResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/AuthErrorDoc'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/AuthErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 兑换第三方身份绑定一次性授权码
+      tags:
+      - auth
   /me/onboarding/complete:
     post:
       consumes:
@@ -21358,7 +21450,7 @@ paths:
     patch:
       consumes:
       - application/json
-      description: 更新当前用户会话中的 assistant 消息内容，并标记为已编辑
+      description: 就地更新当前用户会话中的 user 或 assistant 消息内容并标记为已编辑，不触发重新生成
       parameters:
       - description: 消息 public_id
         in: path

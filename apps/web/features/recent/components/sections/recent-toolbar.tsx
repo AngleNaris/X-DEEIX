@@ -26,6 +26,7 @@ import type {
   ConversationStarredFilter,
   ConversationStatusFilter,
 } from "@/shared/api/conversation.types";
+import { FeatureGate } from "@/shared/capabilities";
 
 type RecentToolbarProps = {
   isSelectionMode: boolean;
@@ -126,12 +127,14 @@ export function RecentToolbar({
         onChange={onStarredFilterChange}
       />
 
-      <RecentFilterGroup
-        label={t("share")}
-        value={shareFilter}
-        options={shareOptions}
-        onChange={onShareFilterChange}
-      />
+      <FeatureGate feature="sharing">
+        <RecentFilterGroup
+          label={t("share")}
+          value={shareFilter}
+          options={shareOptions}
+          onChange={onShareFilterChange}
+        />
+      </FeatureGate>
     </div>
   );
 
@@ -192,24 +195,26 @@ export function RecentToolbar({
                   </DropdownMenuContent>
                 </DropdownMenu>
               </ToolbarActionTooltip>
-              <ToolbarActionTooltip label={t("closeSelectedShares")}>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className={cn(
-                    "transition-colors",
-                    selectedSharedCount > 0
-                      ? "text-foreground/60 hover:bg-accent hover:text-foreground"
-                      : "text-muted-foreground/50",
-                  )}
-                  onClick={() => void onRevokeSelectedShares()}
-                  disabled={selectedSharedCount === 0}
-                  aria-label={t("closeSelectedShares")}
-                >
-                  <Link2Off className="size-4.5" strokeWidth={1} />
-                </Button>
-              </ToolbarActionTooltip>
+              <FeatureGate feature="sharing">
+                <ToolbarActionTooltip label={t("closeSelectedShares")}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className={cn(
+                      "transition-colors",
+                      selectedSharedCount > 0
+                        ? "text-foreground/60 hover:bg-accent hover:text-foreground"
+                        : "text-muted-foreground/50",
+                    )}
+                    onClick={() => void onRevokeSelectedShares()}
+                    disabled={selectedSharedCount === 0}
+                    aria-label={t("closeSelectedShares")}
+                  >
+                    <Link2Off className="size-4.5" strokeWidth={1} />
+                  </Button>
+                </ToolbarActionTooltip>
+              </FeatureGate>
               <ToolbarActionTooltip
                 label={allSelectedArchived ? t("unarchiveSelected") : t("archiveSelected")}
               >

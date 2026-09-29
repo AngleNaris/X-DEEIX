@@ -8,7 +8,6 @@ import {
   listAdminConversationEvents,
   listAdminPaymentOrders,
   listAdminRedemptions,
-  listAdminSystemEvents,
   listAdminUsageLogs,
   listAdminUserAuthEvents,
 } from "@/features/admin/api";
@@ -19,7 +18,6 @@ import type {
   AdminConversationEventDTO,
   AdminPaymentOrderDTO,
   AdminRedemptionRecordDTO,
-  AdminSystemEventDTO,
   AdminUsageLogDTO,
   AdminUserAuthEventDTO,
 } from "@/features/admin/api/admin.types";
@@ -40,13 +38,6 @@ export const AUDIT_LOG_SORT_OPTIONS = [
 export const SECURITY_LOG_SORT_OPTIONS = [
   { labelKey: "sort.occurredDesc", value: "occurred_desc" },
   { labelKey: "sort.occurredAsc", value: "occurred_asc" },
-  { labelKey: "sort.idDesc", value: "id_desc" },
-  { labelKey: "sort.idAsc", value: "id_asc" },
-] as const;
-
-export const SYSTEM_EVENT_SORT_OPTIONS = [
-  { labelKey: "sort.createdDesc", value: "created_desc" },
-  { labelKey: "sort.createdAsc", value: "created_asc" },
   { labelKey: "sort.idDesc", value: "id_desc" },
   { labelKey: "sort.idAsc", value: "id_asc" },
 ] as const;
@@ -80,7 +71,6 @@ export const CONVERSATION_EVENT_SORT_OPTIONS = [
 
 export type AuditLogSortValue = (typeof AUDIT_LOG_SORT_OPTIONS)[number]["value"];
 export type SecurityLogSortValue = (typeof SECURITY_LOG_SORT_OPTIONS)[number]["value"];
-export type SystemEventSortValue = (typeof SYSTEM_EVENT_SORT_OPTIONS)[number]["value"];
 export type UsageLogSortValue = (typeof USAGE_LOG_SORT_OPTIONS)[number]["value"];
 export type PaymentOrderSortValue = (typeof PAYMENT_ORDER_SORT_OPTIONS)[number]["value"];
 export type RedemptionSortValue = (typeof REDEMPTION_SORT_OPTIONS)[number]["value"];
@@ -227,32 +217,6 @@ type UseAdminSecurityLogsState = {
   sortValue: SecurityLogSortValue;
   setSortValue: (value: SecurityLogSortValue) => void;
   loadSecurityLogs: (page?: number, pageSize?: number) => Promise<void>;
-};
-
-type UseAdminSystemEventsState = {
-  events: AdminSystemEventDTO[];
-  total: number;
-  page: number;
-  pageSize: number;
-  pageCount: number;
-  loading: boolean;
-  query: string;
-  setQuery: (value: string) => void;
-  levelFilter: string;
-  setLevelFilter: (value: string) => void;
-  sourceFilter: string;
-  setSourceFilter: (value: string) => void;
-  eventFilter: string;
-  setEventFilter: (value: string) => void;
-  createdFromFilter: string;
-  setCreatedFromFilter: (value: string) => void;
-  createdToFilter: string;
-  setCreatedToFilter: (value: string) => void;
-  sortValue: SystemEventSortValue;
-  setSortValue: (value: SystemEventSortValue) => void;
-  sourceOptions: Array<{ label: string; value: string }>;
-  eventOptions: Array<{ label: string; value: string }>;
-  loadSystemEvents: (page?: number, pageSize?: number) => Promise<void>;
 };
 
 type UseAdminUsageLogsState = {
@@ -654,135 +618,6 @@ export function useAdminSecurityLogs(): UseAdminSecurityLogsState {
   };
 }
 
-export function useAdminSystemEvents(): UseAdminSystemEventsState {
-  const t = useTranslations("adminLogs");
-  const [events, setEvents] = React.useState<AdminSystemEventDTO[]>([]);
-  const [total, setTotal] = React.useState(0);
-  const [page, setPage] = React.useState(1);
-  const [pageSize, setPageSize] = React.useState(ADMIN_LOGS_PAGE_SIZE);
-  const [loading, setLoading] = React.useState(true);
-  const [query, setQueryState] = React.useState("");
-  const debouncedQuery = useDebouncedValue(query.trim());
-  const [levelFilter, setLevelFilterState] = React.useState("");
-  const [sourceFilter, setSourceFilterState] = React.useState("");
-  const [eventFilter, setEventFilterState] = React.useState("");
-  const [createdFromFilter, setCreatedFromFilterState] = React.useState("");
-  const [createdToFilter, setCreatedToFilterState] = React.useState("");
-  const [sortValue, setSortValueState] = React.useState<SystemEventSortValue>("created_desc");
-  const requestSeqRef = React.useRef(0);
-
-  const loadSystemEvents = React.useCallback(async (nextPage = 1, nextPageSize = pageSize) => {
-    const requestSeq = requestSeqRef.current + 1;
-    requestSeqRef.current = requestSeq;
-    setLoading(true);
-    try {
-      const token = await resolveAccessToken();
-      if (!token) {
-        if (requestSeq !== requestSeqRef.current) {
-          return;
-        }
-        toast.error(t("toast.sessionExpired"), { description: t("toast.signInAgain") });
-        return;
-      }
-      const data = await listAdminSystemEvents(token, {
-        page: nextPage,
-        pageSize: nextPageSize,
-        query: debouncedQuery,
-        level: levelFilter,
-        source: sourceFilter,
-        event: eventFilter,
-        createdFrom: toRFC3339DateRangeBound(createdFromFilter, "start"),
-        createdTo: toRFC3339DateRangeBound(createdToFilter, "end"),
-        sort: sortValue,
-      });
-      if (requestSeq !== requestSeqRef.current) {
-        return;
-      }
-      setEvents(data.results);
-      setTotal(data.total);
-      setPage(nextPage);
-      setPageSize(nextPageSize);
-    } catch (error) {
-      if (requestSeq !== requestSeqRef.current) {
-        return;
-      }
-      toast.error(t("toast.systemLoadFailed"), { description: resolveAdminErrorMessage(error) });
-    } finally {
-      if (requestSeq === requestSeqRef.current) {
-        setLoading(false);
-      }
-    }
-  }, [createdFromFilter, createdToFilter, debouncedQuery, eventFilter, levelFilter, pageSize, sortValue, sourceFilter, t]);
-
-  React.useEffect(() => {
-    void loadSystemEvents(1);
-  }, [loadSystemEvents]);
-
-  const setQuery = React.useCallback((value: string) => {
-    setQueryState(value);
-    setPage(1);
-  }, []);
-  const setLevelFilter = React.useCallback((value: string) => {
-    setLevelFilterState(value);
-    setPage(1);
-  }, []);
-  const setSourceFilter = React.useCallback((value: string) => {
-    setSourceFilterState(value);
-    setPage(1);
-  }, []);
-  const setEventFilter = React.useCallback((value: string) => {
-    setEventFilterState(value);
-    setPage(1);
-  }, []);
-  const setCreatedFromFilter = React.useCallback((value: string) => {
-    setCreatedFromFilterState(value);
-    setPage(1);
-  }, []);
-  const setCreatedToFilter = React.useCallback((value: string) => {
-    setCreatedToFilterState(value);
-    setPage(1);
-  }, []);
-  const setSortValue = React.useCallback((value: SystemEventSortValue) => {
-    setSortValueState(value);
-    setPage(1);
-  }, []);
-
-  const sourceOptions = React.useMemo(() => {
-    const values = new Set(events.map((item) => item.source.trim()).filter(Boolean));
-    return [{ label: t("filters.allSources"), value: "" }, ...[...values].sort().map((value) => ({ label: value, value }))];
-  }, [events, t]);
-
-  const eventOptions = React.useMemo(() => {
-    const values = new Set(events.map((item) => item.event.trim()).filter(Boolean));
-    return [{ label: t("filters.allEvents"), value: "" }, ...[...values].sort().map((value) => ({ label: value, value }))];
-  }, [events, t]);
-
-  return {
-    events,
-    total,
-    page,
-    pageSize,
-    pageCount: Math.max(1, Math.ceil(total / pageSize)),
-    loading,
-    query,
-    setQuery,
-    levelFilter,
-    setLevelFilter,
-    sourceFilter,
-    setSourceFilter,
-    eventFilter,
-    setEventFilter,
-    createdFromFilter,
-    setCreatedFromFilter,
-    createdToFilter,
-    setCreatedToFilter,
-    sortValue,
-    setSortValue,
-    sourceOptions,
-    eventOptions,
-    loadSystemEvents,
-  };
-}
 
 export function useAdminUsageLogs(): UseAdminUsageLogsState {
   const t = useTranslations("adminLogs");

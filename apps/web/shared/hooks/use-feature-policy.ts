@@ -5,7 +5,7 @@ import * as React from "react";
 import { type FeaturePolicy, getFeaturePolicy } from "@/shared/api/settings";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 
-const DEFAULT_FEATURE_POLICY: FeaturePolicy = { knowledgeBaseEnabled: true };
+const DEFAULT_FEATURE_POLICY: FeaturePolicy = { knowledgeBaseEnabled: true, processTraceEnabled: true };
 
 let cachedFeaturePolicy: FeaturePolicy | null = null;
 let inflightFeaturePolicy: Promise<void> | null = null;
@@ -29,7 +29,8 @@ function loadFeaturePolicy(): Promise<void> {
         setCachedFeaturePolicy(DEFAULT_FEATURE_POLICY);
         return;
       }
-      setCachedFeaturePolicy(await getFeaturePolicy(token));
+      // Fields added after a deployment may be absent from an older server; unknown means enabled.
+      setCachedFeaturePolicy({ ...DEFAULT_FEATURE_POLICY, ...(await getFeaturePolicy(token)) });
     } catch {
       // 拉取失败按默认全部开启处理（fail-open），避免误伤正常部署或阻塞路由守卫。
       setCachedFeaturePolicy(DEFAULT_FEATURE_POLICY);

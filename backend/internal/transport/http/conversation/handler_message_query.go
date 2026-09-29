@@ -16,7 +16,7 @@ import (
 
 // UpdateMessage godoc
 // @Summary 更新消息内容
-// @Description 更新当前用户会话中的 assistant 消息内容，并标记为已编辑
+// @Description 就地更新当前用户会话中的 user 或 assistant 消息内容并标记为已编辑，不触发重新生成
 // @Tags chat
 // @Accept json
 // @Produce json
@@ -42,7 +42,7 @@ func (h *Handler) UpdateMessage(c *gin.Context) {
 		return
 	}
 
-	item, err := h.service.UpdateAssistantMessageContent(c.Request.Context(), userID, publicID, req.Content)
+	item, err := h.service.UpdateMessageContent(c.Request.Context(), userID, publicID, req.Content)
 	if err != nil {
 		switch {
 		case errors.Is(err, appconversation.ErrInvalidMessageContent):

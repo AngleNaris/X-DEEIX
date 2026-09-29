@@ -144,6 +144,7 @@ type MessageRepository interface {
 	UpdateAssistantMessageContent(ctx context.Context, userID uint, publicID string, content string, editedAt time.Time) (*domainconversation.Message, error)
 	DeleteMessageByPublicID(ctx context.Context, userID uint, publicID string) (int64, error)
 	DeleteMessageAndReparentChildren(ctx context.Context, userID uint, conversationID uint, messageID uint) (int64, error)
+	UpdateMessageContent(ctx context.Context, userID uint, publicID string, content string, editedAt time.Time) (*domainconversation.Message, error)
 	CancelPendingGenerationMessagesByRunID(ctx context.Context, userID uint, runID string, errorCode string, errorMessage string) (bool, error)
 	InterruptPendingAssistantMessageByRunID(ctx context.Context, userID uint, runID string, errorCode string, errorMessage string) (bool, error)
 	UpdateAssistantMessageCompletion(ctx context.Context, messageID uint, update AssistantMessageCompletionUpdate) error

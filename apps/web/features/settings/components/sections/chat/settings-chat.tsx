@@ -43,6 +43,7 @@ import { DynamicPromptsSection } from "@/features/settings/components/sections/c
 import { listUserMemories, upsertUserMemory, deleteUserMemory } from "@/shared/api/memory";
 import type { UserMemoryDTO } from "@/shared/api/memory.types";
 import { useDialogSnapshot } from "@/shared/hooks/use-dialog-snapshot";
+import { useFeaturePolicy } from "@/shared/hooks/use-feature-policy";
 import { ModelSelect, type ModelSelectOption } from "@/shared/components/model-select";
 import {
   SettingsFieldList,
@@ -490,6 +491,7 @@ export function SettingsChat() {
     handleDefaultModel,
   } = useSettingsChat();
   const billingEnabled = billingMode !== "self";
+  const { processTraceEnabled } = useFeaturePolicy();
   const chatFont = useChatFontPreference();
   const chatFontWeight = useChatFontWeightPreference();
   const persistAppearancePreferences = useSettingsAppearancePersistence();
@@ -754,6 +756,21 @@ export function SettingsChat() {
             </SettingsFieldRow>
           </div>
 
+          {processTraceEnabled ? (
+            <div className="pt-4">
+              <SettingsFieldRow
+                title={t("display.processTraceTitle")}
+                description={t("display.processTraceDescription")}
+              >
+                <Switch
+                  checked={settings.showProcessTrace}
+                  onCheckedChange={handleBool("chat.show_process_trace")}
+                  disabled={loading}
+                  aria-label={t("display.processTraceTitle")}
+                />
+              </SettingsFieldRow>
+            </div>
+          ) : null}
           <div className="pt-4">
             <SettingsFieldRow
               title={t("display.modelTitle")}
@@ -799,7 +816,7 @@ export function SettingsChat() {
           <div className="pt-4">
             <SettingsFieldRow
               title={t("display.costTitle")}
-              description={billingEnabled ? t("display.costDescription") : t("display.costDescriptionSelfMode")}
+              description={t("display.costDescription")}
             >
               <Switch
                 checked={billingEnabled && settings.showBillingCost}
@@ -809,6 +826,7 @@ export function SettingsChat() {
               />
             </SettingsFieldRow>
           </div>
+
 
           <div className="pt-4">
             <ChatDisplayAppearance

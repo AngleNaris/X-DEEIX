@@ -263,6 +263,7 @@ export function AppChatArea() {
     showLatency,
     showTokenUsage,
     showBillingCost,
+    showProcessTrace,
     billingDisplayCurrency,
     billingDisplayUsdToCnyRate,
     modelOptionPolicy,
@@ -882,6 +883,7 @@ export function AppChatArea() {
                   showLatency={showLatency}
                   showTokenUsage={showTokenUsage}
                   showBillingCost={showBillingCost}
+                  showProcessTrace={showProcessTrace}
                   billingDisplayCurrency={billingDisplayCurrency}
                   billingDisplayUsdToCnyRate={billingDisplayUsdToCnyRate}
                   splitRightInset={hasInlineArtifact}

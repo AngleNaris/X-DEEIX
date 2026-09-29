@@ -10,7 +10,7 @@ import {
 } from "@/features/chat/model/message-submit";
 import type { QueuedChatSubmission } from "@/features/chat/model/message-submit-branching";
 import type { PendingAttachment } from "@/features/chat/types/chat-runtime";
-import type { ChatAreaMessage } from "@/features/chat/types/messages";
+import type { ChatAreaMessage, UserMessageEditMode } from "@/features/chat/types/messages";
 import { resolveErrorMessage } from "@/features/chat/utils/chat-runtime";
 import { deleteConversationMessage, forkConversationFromMessage, updateMessage } from "@/shared/api/conversation";
 import type { ConversationDTO, MessageDTO } from "@/shared/api/conversation.types";
@@ -118,8 +118,36 @@ export function useChatMessageActions({
     [submitMessage, t],
   );
 
+  const saveMessageInPlace = React.useCallback(
+    async (message: ChatAreaMessage, content: string, failureKey: "editReplyFailed" | "editMessageFailed") => {
+      const messagePublicID = resolvePersistedPublicID(message.publicID);
+      const nextContent = content.trim();
+      if (!messagePublicID || !nextContent) {
+        toast.error(t(failureKey), { description: t("continueReplyUnavailable") });
+        return false;
+      }
+      const token = await resolveAccessToken();
+      if (!token) {
+        toast.error(t(failureKey), { description: t("signInRequired") });
+        return false;
+      }
+      try {
+        const updated = await updateMessage(token, messagePublicID, { content: nextContent });
+        replaceMessage(updated);
+        return true;
+      } catch {
+        toast.error(t(failureKey), { description: t("retryLater") });
+        return false;
+      }
+    },
+    [replaceMessage, t],
+  );
+
   const onEditUserMessage = React.useCallback(
-    async (message: ChatAreaMessage, content: string) => {
+    async (message: ChatAreaMessage, content: string, mode: UserMessageEditMode) => {
+      if (mode === "save") {
+        return saveMessageInPlace(message, content, "editMessageFailed");
+      }
       const sourceMessagePublicID = resolvePersistedPublicID(message.publicID);
       if (!sourceMessagePublicID) {
         toast.error(t("retryReplyFailed"), { description: t("continueReplyUnavailable") });
@@ -135,32 +163,12 @@ export function useChatMessageActions({
       });
       return ok;
     },
-    [submitMessage, t],
+    [saveMessageInPlace, submitMessage, t],
   );
 
   const onEditAssistantMessage = React.useCallback(
-    async (message: ChatAreaMessage, content: string) => {
-      const messagePublicID = resolvePersistedPublicID(message.publicID);
-      const nextContent = content.trim();
-      if (!messagePublicID || !nextContent) {
-        toast.error(t("editReplyFailed"), { description: t("continueReplyUnavailable") });
-        return false;
-      }
-      const token = await resolveAccessToken();
-      if (!token) {
-        toast.error(t("editReplyFailed"), { description: t("signInRequired") });
-        return false;
-      }
-      try {
-        const updated = await updateMessage(token, messagePublicID, { content: nextContent });
-        replaceMessage(updated);
-        return true;
-      } catch {
-        toast.error(t("editReplyFailed"), { description: t("retryLater") });
-        return false;
-      }
-    },
-    [replaceMessage, t],
+    (message: ChatAreaMessage, content: string) => saveMessageInPlace(message, content, "editReplyFailed"),
+    [saveMessageInPlace],
   );
 
   const onForkMessage = React.useCallback(

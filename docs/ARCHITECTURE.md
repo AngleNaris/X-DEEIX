@@ -52,6 +52,7 @@ apps/*  →  packages/core  →  packages/api-contract  →  backend/docs/swagge
 - **grant 单次、两分钟、只在 Rust 手里。** 桌面壳用它换会话并把 refresh token 存入 keychain，webview 从头到尾看不到 grant。要拿新 grant 只能重启 sidecar 进程——这是刻意的，grant 不可通过网络签发。
 - **本地用户无密码。** `PasswordEnabled=false`，密码登录对它天然不可用；也不会触发首次登录引导。
 - **模式切换即登出。** 本地与远程各自一个 keychain 条目，切换时删除另一方，token 不会被重放到另一家运营方。
+- **功能边界由服务器声明，客户端不判断平台。** 本地模式没有对象的功能（账号管理、权限组、公告、身份提供商、账户安全、计费门禁、内容审核）由 `GET /api/v1/capabilities` 声明为关闭，对应端点返回 `404 feature.disabled`，前端据此隐藏入口；用量计量保留。桌面端连远程服务器时能力来自远程，与 Web 端完全一致。详见第 4 节「服务器能力声明」。
 
 ### 多标签页（桌面端）
 
@@ -84,6 +85,37 @@ apps/*  →  packages/core  →  packages/api-contract  →  backend/docs/swagge
 - **凭据投递方式由后端按请求头决定，不由客户端的构建标志决定。** 客户端发送 `X-Client-Platform: desktop|mobile` 时，后端把 refresh token 放进响应体（客户端存入 keychain / SecureStore）；不带该头时使用 HttpOnly cookie。两条路径共用同一套轮换与吊销逻辑。
 - **协议版本协商。** 后端暴露 `serverVersion` 与客户端协议版本；客户端启动时协商，不兼容则明确提示，而不是让功能随机失效。
 - **后端不为单一客户端开特例。** 桌面与移动端复用同一套：服务器发现 → 登录 → refresh 续期 → 深链接回调。
+- **功能显隐来自服务器能力声明。** 客户端启动时读取 `GET /api/v1/capabilities`（失败则视为全部可用），只通过 `useFeature` / `<FeatureGate>` 决定显示什么；`isDesktopApp()` 只允许用于调用原生能力，不允许用于功能显隐（架构守卫检查）。
+
+### 服务器能力声明（capabilities）
+
+同一份前端要同时服务 Web、桌面连远程、桌面本地三种形态。差异不由客户端按平台判断，而由服务器声明"我提供什么"，客户端据此渲染，后端据此拒绝。
+
+**端点** `GET /api/v1/capabilities`，公开、`Cache-Control: public, max-age=300`，响应 `data.features` 是扁平布尔对象：
+
+| 键 | 含义 | 本地模式 | 关闭时受影响的路由 |
+|---|---|---|---|
+| `multiUser` | 多个账号：账号管理、权限组 | ❌ | `/admin/users*`、`/admin/user-auth-events`、`/admin/permission-groups*`、`/admin/models/:id/permission-groups` |
+| `registration` | 自行注册 | ❌ | `/auth/register/*` |
+| `identityProviders` | 第三方登录与身份绑定 | ❌ | `/auth/providers*`（公开与管理）、`/me/identities*` |
+| `accountSecurity` | 密码、邮箱、两步验证、会话、注销 | ❌ | `/auth/password/*`、`/auth/2fa/*`、`/me/2fa*`、`/me/email/*`、`/me/delete/*`、`DELETE /me`、`/auth/sessions*`、`/auth/logout-all` |
+| `announcements` | 系统公告 | ❌ | `/admin/announcements*`、`/announcements/:id/*`；**例外**：`GET /announcements` 返回空列表（老客户端轮询它） |
+| `billingGating` | 计费规则可以拒绝请求 | ❌ | `/billing/plans*`、`/billing/redemption*`、`/billing/payments/*`、`/billing/subscriptions`、`/admin/billing/accounts/*/balance`、`/admin/payment-orders`、`/admin/redemptions`；`billing.mode` 与 `billing.payment_providers` 两个设置项锁定 |
+| `usageMetering` | 记录用量与费用 | ✅ | —— |
+| `contentModeration` | 内容审核 | ❌ | `/admin/content-moderation*` |
+| `sharing` | 对话公开分享 | ❌ | `/conversations/:id/share*`、`/conversations/shares/revoke`、`/shared-conversations/*` |
+
+服务器模式全部为 `true`；"当前是否配置了 X"由各功能自己的端点回答，不进能力位。
+
+**推导只有一处**：`config.Config.Capabilities()`。任何"本地模式下是否 X"的判断只允许读能力位，不允许直接读 `cfg.LocalMode`。
+
+**后端执法**：`middleware.FeatureGate.Require(<键>)` 挂在路由组上（不逐条挂），能力关闭时整组返回 `404` `feature.disabled`，`details.feature` 为键名；设置项被锁定时另带 `details.keys`。用 404 而不是 403：语义是"这台服务器没有这个功能"，对任何身份都一样。`Require` 对契约外的键名在注册时 panic。
+
+**前端消费**：`packages/core` 的 `resolveCapabilities` 容错解析（缺失或非布尔的键一律视为 `true`）；`shared/capabilities` 的 `CapabilitiesProvider` 按服务器地址缓存一次，收到 `feature.disabled` 自动重拉；组件只通过 `useFeature` / `<FeatureGate>` 读取；侧栏与路由守卫共用同一张 section 表（`isSectionAvailable` / `useSectionGuard`），被隐藏的页面 URL 直达时重定向。
+
+**演进规则**：只增不删；新键的默认值必须是"与今天行为一致"的值（通常 `true`）；不表达"为什么"（不加 `mode`、`edition`）；不表达"多少"（配额有自己的端点）。
+
+**计量与门禁分离**：本地用户要看自己的花费，但不需要被计费规则拦住。`billing.mode = self` 下 `AuthorizeUsage` 直接放行、`RecordUsage` 照常记账，本地模式锁定该值即得"记账但不拦"；价格表保留可编辑。数据模型不变：本地 owner 仍在默认权限组，本地库可被远程服务器直接接管。
 
 ## 5. 安全约束
 
@@ -102,6 +134,7 @@ apps/*  →  packages/core  →  packages/api-contract  →  backend/docs/swagge
 6. **桌面端不暴露 Node/系统能力给页面。** `capabilities/main.json` 只授予 `core:default`、窗口聚焦、deep-link 与 updater；不开放 shell、fs、http 插件。CSP 的 `connect-src` 限定为 `self`、IPC 与本地开发端口，不允许页面被注入的脚本外连任意主机。
 7. **刷新令牌重用检测。** 轮换后旧 token 保留 15s 宽限期（`refreshTokenPreviousHashGrace`），用于容忍丢失的轮换响应。**宽限期外再次出现已轮换的 token 视为泄露，整个会话立即吊销**（OAuth 2.1 §4.3.1），`revoke_reason = refresh_token_reuse`，并记录 `refresh_token_reuse_detected` 审计事件。这保证攻击者即使在宽限期内截获并使用了旧 token，也无法在受害者下一次刷新后继续持有会话。仓储层的吊销在事务内提交、事务外报告，避免被回滚。
 8. **密钥与证书只进 CI secrets。** Apple Developer ID、notarization、Windows 代码签名证书、Android keystore 不入库。
+9. **第三方登录只有一条流程：服务器回调。** 登录、注册、账号身份绑定在所有端都走授权桥：客户端 `POST /authorize`（绑定为 `/me/identities/providers/:slug/authorize`，需登录态）取得身份源授权 URL → 身份源回调 `<PUBLIC_API_BASE_URL>/api/v1/auth/providers/:slug/callback` → 服务器用自己的 PKCE 换取身份源令牌并拉取资料 → 把一次性 grant 重定向回客户端 → 客户端用自己的 PKCE verifier `POST /exchange`。身份源的 code 与 client secret 不经过浏览器；绑定的 grant 记录发起用户，只能由同一用户兑换。没有“前端回调”降级路径：`PUBLIC_API_BASE_URL` 未配置时第三方登录整体不可用，管理后台给出提示。
 
 ## 6. 版本与发布
 

@@ -15,6 +15,7 @@ import { ChatSessionProvider, useChatSession } from "@/features/chat";
 import { AppearancePreferencesSync, UserTimeZoneSync } from "@/features/settings";
 import { SidebarInset, SidebarProvider, useSidebarActions, useSidebarIsMobile, useSidebarMobileOpen } from "@/components/ui/sidebar";
 import { UserLocaleSync } from "@/i18n/user-locale-sync";
+import { FeatureGate } from "@/shared/capabilities";
 
 const AnnouncementDialogHost = dynamic(
   () => import("@/features/announcements").then((mod) => mod.AnnouncementDialogHost),
@@ -89,7 +90,9 @@ export function ProjectLayout({
       <AppearancePreferencesSync />
       <UserTimeZoneSync />
       <InitialSecurityGuard />
-      <AnnouncementDialogHost />
+      <FeatureGate feature="announcements">
+        <AnnouncementDialogHost />
+      </FeatureGate>
       <AgentGroupFeatureProvider>
         <SidebarProvider className="h-svh overflow-hidden" defaultOpen={defaultSidebarOpen}>
           <LayoutConversationNavigationProvider>

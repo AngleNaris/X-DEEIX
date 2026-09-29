@@ -102,6 +102,7 @@ import {
   type RowDraft,
 } from "@/features/admin/model/upstreams-models";
 import { PermissionGroupSelector } from "@/features/admin/components/sections/groups/permission-group-selector";
+import { FeatureGate } from "@/shared/capabilities";
 import {
   isUpstreamModelSyncAbort,
   UpstreamModelBindingsApplyError,
@@ -491,6 +492,18 @@ type RemoteModelsDialogProps = {
   onImported: () => void;
 };
 
+type SyncPlanStatusKey = "added" | "updated" | "reactivated" | "inactivated" | "unchanged" | "protected";
+
+// Models that left the remote catalog only exist in the sync plan, so the table
+// carries them as a separate row kind instead of forging remote items for them.
+type CatalogRow =
+  | { kind: "remote"; name: string; item: AdminLLMRemoteModelItem }
+  | { kind: "inactivated"; name: string };
+
+const syncPlanChipClassName =
+  "inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground outline-none transition-colors hover:bg-muted/60 focus-visible:bg-muted/60";
+const syncPlanChipActiveClassName = "bg-muted font-medium text-foreground hover:bg-muted";
+
 function remoteModelStatusKey(item: AdminLLMRemoteModelItem): "bound" | "unbound" | "unsynced" {
   if (item.alreadyBound) return "bound";
   return item.alreadySynced ? "unbound" : "unsynced";
@@ -539,6 +552,7 @@ function RemoteModelsDialog({
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [draftPlatformModelNames, setDraftPlatformModelNames] = React.useState<Map<string, string>>(new Map());
   const [query, setQuery] = React.useState("");
+  const [statusFilter, setStatusFilter] = React.useState<SyncPlanStatusKey | null>(null);
   const [permissionGroupIDs, setPermissionGroupIDs] = React.useState<number[]>([]);
   const [syncConfirmationOpen, setSyncConfirmationOpen] = React.useState(false);
   const [tooltipPortalContainer, setTooltipPortalContainer] = React.useState<HTMLDivElement | null>(null);
@@ -561,9 +575,11 @@ function RemoteModelsDialog({
     setSelected(new Set());
     setDraftPlatformModelNames(new Map());
     setQuery("");
+    setStatusFilter(null);
     if (!catalog) return;
-    const syncableItems = dedupeRemoteModels(catalog.items.filter((item) => !item.alreadyBound));
-    setRemoteItems(syncableItems);
+    const items = dedupeRemoteModels(catalog.items);
+    const syncableItems = items.filter((item) => !item.alreadyBound);
+    setRemoteItems([...syncableItems, ...items.filter((item) => item.alreadyBound)]);
     setSelected(new Set(syncableItems.map((item) => item.upstreamModelName)));
     setDraftPlatformModelNames(createDraftPlatformModelNameMap(syncableItems));
   }, [catalog]);
@@ -603,7 +619,7 @@ function RemoteModelsDialog({
   }
 
   function toggleAll(checked: boolean) {
-    const visibleNames = filteredRemoteItems.map((i) => i.upstreamModelName);
+    const visibleNames = visibleSyncableItems.map((i) => i.upstreamModelName);
     setSelected((prev) => {
       if (checked) {
         const next = new Set(prev);
@@ -620,25 +636,63 @@ function RemoteModelsDialog({
     });
   }
 
-  const normalizedQuery = query.trim().toLowerCase();
-  const filteredRemoteItems = React.useMemo(() => {
-    if (!normalizedQuery) return remoteItems;
-    return remoteItems.filter((item) => {
-      return [
-        item.upstreamModelName,
-        item.suggestedPlatformModelName || "",
-        item.suggestedProtocol || "",
-        ...(item.suggestedProtocols ?? []),
-        t(`modelsDialog.remoteStatus.${remoteModelStatusKey(item)}`),
-      ].some((value) => value.toLowerCase().includes(normalizedQuery));
-    });
-  }, [normalizedQuery, remoteItems, t]);
-  const selectedRemoteItems = React.useMemo(
-    () => remoteItems.filter((item) => selected.has(item.upstreamModelName)),
-    [remoteItems, selected],
+  const syncPlanStatuses = React.useMemo(
+    (): { key: SyncPlanStatusKey; label: string; models: string[] }[] =>
+      syncPlan
+        ? [
+            { key: "added", label: t("modelsDialog.syncPlanAddedLabel"), models: syncPlan.addedModels },
+            { key: "updated", label: t("modelsDialog.syncPlanUpdatedLabel"), models: syncPlan.updatedModels },
+            { key: "reactivated", label: t("modelsDialog.syncPlanReactivatedLabel"), models: syncPlan.reactivatedModels },
+            { key: "inactivated", label: t("modelsDialog.syncPlanInactivatedLabel"), models: syncPlan.inactivatedModels },
+            { key: "unchanged", label: t("modelsDialog.syncPlanUnchangedLabel"), models: syncPlan.unchangedModels },
+            { key: "protected", label: t("modelsDialog.syncPlanProtectedLabel"), models: syncPlan.protectedModels },
+          ]
+        : [],
+    [syncPlan, t],
   );
-  const allSelected = filteredRemoteItems.length > 0 && filteredRemoteItems.every((i) => selected.has(i.upstreamModelName));
-  const someSelected = filteredRemoteItems.some((i) => selected.has(i.upstreamModelName));
+  const statusFilterNames = React.useMemo(() => {
+    if (!statusFilter) return null;
+    const status = syncPlanStatuses.find((item) => item.key === statusFilter);
+    return new Set((status?.models ?? []).map((name) => name.trim()));
+  }, [statusFilter, syncPlanStatuses]);
+  const normalizedQuery = query.trim().toLowerCase();
+  const catalogRows = React.useMemo((): CatalogRow[] => {
+    const remoteNames = new Set(remoteItems.map((item) => item.upstreamModelName.trim()));
+    const inactivatedRows = (syncPlan?.inactivatedModels ?? [])
+      .filter((name) => !remoteNames.has(name.trim()))
+      .map((name): CatalogRow => ({ kind: "inactivated", name }));
+    return [
+      ...remoteItems.map((item): CatalogRow => ({ kind: "remote", name: item.upstreamModelName, item })),
+      ...inactivatedRows,
+    ];
+  }, [remoteItems, syncPlan]);
+  const filteredRows = React.useMemo(() => {
+    return catalogRows.filter((row) => {
+      if (statusFilterNames && !statusFilterNames.has(row.name.trim())) return false;
+      if (!normalizedQuery) return true;
+      const values = row.kind === "remote"
+        ? [
+            row.item.upstreamModelName,
+            row.item.suggestedPlatformModelName || "",
+            row.item.suggestedProtocol || "",
+            ...(row.item.suggestedProtocols ?? []),
+            t(`modelsDialog.remoteStatus.${remoteModelStatusKey(row.item)}`),
+          ]
+        : [row.name, t("modelsDialog.syncPlanInactivatedLabel")];
+      return values.some((value) => value.toLowerCase().includes(normalizedQuery));
+    });
+  }, [catalogRows, normalizedQuery, statusFilterNames, t]);
+  const syncableItems = React.useMemo(() => remoteItems.filter((item) => !item.alreadyBound), [remoteItems]);
+  const visibleSyncableItems = React.useMemo(
+    () => filteredRows.flatMap((row) => (row.kind === "remote" && !row.item.alreadyBound ? [row.item] : [])),
+    [filteredRows],
+  );
+  const selectedRemoteItems = React.useMemo(
+    () => syncableItems.filter((item) => selected.has(item.upstreamModelName)),
+    [syncableItems, selected],
+  );
+  const allSelected = visibleSyncableItems.length > 0 && visibleSyncableItems.every((i) => selected.has(i.upstreamModelName));
+  const someSelected = visibleSyncableItems.some((i) => selected.has(i.upstreamModelName));
   const hasQuery = normalizedQuery.length > 0;
   const catalogChangeCount = syncPlan
     ? syncPlan.addedModels.length
@@ -648,16 +702,10 @@ function RemoteModelsDialog({
     : 0;
   const hasCatalogChanges = catalogChangeCount > 0;
   const hasSyncWork = hasCatalogChanges || selectedRemoteItems.length > 0;
-  const syncPlanStatuses = syncPlan
-    ? [
-        { key: "added", label: t("modelsDialog.syncPlanAddedLabel"), models: syncPlan.addedModels },
-        { key: "updated", label: t("modelsDialog.syncPlanUpdatedLabel"), models: syncPlan.updatedModels },
-        { key: "reactivated", label: t("modelsDialog.syncPlanReactivatedLabel"), models: syncPlan.reactivatedModels },
-        { key: "inactivated", label: t("modelsDialog.syncPlanInactivatedLabel"), models: syncPlan.inactivatedModels },
-        { key: "unchanged", label: t("modelsDialog.syncPlanUnchangedLabel"), models: syncPlan.unchangedModels },
-        { key: "protected", label: t("modelsDialog.syncPlanProtectedLabel"), models: syncPlan.protectedModels },
-      ]
-    : [];
+
+  function toggleStatusFilter(key: SyncPlanStatusKey) {
+    setStatusFilter((prev) => (prev === key ? null : key));
+  }
 
   function formatCatalogSummary(result: Awaited<ReturnType<typeof applySync>>["catalog"]) {
     return t("modelsDialog.catalogSyncSummary", {
@@ -755,54 +803,64 @@ function RemoteModelsDialog({
           </DialogHeader>
 
           <div className="shrink-0 px-5 pb-2">
-            <div className="border-y border-border/60">
-              <div className="flex min-h-10 items-center gap-3 py-1.5">
-                <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                  <span className="mr-1 shrink-0 text-xs font-medium">{t("modelsDialog.syncPlanTitle")}</span>
+            <div className="flex h-8 items-center gap-3">
+              <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                   {loading && !syncPlan ? (
                     <span className="shrink-0 text-[11px] text-muted-foreground">
                       {t("modelsDialog.syncPlanLoading")}
                     </span>
                   ) : (
-                    syncPlanStatuses.map((status) => {
-                      const destructive = status.key === "inactivated" && status.models.length > 0;
-                      return (
-                        <Tooltip key={status.key}>
-                          <TooltipTrigger
-                            type="button"
-                            aria-label={`${status.label} ${status.models.length}`}
-                            className={cn(
-                              "inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[11px] text-muted-foreground outline-none transition-colors hover:bg-muted/50 focus-visible:bg-muted/50",
-                              destructive && "text-destructive",
-                            )}
-                          >
-                            <span>{status.label}</span>
-                            <span className="font-mono tabular-nums text-foreground/75">{status.models.length}</span>
-                          </TooltipTrigger>
-                          <TooltipContent
-                            portalContainer={tooltipPortalContainer}
-                            side="bottom"
-                            sideOffset={6}
-                            className="w-72 px-3 py-2.5"
-                          >
-                            <p className="mb-1.5 font-medium">
-                              {status.label} · {status.models.length}
-                            </p>
-                            {status.models.length > 0 ? (
-                              <div className="max-h-48 space-y-0.5 overflow-y-auto overscroll-contain pr-1">
-                                {status.models.map((modelName) => (
-                                  <div key={modelName} className="break-all font-mono text-[11px] leading-5 text-background/80">
-                                    {modelName}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <p className="text-background/70">{t("modelsDialog.syncPlanNoModels")}</p>
-                            )}
-                          </TooltipContent>
-                        </Tooltip>
-                      );
-                    })
+                    <>
+                      <button
+                        type="button"
+                        aria-pressed={statusFilter === null}
+                        onClick={() => setStatusFilter(null)}
+                        className={cn(syncPlanChipClassName, statusFilter === null && syncPlanChipActiveClassName)}
+                      >
+                        <span>{t("modelsDialog.syncPlanAllLabel")}</span>
+                        <span className="font-mono tabular-nums">{catalogRows.length}</span>
+                      </button>
+                      {syncPlanStatuses
+                        .filter((status) => status.models.length > 0)
+                        .map((status) => {
+                          const active = statusFilter === status.key;
+                          return (
+                            <Tooltip key={status.key}>
+                              <TooltipTrigger
+                                type="button"
+                                aria-label={`${status.label} ${status.models.length}`}
+                                aria-pressed={active}
+                                onClick={() => toggleStatusFilter(status.key)}
+                                className={cn(
+                                  syncPlanChipClassName,
+                                  status.key === "inactivated" && "text-destructive",
+                                  active && syncPlanChipActiveClassName,
+                                )}
+                              >
+                                <span>{status.label}</span>
+                                <span className="font-mono tabular-nums">{status.models.length}</span>
+                              </TooltipTrigger>
+                              <TooltipContent
+                                portalContainer={tooltipPortalContainer}
+                                side="bottom"
+                                sideOffset={6}
+                                className="w-72 px-3 py-2.5"
+                              >
+                                <p className="mb-1.5 font-medium">
+                                  {status.label} · {status.models.length}
+                                </p>
+                                <div className="max-h-48 space-y-0.5 overflow-y-auto overscroll-contain pr-1">
+                                  {status.models.map((modelName) => (
+                                    <div key={modelName} className="break-all font-mono text-[11px] leading-5 text-background/80">
+                                      {modelName}
+                                    </div>
+                                  ))}
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          );
+                        })}
+                    </>
                   )}
                 </div>
                 <Button
@@ -817,13 +875,12 @@ function RemoteModelsDialog({
                 >
                   <RefreshCw className={cn("size-3.5 stroke-1", loading && "animate-spin")} />
                 </Button>
-              </div>
             </div>
           </div>
 
-          <DialogCollapsible open={remoteItems.length > 0} className="shrink-0">
+          <DialogCollapsible open={catalogRows.length > 0} className="shrink-0">
             <div>
-              <div className="grid grid-cols-1 gap-2 px-5 pb-2 sm:grid-cols-2">
+              <div className="px-5 pb-2">
                 <div className="relative">
                   <Search className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 stroke-1 text-muted-foreground" />
                   <Input
@@ -832,19 +889,6 @@ function RemoteModelsDialog({
                     onChange={(event) => setQuery(event.target.value)}
                     disabled={loading || importing}
                     className="bg-background pl-8"
-                  />
-                </div>
-                <div className="min-w-0">
-                  <PermissionGroupSelector
-                    groups={permissionGroups}
-                    selectedIDs={permissionGroupIDs}
-                    disabled={loading || importing}
-                    loading={permissionGroupsLoading}
-                    triggerPrefix={t("modelsDialog.importPermissionGroups")}
-                    placeholder={t("modelsDialog.permissionGroupsPlaceholder")}
-                    emptyLabel={t("modelsDialog.permissionGroupsEmpty")}
-                    autoBadgeLabel={t("modelsDialog.permissionGroupsAutoBadge")}
-                    onSelectedIDsChange={setPermissionGroupIDs}
                   />
                 </div>
               </div>
@@ -862,6 +906,7 @@ function RemoteModelsDialog({
                           <Checkbox
                             checked={allSelected ? true : someSelected ? "indeterminate" : false}
                             onCheckedChange={(v) => toggleAll(v === true)}
+                            disabled={visibleSyncableItems.length === 0}
                             aria-label={t("table.selectAll")}
                           />
                         </div>
@@ -872,44 +917,67 @@ function RemoteModelsDialog({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {!loading && filteredRemoteItems.length === 0 ? (
+                    {!loading && filteredRows.length === 0 ? (
                       <TableEmptyRow colSpan={4}>
-                        {hasQuery ? t("modelsDialog.noMatchedModels") : t("modelsDialog.noSyncableModels")}
+                        {hasQuery
+                          ? t("modelsDialog.noMatchedModels")
+                          : statusFilter
+                            ? t("modelsDialog.syncPlanNoModels")
+                            : t("modelsDialog.noSyncableModels")}
                       </TableEmptyRow>
                     ) : null}
-                    {filteredRemoteItems.map((item) => (
+                    {filteredRows.map((row) => (
                       <TableRow
-                        key={item.upstreamModelName}
-                        selected={selected.has(item.upstreamModelName)}
+                        key={row.name}
+                        selected={row.kind === "remote" && selected.has(row.name)}
                       >
                         <TableCell className="w-14 px-2 py-1.5 text-center">
                           <div className="flex h-7 items-center justify-center">
-                            <Checkbox
-                              checked={selected.has(item.upstreamModelName)}
-                              onCheckedChange={(v) => toggleOne(item.upstreamModelName, v === true)}
-                              aria-label={item.upstreamModelName}
-                            />
+                            {row.kind === "remote" && !row.item.alreadyBound ? (
+                              <Checkbox
+                                checked={selected.has(row.name)}
+                                onCheckedChange={(v) => toggleOne(row.name, v === true)}
+                                aria-label={row.name}
+                              />
+                            ) : null}
                           </div>
                         </TableCell>
                         <TableCell className="py-1.5 font-mono text-xs text-muted-foreground">
-                          <span className="flex h-7 items-center truncate" title={item.upstreamModelName}>
-                            {item.upstreamModelName}
+                          <span className="flex h-7 items-center truncate" title={row.name}>
+                            {row.name}
                           </span>
                         </TableCell>
                         <TableCell className="min-w-0 py-1.5">
                           <div className="flex h-7 items-center">
-                            <Input
-                              className="w-full min-w-0 font-mono text-xs"
-                              value={draftPlatformModelNames.get(item.upstreamModelName) ?? ""}
-                              onChange={(e) => setDraftPlatformModelName(item.upstreamModelName, e.target.value)}
-                            />
+                            {row.kind === "inactivated" ? (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            ) : row.item.alreadyBound ? (
+                              <span
+                                className="truncate font-mono text-xs text-muted-foreground"
+                                title={row.item.boundPlatformModels.join(", ")}
+                              >
+                                {row.item.boundPlatformModels.join(", ")}
+                              </span>
+                            ) : (
+                              <Input
+                                className="w-full min-w-0 font-mono text-xs"
+                                value={draftPlatformModelNames.get(row.name) ?? ""}
+                                onChange={(e) => setDraftPlatformModelName(row.name, e.target.value)}
+                              />
+                            )}
                           </div>
                         </TableCell>
                         <TableCell className="w-20 py-1.5 text-center">
                           <div className="flex h-7 items-center justify-center">
-                            <Badge variant="secondary" className={cn(!item.alreadyBound && "text-muted-foreground")}>
-                              {t(`modelsDialog.remoteStatus.${remoteModelStatusKey(item)}`)}
-                            </Badge>
+                            {row.kind === "inactivated" ? (
+                              <Badge variant="secondary" className="text-destructive">
+                                {t("modelsDialog.syncPlanInactivatedLabel")}
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className={cn(!row.item.alreadyBound && "text-muted-foreground")}>
+                                {t(`modelsDialog.remoteStatus.${remoteModelStatusKey(row.item)}`)}
+                              </Badge>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -920,10 +988,10 @@ function RemoteModelsDialog({
             </div>
           </DialogCollapsible>
 
-          <DialogCollapsible open={remoteItems.length === 0} className="shrink-0">
+          <DialogCollapsible open={catalogRows.length === 0} className="shrink-0">
             <div className="px-5 py-2">
               <div className="flex h-20 items-center justify-center text-xs text-muted-foreground">
-                {loading || remoteItems.length > 0 ? (
+                {loading || catalogRows.length > 0 ? (
                   <SpinnerLabel>{t("modelsDialog.loadingRemote")}</SpinnerLabel>
                 ) : (
                   t("modelsDialog.noSyncableModels")
@@ -933,18 +1001,27 @@ function RemoteModelsDialog({
           </DialogCollapsible>
 
           <DialogFooter className="shrink-0 items-center justify-between px-5 py-3">
-            <span className="text-xs text-muted-foreground">
-              {remoteItems.length > 0
-                ? t("modelsDialog.syncSummary", {
-                    total: remoteItems.length,
-                    shown: filteredRemoteItems.length,
-                    selected: selectedRemoteItems.length,
-                    hasQuery: hasQuery ? "true" : "false",
-                    hasSelected: selectedRemoteItems.length > 0 ? "true" : "false",
-                  })
-                : t("modelsDialog.remoteCatalogSummary", { total: remoteTotal ?? 0 })}
-            </span>
-            <div className="flex gap-2">
+            <div className="flex min-w-0 items-center text-xs text-muted-foreground">
+              {catalogRows.length === 0 && !loading ? (
+                <span>{t("modelsDialog.remoteCatalogSummary", { total: remoteTotal ?? 0 })}</span>
+              ) : selectedRemoteItems.length > 0 ? (
+                <FeatureGate feature="multiUser">
+                  <PermissionGroupSelector
+                    variant="inline"
+                    groups={permissionGroups}
+                    selectedIDs={permissionGroupIDs}
+                    disabled={loading || importing}
+                    loading={permissionGroupsLoading}
+                    triggerPrefix={t("modelsDialog.importPermissionGroups")}
+                    placeholder={t("modelsDialog.permissionGroupsPlaceholder")}
+                    emptyLabel={t("modelsDialog.permissionGroupsEmpty")}
+                    autoBadgeLabel={t("modelsDialog.permissionGroupsAutoBadge")}
+                    onSelectedIDsChange={setPermissionGroupIDs}
+                  />
+                </FeatureGate>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-2">
               <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={importing}>
                 {commonT("actions.cancel")}
               </Button>

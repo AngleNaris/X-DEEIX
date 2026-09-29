@@ -4,7 +4,7 @@
         "description": "DEEIX Chat 后端 API 文档",
         "title": "DEEIX Chat API",
         "contact": {},
-        "version": "0.4.4-beta.1"
+        "version": "0.4.4-beta.2"
     },
     "basePath": "/api/v1",
     "paths": {
@@ -1731,57 +1731,6 @@
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/ConversationEventListResponseDoc"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/AdminErrorDoc"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/AdminErrorDoc"
-                        }
-                    }
-                }
-            }
-        },
-        "/admin/conversation-events/cleanup": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "物理删除指定运行的全部对话事件；保留消息、附件、调用与计费记录",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "admin"
-                ],
-                "summary": "管理员按运行清理对话事件",
-                "parameters": [
-                    {
-                        "description": "运行轨迹清理参数",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/CleanupConversationRunsRequest"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/CleanupConversationRunsResponseDoc"
                         }
                     },
                     "400": {
@@ -7744,102 +7693,6 @@
                 }
             }
         },
-        "/admin/system-events": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "管理员分页查看后台结构化系统事件",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "admin"
-                ],
-                "summary": "管理员查询系统事件",
-                "parameters": [
-                    {
-                        "type": "integer",
-                        "description": "页码",
-                        "name": "page",
-                        "in": "query"
-                    },
-                    {
-                        "type": "integer",
-                        "description": "每页数量",
-                        "name": "page_size",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "搜索关键词",
-                        "name": "query",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "级别",
-                        "name": "level",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "来源",
-                        "name": "source",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "事件",
-                        "name": "event",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "创建时间起点(RFC3339)",
-                        "name": "created_from",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "创建时间终点(RFC3339)",
-                        "name": "created_to",
-                        "in": "query"
-                    },
-                    {
-                        "type": "string",
-                        "description": "排序方式",
-                        "name": "sort",
-                        "in": "query"
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/SystemEventListResponseDoc"
-                        }
-                    },
-                    "400": {
-                        "description": "Bad Request",
-                        "schema": {
-                            "$ref": "#/definitions/AdminErrorDoc"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "$ref": "#/definitions/AdminErrorDoc"
-                        }
-                    }
-                }
-            }
-        },
         "/admin/ui-components": {
             "get": {
                 "security": [
@@ -10271,6 +10124,26 @@
                 }
             }
         },
+        "/capabilities": {
+            "get": {
+                "description": "返回这台服务器提供哪些功能。客户端据此决定显示什么；能力关闭的功能其端点返回 404 feature.disabled。",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "system"
+                ],
+                "summary": "查询服务器能力声明",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/CapabilitiesResponseDoc"
+                        }
+                    }
+                }
+            }
+        },
         "/context-artifacts/{id}": {
             "get": {
                 "security": [
@@ -11673,6 +11546,37 @@
                         "description": "Bad Request",
                         "schema": {
                             "$ref": "#/definitions/ConversationErrorDoc"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/ConversationErrorDoc"
+                        }
+                    }
+                }
+            }
+        },
+        "/conversation-runs/stream": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Sends an authoritative snapshot followed by live user-scoped run state events",
+                "produces": [
+                    "text/event-stream"
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "summary": "Stream active conversation generations",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ActiveMessageGenerationEventResponse"
                         }
                     },
                     "500": {
@@ -15351,6 +15255,122 @@
                 }
             }
         },
+        "/me/identities/providers/{slug}/authorize": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "为当前登录用户创建 PKCE 保护的绑定事务；外部身份源仅回调当前 DEEIX 实例，绑定在兑换时才生效",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "创建第三方身份绑定授权桥事务",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "身份源 slug",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "授权桥参数",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ProviderBindBridgeStartRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/ProviderAuthBridgeStartResponseDoc"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/AuthErrorDoc"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/AuthErrorDoc"
+                        }
+                    }
+                }
+            }
+        },
+        "/me/identities/providers/{slug}/exchange": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "使用客户端 PKCE verifier 兑换绑定授权码，将身份绑到当前登录用户",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "兑换第三方身份绑定一次性授权码",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "身份源 slug",
+                        "name": "slug",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "授权码兑换参数",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/ProviderAuthBridgeExchangeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/UserIdentityResponseDoc"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/AuthErrorDoc"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/AuthErrorDoc"
+                        }
+                    }
+                }
+            }
+        },
         "/me/onboarding/complete": {
             "post": {
                 "security": [
@@ -15599,7 +15619,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "更新当前用户会话中的 assistant 消息内容，并标记为已编辑",
+                "description": "就地更新当前用户会话中的 user 或 assistant 消息内容并标记为已编辑，不触发重新生成",
                 "consumes": [
                     "application/json"
                 ],
@@ -17598,6 +17618,44 @@
         }
     },
     "definitions": {
+        "ActiveMessageGenerationEventResponse": {
+            "type": "object",
+            "required": [
+                "type"
+            ],
+            "properties": {
+                "conversationPublicID": {
+                    "type": "string"
+                },
+                "runID": {
+                    "type": "string"
+                },
+                "runs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ActiveMessageGenerationResponse"
+                    }
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "ActiveMessageGenerationResponse": {
+            "type": "object",
+            "required": [
+                "conversationPublicID",
+                "runID"
+            ],
+            "properties": {
+                "conversationPublicID": {
+                    "type": "string"
+                },
+                "runID": {
+                    "type": "string"
+                }
+            }
+        },
         "ActiveSessionListResponse": {
             "type": "object",
             "required": [
@@ -19960,6 +20018,84 @@
                 }
             }
         },
+        "Capabilities": {
+            "type": "object",
+            "required": [
+                "accountSecurity",
+                "announcements",
+                "billingGating",
+                "contentModeration",
+                "identityProviders",
+                "multiUser",
+                "registration",
+                "sharing",
+                "usageMetering"
+            ],
+            "properties": {
+                "accountSecurity": {
+                    "description": "AccountSecurity 密码、邮箱、两步验证、会话、注销账号。",
+                    "type": "boolean"
+                },
+                "announcements": {
+                    "description": "Announcements 系统公告。",
+                    "type": "boolean"
+                },
+                "billingGating": {
+                    "description": "BillingGating 计费规则可以拒绝请求：套餐、余额、兑换码、支付。",
+                    "type": "boolean"
+                },
+                "contentModeration": {
+                    "description": "ContentModeration 内容审核。",
+                    "type": "boolean"
+                },
+                "identityProviders": {
+                    "description": "IdentityProviders 第三方登录与身份绑定。",
+                    "type": "boolean"
+                },
+                "multiUser": {
+                    "description": "MultiUser 存在多个账号：账号管理、权限组。",
+                    "type": "boolean"
+                },
+                "registration": {
+                    "description": "Registration 可自行注册账号。",
+                    "type": "boolean"
+                },
+                "sharing": {
+                    "description": "Sharing 对话公开分享链接；只监听回环的服务器没有可分享的对象。",
+                    "type": "boolean"
+                },
+                "usageMetering": {
+                    "description": "UsageMetering 记录用量与费用。",
+                    "type": "boolean"
+                }
+            }
+        },
+        "CapabilitiesResponse": {
+            "type": "object",
+            "required": [
+                "features"
+            ],
+            "properties": {
+                "features": {
+                    "$ref": "#/definitions/Capabilities"
+                }
+            }
+        },
+        "CapabilitiesResponseDoc": {
+            "type": "object",
+            "required": [
+                "data",
+                "errorMsg"
+            ],
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/CapabilitiesResponse"
+                },
+                "errorMsg": {
+                    "type": "string"
+                }
+            }
+        },
         "ChangeAgentGroupSupervisorRequest": {
             "type": "object",
             "required": [
@@ -20091,52 +20227,6 @@
             "properties": {
                 "reset": {
                     "type": "boolean"
-                }
-            }
-        },
-        "CleanupConversationRunsRequest": {
-            "type": "object",
-            "required": [
-                "runIDs"
-            ],
-            "properties": {
-                "runIDs": {
-                    "type": "array",
-                    "maxItems": 100,
-                    "minItems": 1,
-                    "items": {
-                        "type": "string"
-                    }
-                }
-            }
-        },
-        "CleanupConversationRunsResponse": {
-            "type": "object",
-            "required": [
-                "deletedCount",
-                "runCount"
-            ],
-            "properties": {
-                "deletedCount": {
-                    "type": "integer"
-                },
-                "runCount": {
-                    "type": "integer"
-                }
-            }
-        },
-        "CleanupConversationRunsResponseDoc": {
-            "type": "object",
-            "required": [
-                "data",
-                "errorMsg"
-            ],
-            "properties": {
-                "data": {
-                    "$ref": "#/definitions/CleanupConversationRunsResponse"
-                },
-                "errorMsg": {
-                    "type": "string"
                 }
             }
         },
@@ -24960,6 +25050,9 @@
                 "fileName": {
                     "type": "string"
                 },
+                "modality": {
+                    "type": "string"
+                },
                 "preview": {
                     "type": "string"
                 },
@@ -25343,7 +25436,6 @@
             "type": "object",
             "required": [
                 "contentMarkdown",
-                "startedAt",
                 "status",
                 "summary",
                 "title",
@@ -27897,6 +27989,39 @@
                 }
             }
         },
+        "ProviderBindBridgeStartRequest": {
+            "type": "object",
+            "required": [
+                "clientID",
+                "clientState",
+                "codeChallenge",
+                "redirectURI"
+            ],
+            "properties": {
+                "clientID": {
+                    "type": "string",
+                    "maxLength": 128
+                },
+                "clientState": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 43
+                },
+                "codeChallenge": {
+                    "type": "string",
+                    "maxLength": 128,
+                    "minLength": 43
+                },
+                "next": {
+                    "type": "string",
+                    "maxLength": 2048
+                },
+                "redirectURI": {
+                    "type": "string",
+                    "maxLength": 2048
+                }
+            }
+        },
         "PublicFileShareResponseDoc": {
             "type": "object",
             "required": [
@@ -29545,6 +29670,14 @@
                     "type": "string",
                     "maxLength": 32
                 },
+                "uiComponentIDs": {
+                    "description": "UIComponentIDs 是本次会话勾选的交互式组件；后端据此注入组件目录提示词，不可见的 ID 被忽略。",
+                    "type": "array",
+                    "maxItems": 32,
+                    "items": {
+                        "type": "integer"
+                    }
+                },
                 "userModelID": {
                     "type": "integer"
                 }
@@ -30503,91 +30636,6 @@
                     "$ref": "#/definitions/SyncUpstreamModelsResponse"
                 },
                 "errorMsg": {
-                    "type": "string"
-                }
-            }
-        },
-        "SystemEventListResponseDoc": {
-            "type": "object",
-            "required": [
-                "data",
-                "errorMsg"
-            ],
-            "properties": {
-                "data": {
-                    "type": "object",
-                    "required": [
-                        "results",
-                        "total"
-                    ],
-                    "properties": {
-                        "results": {
-                            "type": "array",
-                            "items": {
-                                "$ref": "#/definitions/SystemEventResponse"
-                            }
-                        },
-                        "total": {
-                            "type": "integer"
-                        }
-                    }
-                },
-                "errorMsg": {
-                    "type": "string"
-                }
-            }
-        },
-        "SystemEventResponse": {
-            "type": "object",
-            "required": [
-                "createdAt",
-                "detailJSON",
-                "event",
-                "id",
-                "level",
-                "message",
-                "requestID",
-                "resource",
-                "resourceID",
-                "source",
-                "traceID",
-                "updatedAt"
-            ],
-            "properties": {
-                "createdAt": {
-                    "type": "string"
-                },
-                "detailJSON": {
-                    "type": "string"
-                },
-                "event": {
-                    "type": "string"
-                },
-                "id": {
-                    "type": "integer"
-                },
-                "level": {
-                    "type": "string"
-                },
-                "message": {
-                    "type": "string"
-                },
-                "requestID": {
-                    "type": "string"
-                },
-                "resource": {
-                    "type": "string"
-                },
-                "resourceID": {
-                    "type": "string"
-                },
-                "source": {
-                    "type": "string"
-                },
-                "traceID": {
-                    "type": "string"
-                },
-                "updatedAt": {
                     "type": "string"
                 }
             }
@@ -33533,6 +33581,85 @@
                 "errorMsg"
             ],
             "properties": {
+                "errorMsg": {
+                    "type": "string"
+                }
+            }
+        },
+        "UserIdentityResponse": {
+            "type": "object",
+            "required": [
+                "email",
+                "emailVerified",
+                "id",
+                "lastLoginAt",
+                "linkedAt",
+                "providerDisplayName",
+                "providerID",
+                "providerLogoURL",
+                "providerName",
+                "providerSlug",
+                "providerType"
+            ],
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "emailVerified": {
+                    "type": "boolean"
+                },
+                "id": {
+                    "type": "integer"
+                },
+                "lastLoginAt": {
+                    "type": "string",
+                    "x-nullable": true,
+                    "x-omitempty": false
+                },
+                "linkedAt": {
+                    "type": "string"
+                },
+                "providerDisplayName": {
+                    "type": "string"
+                },
+                "providerID": {
+                    "type": "integer"
+                },
+                "providerLogoURL": {
+                    "type": "string"
+                },
+                "providerName": {
+                    "type": "string"
+                },
+                "providerSlug": {
+                    "type": "string"
+                },
+                "providerType": {
+                    "type": "string"
+                }
+            }
+        },
+        "UserIdentityResponseData": {
+            "type": "object",
+            "required": [
+                "identity"
+            ],
+            "properties": {
+                "identity": {
+                    "$ref": "#/definitions/UserIdentityResponse"
+                }
+            }
+        },
+        "UserIdentityResponseDoc": {
+            "type": "object",
+            "required": [
+                "data",
+                "errorMsg"
+            ],
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/UserIdentityResponseData"
+                },
                 "errorMsg": {
                     "type": "string"
                 }

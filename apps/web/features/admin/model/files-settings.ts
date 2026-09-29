@@ -179,7 +179,7 @@ export const SERVICE_DIRTY_FIELDS: Record<ServiceName, string[]> = {
   mineru: ["extract.engine", "extract.mineru_source", "extract.mineru_file_types", "extract.mineru_base_url", "extract.mineru_timeout_seconds", "extract.mineru_auth_token"],
   tesseract: ["extract.tesseract_ocr_base_url", "extract.tesseract_ocr_timeout_seconds", "extract.tesseract_ocr_auth_token"],
   rapidocr: ["extract.rapidocr_base_url", "extract.rapidocr_timeout_seconds", "extract.rapidocr_auth_token"],
-  embedding: ["file.embedding_enabled", "file.embedding_host", "file.embedding_key", "file.rag_model", "file.embedding_timeout_seconds"],
+  embedding: ["file.embedding_enabled", "file.embedding_host", "file.embedding_protocol", "file.embedding_key", "file.rag_model", "file.embedding_timeout_seconds"],
 };
 
 export const INITIAL_SERVICE_STATES: Record<ServiceName, ServiceState> = {
@@ -792,14 +792,29 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         namespace: "file",
         key: "embedding_host",
         label: "Embedding service URL *",
-        description: "Embedding service URL. The service must be compatible with the OpenAI /embeddings API.",
+        description: "Base URL of the Embedding service, for example https://api.openai.com/v1 or https://generativelanguage.googleapis.com/v1beta.",
         type: "string",
         placeholder: "Service URL",
         visibleWhen: { field: "file.embedding_enabled", equals: EMBEDDING_MODES.ON },
         subgroupKey: "embedding_service",
         subgroupTitle: "Service configuration",
-        subgroupDescription: "The Embedding service uses an OpenAI-compatible /embeddings API.",
+        subgroupDescription: "Choose the request protocol that matches the service. Text always works; image inputs require a multimodal protocol.",
         runtimeService: "embedding",
+      },
+      {
+        namespace: "file",
+        key: "embedding_protocol",
+        label: "Request protocol",
+        description: "Wire format of the Embedding service. Gemini, Voyage, and Jina accept image inputs, so images are vectorized directly instead of through OCR text.",
+        type: "select",
+        options: [
+          { label: "OpenAI-compatible", value: "openai" },
+          { label: "Gemini", value: "gemini" },
+          { label: "Voyage AI", value: "voyage" },
+          { label: "Jina AI", value: "jina" },
+        ],
+        visibleWhen: { field: "file.embedding_enabled", equals: EMBEDDING_MODES.ON },
+        subgroupKey: "embedding_service",
       },
       {
         namespace: "file",

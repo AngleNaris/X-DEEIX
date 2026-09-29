@@ -52,6 +52,8 @@ type ProviderAuthBridgeStartInput struct {
 	ClientState   string
 	Intent        string
 	Next          string
+	// UserID 为发起绑定的已登录用户；登录/注册时为 0。
+	UserID uint
 }
 
 // ProviderAuthBridgeStartResult contains the provider authorization URL and expiry.
@@ -119,10 +121,7 @@ func (s *Service) StartProviderAuthBridge(
 		return nil, err
 	}
 	normalizedIntent := normalizeProviderIntent(input.Intent)
-	if normalizedIntent == providerIntentBind {
-		return nil, ErrProviderBindingFlowRequired
-	}
-	if err = validateProviderLoginIntent(*provider, normalizedIntent); err != nil {
+	if err = validateProviderBridgeIntent(*provider, normalizedIntent, input.UserID); err != nil {
 		return nil, err
 	}
 	authURL, _, _, err := s.resolveProviderEndpoints(ctx, *provider)
@@ -150,6 +149,7 @@ func (s *Service) StartProviderAuthBridge(
 		ClientCodeChallenge:  strings.TrimSpace(input.CodeChallenge),
 		ProviderCodeVerifier: providerVerifier,
 		Intent:               normalizedIntent,
+		UserID:               input.UserID,
 		Next:                 normalizeProviderNextPath(input.Next),
 		ExpiresAt:            expiresAt,
 	}
@@ -199,6 +199,8 @@ func (s *Service) CompleteProviderAuthBridgeCallback(
 	grant := repository.ProviderAuthGrant{
 		ProviderSlug: slug,
 		ClientID:     transaction.ClientID,
+		Intent:       transaction.Intent,
+		UserID:       transaction.UserID,
 		ExpiresAt:    time.Now().Add(providerAuthGrantTTL),
 	}
 	if strings.TrimSpace(input.ProviderError) != "" {
@@ -207,33 +209,8 @@ func (s *Service) CompleteProviderAuthBridgeCallback(
 	} else if strings.TrimSpace(input.Code) == "" {
 		grant.ErrorCode = "auth.provider_callback_invalid"
 		grant.ErrorMessage = "provider callback did not include an authorization code"
-	} else {
-		provider, providerErr := s.repo.GetIdentityProviderBySlug(ctx, slug)
-		if providerErr == nil {
-			providerErr = validateProviderLoginIntent(*provider, transaction.Intent)
-		}
-		var userItem *domainuser.User
-		var subject string
-		if providerErr == nil {
-			callbackURL, callbackErr := s.providerAuthBridgeCallbackURL(slug)
-			if callbackErr != nil {
-				providerErr = callbackErr
-			} else {
-				userItem, subject, providerErr = s.resolveProviderLoginCode(
-					ctx,
-					*provider,
-					strings.TrimSpace(input.Code),
-					callbackURL,
-					transaction.ProviderCodeVerifier,
-				)
-			}
-		}
-		if providerErr != nil {
-			s.populateProviderAuthGrantError(&grant, providerErr)
-		} else {
-			grant.UserID = userItem.ID
-			grant.Subject = subject
-		}
+	} else if providerErr := s.resolveProviderAuthGrant(ctx, slug, *transaction, strings.TrimSpace(input.Code), &grant); providerErr != nil {
+		s.populateProviderAuthGrantError(&grant, providerErr)
 	}
 
 	rawGrant, err := randomProviderAuthToken(32)
@@ -259,6 +236,54 @@ func (s *Service) ExchangeProviderAuthBridgeGrant(
 	requestID string,
 	auditCtx requestmeta.SessionAuditContext,
 ) (*LoginResult, error) {
+	grant, err := s.consumeProviderAuthGrant(ctx, slug, input)
+	if err != nil {
+		return nil, err
+	}
+	if grant.Intent == providerIntentBind {
+		return nil, ErrProviderGrantMismatch
+	}
+	userItem, err := s.repo.GetByID(ctx, grant.UserID)
+	if err != nil {
+		return nil, err
+	}
+	return s.completeProviderLoginForUser(ctx, userItem, grant.ProviderSlug, grant.Subject, requestID, auditCtx)
+}
+
+// ExchangeProviderAuthBridgeBindGrant 兑换绑定授权码，把回调阶段取回的身份绑到当前登录用户。
+func (s *Service) ExchangeProviderAuthBridgeBindGrant(
+	ctx context.Context,
+	userID uint,
+	slug string,
+	input ProviderAuthBridgeExchangeInput,
+	requestID string,
+	auditCtx requestmeta.SessionAuditContext,
+) (*UserIdentityView, error) {
+	if userID == 0 {
+		return nil, ErrUnauthorized
+	}
+	grant, err := s.consumeProviderAuthGrant(ctx, slug, input)
+	if err != nil {
+		return nil, err
+	}
+	if grant.Intent != providerIntentBind || grant.UserID != userID || grant.Profile == nil {
+		return nil, ErrProviderGrantMismatch
+	}
+	provider, err := s.repo.GetIdentityProviderBySlug(ctx, slug)
+	if err != nil {
+		return nil, err
+	}
+	return s.bindProviderIdentity(ctx, userID, *provider, providerProfileClaims{
+		Subject:       grant.Subject,
+		Email:         grant.Profile.Email,
+		DisplayName:   grant.Profile.DisplayName,
+		EmailVerified: grant.Profile.EmailVerified,
+		ProfileJSON:   grant.Profile.ProfileJSON,
+	}, requestID, auditCtx)
+}
+
+// consumeProviderAuthGrant 校验 PKCE 并原子消费一次性授权码；回调阶段记录的错误在这里抛出。
+func (s *Service) consumeProviderAuthGrant(ctx context.Context, slug string, input ProviderAuthBridgeExchangeInput) (*repository.ProviderAuthGrant, error) {
 	if s == nil || s.providerAuthBridge == nil {
 		return nil, ErrProviderAuthBridgeUnavailable
 	}
@@ -284,11 +309,63 @@ func (s *Service) ExchangeProviderAuthBridgeGrant(
 	if grant.ErrorCode != "" {
 		return nil, providerAuthGrantError(*grant)
 	}
-	userItem, err := s.repo.GetByID(ctx, grant.UserID)
+	return grant, nil
+}
+
+// resolveProviderAuthGrant 用身份源回调的授权码填充授权码：登录/注册在此解析或创建用户，绑定只保存资料等待已登录用户兑换。
+func (s *Service) resolveProviderAuthGrant(
+	ctx context.Context,
+	slug string,
+	transaction repository.ProviderAuthTransaction,
+	code string,
+	grant *repository.ProviderAuthGrant,
+) error {
+	provider, err := s.repo.GetIdentityProviderBySlug(ctx, slug)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return s.completeProviderLoginForUser(ctx, userItem, grant.ProviderSlug, grant.Subject, requestID, auditCtx)
+	if err = validateProviderBridgeIntent(*provider, transaction.Intent, transaction.UserID); err != nil {
+		return err
+	}
+	callbackURL, err := s.providerAuthBridgeCallbackURL(slug)
+	if err != nil {
+		return err
+	}
+	if transaction.Intent == providerIntentBind {
+		claims, claimsErr := s.fetchProviderProfileClaims(ctx, *provider, code, callbackURL, transaction.ProviderCodeVerifier)
+		if claimsErr != nil {
+			return claimsErr
+		}
+		grant.Subject = claims.Subject
+		grant.Profile = &repository.ProviderAuthGrantProfile{
+			DisplayName:   claims.DisplayName,
+			Email:         claims.Email,
+			EmailVerified: claims.EmailVerified,
+			ProfileJSON:   claims.ProfileJSON,
+		}
+		return nil
+	}
+	userItem, subject, err := s.resolveProviderLoginCode(ctx, *provider, code, callbackURL, transaction.ProviderCodeVerifier)
+	if err != nil {
+		return err
+	}
+	grant.UserID = userItem.ID
+	grant.Subject = subject
+	return nil
+}
+
+// validateProviderBridgeIntent 校验意图与身份源开关、登录状态是否匹配；绑定必须由已登录用户发起。
+func validateProviderBridgeIntent(provider domainuser.IdentityProvider, intent string, userID uint) error {
+	if intent == providerIntentBind {
+		if userID == 0 {
+			return ErrUnauthorized
+		}
+		if !provider.LoginEnabled {
+			return ErrProviderLoginDisabled
+		}
+		return nil
+	}
+	return validateProviderLoginIntent(provider, intent)
 }
 
 func validateProviderLoginIntent(provider domainuser.IdentityProvider, intent string) error {

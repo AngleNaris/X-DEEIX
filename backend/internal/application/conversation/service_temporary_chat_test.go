@@ -477,7 +477,6 @@ func TestEphemeralTraceEmitsWithoutPersistence(t *testing.T) {
 	service := &Service{
 		cfg: config.NewRuntime(config.Config{
 			ProcessTraceEnabled:         true,
-			ProcessTraceVisibleToUser:   true,
 			ProcessTracePersistInflight: true,
 		}),
 		repo: repo,

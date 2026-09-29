@@ -28,6 +28,7 @@ import {
   StatisticsUserRankingChart,
 } from "./admin-statistics-charts";
 import { AdminModerationStatisticsSection } from "./admin-moderation-statistics";
+import { FeatureGate } from "@/shared/capabilities";
 
 const ALL_MODELS_VALUE = "__all_models__";
 
@@ -195,14 +196,16 @@ export function AdminStatisticsPage() {
               </PopoverTrigger>
               <PopoverContent align="end" className="w-[280px] p-2">
                 <div className="space-y-0.5">
-                  <AdminStatisticsSubjectFilter
-                    value={statistics.subject}
-                    permissionGroups={statistics.permissionGroups}
-                    disabled={statistics.referenceLoading || initialLoading}
-                    label={t("filters.subject")}
-                    triggerClassName={cn(statistics.subject.type !== "all" && "bg-accent/50")}
-                    onChange={statistics.setSubject}
-                  />
+                  <FeatureGate feature="multiUser">
+                    <AdminStatisticsSubjectFilter
+                      value={statistics.subject}
+                      permissionGroups={statistics.permissionGroups}
+                      disabled={statistics.referenceLoading || initialLoading}
+                      label={t("filters.subject")}
+                      triggerClassName={cn(statistics.subject.type !== "all" && "bg-accent/50")}
+                      onChange={statistics.setSubject}
+                    />
+                  </FeatureGate>
                   <AdminStatisticsModelFilter
                     value={statistics.platformModelName || ALL_MODELS_VALUE}
                     fallbackValue={ALL_MODELS_VALUE}
@@ -386,9 +389,11 @@ export function AdminStatisticsPage() {
         </div>
       </section>
 
-      <Separator className="mx-1 my-10" />
+      <FeatureGate feature="contentModeration">
+        <Separator className="mx-1 my-10" />
 
-      <AdminModerationStatisticsSection />
+        <AdminModerationStatisticsSection />
+      </FeatureGate>
     </div>
   );
 }

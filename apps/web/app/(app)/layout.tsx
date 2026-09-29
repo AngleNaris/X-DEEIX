@@ -1,9 +1,12 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 
+import { DesktopBootstrap } from "@/features/platform/components/desktop-bootstrap";
+import { DesktopUpdateNotifier } from "@/features/platform/components/desktop-update-notifier";
 import { AppVersionGuard } from "@/features/layouts";
 import { AppearancePreferencesProvider } from "@/features/settings";
 import { AppI18nProvider } from "@/i18n/app-i18n-provider";
+import { CapabilitiesProvider } from "@/shared/capabilities";
 import { BrandingProvider } from "@/shared/config/branding-provider";
 import { DevtoolsBrandBanner } from "@/shared/components/devtools-brand-banner";
 import { ThemeProvider } from "@/shared/components/theme-provider";
@@ -69,9 +72,15 @@ export default function RootLayout({
           <AppI18nProvider>
             <ThemeProvider>
               <AppearancePreferencesProvider>
-                {children}
-                <AppVersionGuard />
-                <LegacyPWAServiceWorkerMigration />
+                <DesktopBootstrap>
+                  <CapabilitiesProvider>
+                    {children}
+                    <AppVersionGuard />
+                    <DesktopUpdateNotifier />
+                    <LegacyPWAServiceWorkerMigration />
+                    <DevtoolsBrandBanner />
+                  </CapabilitiesProvider>
+                </DesktopBootstrap>
                 <Toaster />
                 <DevtoolsBrandBanner />
               </AppearancePreferencesProvider>
