@@ -667,6 +667,7 @@ func (s *Service) sendMessageInternal(
 	)
 	retrievalRAGFallbacks := make([]ragFallbackEvidence, 0)
 	ragContextChunks := make([]model.RAGChunk, 0)
+	ragImageEvidence := make([]AttachmentInput, 0)
 	if cfg.RAGEnabled && (len(fileContextPlan.RAGAttachments) > 0 || len(knowledgeBaseFiles) > 0) {
 		readyObjs := mergeRAGFileObjects(fileContextPlanRAGObjects(fileContextPlan.RAGAttachments), knowledgeBaseFiles)
 		knowledgeBaseFileIDs := make(map[string]struct{}, len(knowledgeBaseFiles))
@@ -785,6 +786,7 @@ func (s *Service) sendMessageInternal(
 				traceRecorder.appendProcessSection(summary, markdown, payload, messageTraceStatusStreaming)
 			}
 			ragContextChunks = append(ragContextChunks, ragChunks...)
+			ragImageEvidence = append(ragImageEvidence, retrievedImageEvidence(ragChunks, readyObjs, fileContextPlan.FullAttachments)...)
 			if len(input.KnowledgeBaseIDs) > 0 && !knowledgeBaseHit {
 				userCtx.RAGNotice = knowledgeBaseNoEvidenceNotice
 			}
@@ -797,7 +799,9 @@ func (s *Service) sendMessageInternal(
 		fullContextAttachmentTokenBudget(cfg, route.UpstreamModel, route.ModelCapabilitiesJSON),
 	)
 	appendRAGFallbackSkippedTrace(traceRecorder, fullContextBudgetSkipped, "full_context_budget")
-	userCtx.Attachments = imageAttachmentsForCurrentUser(stableFullContextAttachments)
+	// 检索命中的图片随本轮消息发送，但不进入稳定上下文：它随查询变化，不能参与前缀缓存指纹。
+	turnImageAttachments := append(append([]AttachmentInput{}, stableFullContextAttachments...), ragImageEvidence...)
+	userCtx.Attachments = imageAttachmentsForCurrentUser(turnImageAttachments)
 	userCtx.RAGChunks = ragContextChunks
 	assistantMessage.KnowledgeSources = messageKnowledgeSourcesFromRAGChunks(ragContextChunks)
 	// 语义召回注入：收集异步结果（与 RAG 解耦，独立运行）。
