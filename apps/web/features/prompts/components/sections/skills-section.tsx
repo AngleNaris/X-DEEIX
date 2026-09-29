@@ -1,8 +1,8 @@
 "use client";
 
-import * as React from "react";
-import { Box, Trash2 } from "lucide-react";
+import { Box, PackageOpen, Trash2 } from "lucide-react";
 import { useTranslations } from "next-intl";
+import * as React from "react";
 import { toast } from "sonner";
 
 import {
@@ -17,27 +17,41 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { CenteredEmptyState } from "@/components/ui/empty-state";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogHeightTransition, DialogTitle } from "@/components/ui/dialog";
+import { CenteredEmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useLocalizedErrorMessage } from "@/i18n/use-localized-error";
 import { cn } from "@/lib/utils";
-import { createMySkill, deleteMySkill, getVisibleSkill, listMySkills, listVisibleSkills, updateMySkill } from "@/shared/api/skills";
-import type { SkillDTO, SkillSummaryDTO } from "@/shared/api/skills.types";
+import {
+  createMySkill,
+  deleteMySkill,
+  getSkillPackageFile,
+  getVisibleSkill,
+  importMySkillPackage,
+  listMySkills,
+  listVisibleSkills,
+  previewMySkillPackage,
+  replaceMySkillPackage,
+  updateMySkill,
+} from "@/shared/api/skills";
+import type { SkillDTO, SkillPackagePreview, SkillSummaryDTO } from "@/shared/api/skills.types";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
+import { SkillPackageFilesViewer } from "@/shared/components/skill-package/skill-package-files";
+import { SkillPackageUploader } from "@/shared/components/skill-package/skill-package-uploader";
 import { useDialogSnapshot } from "@/shared/hooks/use-dialog-snapshot";
 import {
   EMPTY_SKILL_FORM,
   SKILL_LIMITS,
+  type SkillFormValue,
   skillFormFromDTO,
   skillFormIsWithinLimits,
   skillPayloadFromForm,
   skillPayloadIsComplete,
-  type SkillFormValue,
 } from "@/shared/model/skills";
 
 const SKILL_PAGE_SIZE = 100;
@@ -48,9 +62,14 @@ export type SkillsSectionHandle = {
 
 type SkillForm = SkillFormValue;
 type SkillListItem = SkillDTO | SkillSummaryDTO;
+type SkillCreateMode = "text" | "package";
 
 function skillKey(item: SkillListItem): string {
   return `${item.scope}-${item.id}`;
+}
+
+function isPackageSkill(item: SkillListItem): item is SkillDTO {
+  return "packageType" in item && item.packageType === "package";
 }
 
 function hasSkillMarkdown(item: SkillListItem): item is SkillDTO {
@@ -112,6 +131,12 @@ function SkillCard({
           <h3 className={cn("min-w-0 truncate text-sm font-medium text-foreground", !item.enabled && "text-muted-foreground")}>
             {item.trigger || item.title}
           </h3>
+          {isPackageSkill(item) ? (
+            <Badge variant="secondary" className="h-5 gap-1 rounded-md px-1.5 text-[10px] font-normal">
+              <PackageOpen className="size-3" strokeWidth={1.8} />
+              {t("packageBadge")}
+            </Badge>
+          ) : null}
           {item.scope === "builtin" ? (
             <Badge variant="secondary" className="h-5 rounded-md px-1.5 text-[10px] font-normal">
               {t("builtIn")}
@@ -178,6 +203,13 @@ export const SkillsSection = React.forwardRef<SkillsSectionHandle, { query: stri
   const [saving, setSaving] = React.useState(false);
   const [form, setForm] = React.useState<SkillForm>(EMPTY_SKILL_FORM);
   const [dialogOpen, setDialogOpen] = React.useState(false);
+  const [createMode, setCreateMode] = React.useState<SkillCreateMode>("text");
+  const [packageSkill, setPackageSkill] = React.useState<SkillDTO | null>(null);
+  const [packageFile, setPackageFile] = React.useState<File | null>(null);
+  const [packagePreview, setPackagePreview] = React.useState<SkillPackagePreview | null>(null);
+  const [packagePreviewing, setPackagePreviewing] = React.useState(false);
+  const [packageImporting, setPackageImporting] = React.useState(false);
+  const packagePreviewSeqRef = React.useRef(0);
   const [viewTarget, setViewTarget] = React.useState<SkillDTO | null>(null);
   const [deleteTarget, setDeleteTarget] = React.useState<SkillDTO | null>(null);
   const stableViewTarget = useDialogSnapshot(viewTarget);
@@ -212,7 +244,12 @@ export const SkillsSection = React.forwardRef<SkillsSectionHandle, { query: stri
   }, [reload]);
 
   const openCreate = React.useCallback(() => {
+    packagePreviewSeqRef.current += 1;
     setForm(EMPTY_SKILL_FORM);
+    setCreateMode("text");
+    setPackageSkill(null);
+    setPackageFile(null);
+    setPackagePreview(null);
     setDialogOpen(true);
   }, []);
 
@@ -221,7 +258,18 @@ export const SkillsSection = React.forwardRef<SkillsSectionHandle, { query: stri
   const openSkill = React.useCallback(async (item: SkillListItem) => {
     if (item.scope === "user") {
       if (hasSkillMarkdown(item)) {
-        setForm(skillFormFromDTO(item));
+        if (isPackageSkill(item)) {
+          packagePreviewSeqRef.current += 1;
+          setForm(EMPTY_SKILL_FORM);
+          setCreateMode("package");
+          setPackageSkill(item);
+          setPackageFile(null);
+          setPackagePreview(null);
+        } else {
+          setForm(skillFormFromDTO(item));
+          setCreateMode("text");
+          setPackageSkill(null);
+        }
         setDialogOpen(true);
       }
       return;
@@ -300,6 +348,63 @@ export const SkillsSection = React.forwardRef<SkillsSectionHandle, { query: stri
     [resolveErrorMessage, t],
   );
 
+  const fetchPackageFile = React.useCallback(async (skillId: number, path: string) => {
+    const token = await resolveAccessToken();
+    if (!token) return "";
+    const data = await getSkillPackageFile(token, skillId, path);
+    return data.content;
+  }, []);
+
+  const selectPackageFile = React.useCallback(
+    async (file: File) => {
+      const requestSeq = packagePreviewSeqRef.current + 1;
+      packagePreviewSeqRef.current = requestSeq;
+      setPackageFile(file);
+      setPackagePreview(null);
+      setPackagePreviewing(true);
+      try {
+        const token = await resolveAccessToken();
+        if (!token) return;
+        const preview = await previewMySkillPackage(token, file);
+        if (packagePreviewSeqRef.current === requestSeq) {
+          setPackagePreview(preview);
+        }
+      } catch (error) {
+        if (packagePreviewSeqRef.current === requestSeq) {
+          toast.error(t("skillPackagePreviewFailed"), { description: resolveErrorMessage(error) });
+        }
+      } finally {
+        if (packagePreviewSeqRef.current === requestSeq) {
+          setPackagePreviewing(false);
+        }
+      }
+    },
+    [resolveErrorMessage, t],
+  );
+
+  const importPackage = React.useCallback(async () => {
+    if (!packageFile) return;
+    setPackageImporting(true);
+    try {
+      const token = await resolveAccessToken();
+      if (!token) return;
+      if (packageSkill) {
+        const data = await replaceMySkillPackage(token, packageSkill.id, packageFile);
+        setItems((current) => orderSkills(current.map((item) => (skillKey(item) === skillKey(data.skill) ? data.skill : item))));
+        toast.success(t("skillPackageReplaced"));
+      } else {
+        const data = await importMySkillPackage(token, packageFile);
+        setItems((current) => orderSkills([...current, data.skill]));
+        toast.success(t("skillPackageImported"));
+      }
+      setDialogOpen(false);
+    } catch (error) {
+      toast.error(t("skillPackageImportFailed"), { description: resolveErrorMessage(error) });
+    } finally {
+      setPackageImporting(false);
+    }
+  }, [packageFile, packageSkill, resolveErrorMessage, t]);
+
   return (
     <div className="mt-6 flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="min-h-0 flex-1 overflow-hidden">
@@ -331,59 +436,105 @@ export const SkillsSection = React.forwardRef<SkillsSectionHandle, { query: stri
         )}
       </div>
 
-      <Dialog open={dialogOpen} onOpenChange={(open) => !saving && setDialogOpen(open)}>
+      <Dialog open={dialogOpen} onOpenChange={(open) => !saving && !packageImporting && setDialogOpen(open)}>
         <DialogContent className="gap-0 overflow-hidden p-0 sm:max-w-[560px]">
           <DialogHeightTransition contentClassName="max-h-[min(86vh,760px)]">
             <DialogHeader className="shrink-0 px-5 pb-3 pt-5">
-              <DialogTitle>{form.id ? t("editSkillTitle") : t("createSkillTitle")}</DialogTitle>
+              <DialogTitle>{form.id || packageSkill ? t("editSkillTitle") : t("createSkillTitle")}</DialogTitle>
               <DialogDescription>{t("skillDialogDescription")}</DialogDescription>
             </DialogHeader>
+            {!form.id && !packageSkill ? (
+              <div className="shrink-0 px-5 pb-2">
+                <Tabs value={createMode} onValueChange={(value) => setCreateMode(value as SkillCreateMode)}>
+                  <TabsList className="w-full">
+                    <TabsTrigger value="text">{t("skillCreateModeText")}</TabsTrigger>
+                    <TabsTrigger value="package">{t("skillCreateModePackage")}</TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
+            ) : null}
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-5 py-2">
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">{t("name")}</p>
-                <InputGroup>
-                  <InputGroupAddon>/</InputGroupAddon>
-                  <InputGroupInput
-                    value={form.name}
-                    maxLength={SKILL_LIMITS.name}
-                    onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+              {createMode === "package" || packageSkill ? (
+                <>
+                  {packageSkill ? (
+                    <SkillPackageFilesViewer
+                      fetchFile={(path) => fetchPackageFile(packageSkill.id, path)}
+                      files={packageSkill.files}
+                    />
+                  ) : null}
+                  <SkillPackageUploader
+                    fileName={packageFile?.name ?? null}
+                    importing={packageImporting}
+                    onImport={() => void importPackage()}
+                    onReset={() => {
+                      packagePreviewSeqRef.current += 1;
+                      setPackageFile(null);
+                      setPackagePreview(null);
+                      setPackagePreviewing(false);
+                    }}
+                    onSelectFile={(file) => void selectPackageFile(file)}
+                    preview={packagePreview}
+                    previewing={packagePreviewing}
+                    reimport={packageSkill !== null}
                   />
-                </InputGroup>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">{t("promptDescription")}</p>
-                <Input
-                  value={form.description}
-                  maxLength={SKILL_LIMITS.description}
-                  onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
-                />
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">{t("skillMarkdown")}</p>
-                <Textarea
-                  value={form.markdown}
-                  className="h-64 resize-none overflow-y-auto [field-sizing:fixed]"
-                  maxLength={SKILL_LIMITS.markdown}
-                  onChange={(event) => setForm((current) => ({ ...current, markdown: event.target.value }))}
-                />
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">{t("enabled")}</p>
-                <Switch
-                  size="sm"
-                  checked={form.enabled}
-                  disabled={saving}
-                  onCheckedChange={(enabled) => setForm((current) => ({ ...current, enabled }))}
-                />
-              </div>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">{t("name")}</p>
+                    <InputGroup>
+                      <InputGroupAddon>/</InputGroupAddon>
+                      <InputGroupInput
+                        value={form.name}
+                        maxLength={SKILL_LIMITS.name}
+                        onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+                      />
+                    </InputGroup>
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">{t("promptDescription")}</p>
+                    <Input
+                      value={form.description}
+                      maxLength={SKILL_LIMITS.description}
+                      onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">{t("skillMarkdown")}</p>
+                    <Textarea
+                      value={form.markdown}
+                      className="h-64 resize-none overflow-y-auto [field-sizing:fixed]"
+                      maxLength={SKILL_LIMITS.markdown}
+                      onChange={(event) => setForm((current) => ({ ...current, markdown: event.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">{t("enabled")}</p>
+                    <Switch
+                      size="sm"
+                      checked={form.enabled}
+                      disabled={saving}
+                      onCheckedChange={(enabled) => setForm((current) => ({ ...current, enabled }))}
+                    />
+                  </div>
+                </>
+              )}
             </div>
             <DialogFooter className="shrink-0 px-5 py-3">
-              <Button variant="ghost" disabled={saving} onClick={() => setDialogOpen(false)}>
-                {t("cancel")}
-              </Button>
-              <Button disabled={saving} onClick={() => void save()}>
-                {saving ? t("saving") : t("save")}
-              </Button>
+              {createMode === "text" ? (
+                <>
+                  <Button variant="ghost" disabled={saving} onClick={() => setDialogOpen(false)}>
+                    {t("cancel")}
+                  </Button>
+                  <Button disabled={saving} onClick={() => void save()}>
+                    {saving ? t("saving") : t("save")}
+                  </Button>
+                </>
+              ) : (
+                <Button variant="ghost" disabled={packageImporting} onClick={() => setDialogOpen(false)}>
+                  {t("cancel")}
+                </Button>
+              )}
             </DialogFooter>
           </DialogHeightTransition>
         </DialogContent>
@@ -405,10 +556,17 @@ export const SkillsSection = React.forwardRef<SkillsSectionHandle, { query: stri
                 <p className="text-xs text-muted-foreground">{t("promptDescription")}</p>
                 <Input value={stableViewTarget?.description || ""} readOnly />
               </div>
-              <div className="space-y-1">
-                <p className="text-xs text-muted-foreground">{t("skillMarkdown")}</p>
-                <Textarea value={stableViewTarget?.markdown || ""} className="h-64 resize-none overflow-y-auto [field-sizing:fixed]" readOnly />
-              </div>
+              {stableViewTarget?.packageType === "package" ? (
+                <SkillPackageFilesViewer
+                  fetchFile={(path) => fetchPackageFile(stableViewTarget.id, path)}
+                  files={stableViewTarget.files}
+                />
+              ) : (
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground">{t("skillMarkdown")}</p>
+                  <Textarea value={stableViewTarget?.markdown || ""} className="h-64 resize-none overflow-y-auto [field-sizing:fixed]" readOnly />
+                </div>
+              )}
             </div>
             <DialogFooter className="shrink-0 px-5 py-3">
               <Button variant="ghost" onClick={() => setViewTarget(null)}>
