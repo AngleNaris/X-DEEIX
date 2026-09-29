@@ -4,9 +4,11 @@
 // platform concern leaked into shared code, not a style problem.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("..", import.meta.url).pathname;
+// fileURLToPath, not URL.pathname: the latter yields "/E:/..." on Windows.
+const root = fileURLToPath(new URL("..", import.meta.url));
 
 const rules = [
   {
@@ -29,6 +31,31 @@ const rules = [
     match: (file) => /localStorage\.(get|set)Item\(\s*["'][^"']*api-base-url/.test(file.source),
     allow: () => false,
   },
+  {
+    // What the UI offers is decided by the server's capability flags, never by
+    // the platform the client runs on (docs/ARCHITECTURE.md §4). The
+    // admin and settings surfaces are pure feature surfaces, so a platform check
+    // there can only be doing visibility work.
+    name: "feature visibility comes from capabilities, not the platform",
+    match: (file) =>
+      /\bisDesktopApp\(\)/.test(file.source) &&
+      (file.path.startsWith("features/admin/") ||
+        file.path.startsWith("features/settings/") ||
+        /from ["']@\/shared\/capabilities["']/.test(file.source)),
+    allow: () => false,
+  },
+  {
+    // Every admin section page must be registered in ADMIN_SECTIONS: that table
+    // drives both the sidebar and the route guard, so an unregistered section
+    // would bypass capability gating.
+    name: "admin section registered in ADMIN_SECTIONS",
+    match: (file) => /^app\/\(app\)\/\(project\)\/admin\/[^/]+\/page\.tsx$/.test(file.path),
+    allow: (file) => {
+      const section = file.path.split("/").at(-2);
+      const table = files.find((f) => f.path === "features/admin/model/admin-sections.ts");
+      return table !== undefined && new RegExp(`href:\\s*["']/${section}["']`).test(table.source);
+    },
+  },
 ];
 
 function walk(dir, out = []) {
@@ -41,7 +68,11 @@ function walk(dir, out = []) {
   return out;
 }
 
-const files = walk(root).map((full) => ({ path: relative(root, full), source: readFileSync(full, "utf8") }));
+const files = walk(root).map((full) => ({
+  path: relative(root, full).split(sep).join("/"),
+  source: readFileSync(full, "utf8"),
+}));
+
 const violations = [];
 for (const rule of rules) {
   for (const file of files) {

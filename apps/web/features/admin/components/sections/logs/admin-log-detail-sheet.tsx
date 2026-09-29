@@ -135,9 +135,7 @@ export function LogDetailSheet({
             ? t("titles.redemption")
           : detail?.kind === "conversation"
             ? t("titles.conversation")
-        : detail?.kind === "system"
-          ? t("titles.system")
-          : t("titles.audit");
+            : t("titles.audit");
   const description =
     detail?.kind === "auth"
       ? `${detail.item.eventType || t("fallbacks.authEvent")} · ${formatDateTime(detail.item.occurredAt, locale)}`
@@ -149,9 +147,7 @@ export function LogDetailSheet({
             ? `${detail.item.codeHint || t("fallbacks.redemption")} · ${formatDateTime(detail.item.createdAt, locale)}`
           : detail?.kind === "conversation"
             ? `${detail.item.eventType || detail.item.eventScope || t("fallbacks.conversationEvent")} · ${formatDateTime(detail.item.createdAt, locale)}`
-      : detail?.kind === "system"
-        ? `${detail.item.event || t("fallbacks.systemEvent")} · ${formatDateTime(detail.item.createdAt, locale)}`
-        : `${detail?.item.action || t("fallbacks.auditEvent")} · ${formatDateTime(detail?.item.createdAt, locale)}`;
+            : `${detail?.item.action || t("fallbacks.auditEvent")} · ${formatDateTime(detail?.item.createdAt, locale)}`;
   const requestID =
     detail && detail.kind !== "usage" && detail.kind !== "order" && detail.kind !== "redemption" && detail.kind !== "conversation"
       ? detail.item.requestID
@@ -250,26 +246,6 @@ export function LogDetailSheet({
             </>
           ) : null}
 
-          {detail?.kind === "system" ? (
-            <>
-              <DetailBlock title={t("blocks.event")}>
-                <DetailRow label="ID" value={detail.item.id} mono />
-                <DetailRow label={t("fields.level")} value={detail.item.level} />
-                <DetailRow label={t("fields.source")} value={detail.item.source} />
-                <DetailRow label={t("fields.event")} value={detail.item.event} />
-                <DetailRow label={t("fields.message")} value={detail.item.message} />
-                <DetailRow label={t("fields.createdAt")} value={formatDateTime(detail.item.createdAt, locale)} />
-              </DetailBlock>
-              <DetailBlock title={t("blocks.resource")}>
-                <DetailRow label={t("fields.resource")} value={detail.item.resource} />
-                <DetailRow label={t("fields.resourceID")} value={detail.item.resourceID} mono />
-              </DetailBlock>
-              <DetailBlock title={t("blocks.request")}>
-                <DetailRow label={t("fields.requestID")} value={detail.item.requestID} mono />
-                <DetailRow label="Trace ID" value={detail.item.traceID} mono />
-              </DetailBlock>
-            </>
-          ) : null}
 
           {detail?.kind === "usage" ? (
             <>

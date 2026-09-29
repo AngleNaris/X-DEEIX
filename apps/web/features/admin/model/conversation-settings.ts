@@ -15,6 +15,8 @@ export type ConversationSettingsField = {
     | "conversation_default_model"
     | "conversation_task_model"
     | "default_system_prompt"
+    | "ui_components_enabled"
+    | "process_trace_enabled"
     | "conversation_title_prompt"
     | "conversation_labels_prompt"
     | "multimodal_delegation_enabled"
@@ -28,6 +30,7 @@ export type ConversationSettingsField = {
     | "context_token_budget_enabled"
     | "context_max_turns"
     | "context_compact_trigger_tokens"
+    | "context_window_fallback_tokens"
     | "context_compact_preserve_recent_turns"
     | "context_compact_highlights_per_role"
     | "context_compact_snippet_chars"
@@ -379,6 +382,31 @@ export function buildConversationSettingsFields(t: ConversationSettingsTranslato
       description: t("fields.defaultSystemPrompt.description"),
       type: "textarea",
       placeholder: t("fields.defaultSystemPrompt.placeholder"),
+    },
+    {
+      section: "conversation",
+      namespace: "chat",
+      key: "ui_components_enabled",
+      label: t("fields.uiComponentsEnabled.label"),
+      description: t("fields.uiComponentsEnabled.description"),
+      type: "bool",
+    },
+    {
+      section: "conversation",
+      namespace: "chat",
+      key: "process_trace_enabled",
+      label: t("fields.processTraceEnabled.label"),
+      description: t("fields.processTraceEnabled.description"),
+      type: "bool",
+    },
+    {
+      section: "contextCompression",
+      namespace: "chat",
+      key: "context_window_fallback_tokens",
+      label: t("fields.contextWindowFallbackTokens.label"),
+      description: t("fields.contextWindowFallbackTokens.description"),
+      type: "int",
+      placeholder: t("fields.contextWindowFallbackTokens.placeholder"),
     },
     {
       section: "contextCompression",

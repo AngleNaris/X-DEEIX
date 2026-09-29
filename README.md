@@ -523,7 +523,7 @@ Static configuration environment variables:
 | HTTP service | `HTTP_PORT` | API/runtime port. |
 | HTTP service | `CORS_ALLOW_ORIGIN` | Allowed CORS origins, comma-separated. |
 | HTTP service | `TRUSTED_PROXIES` | Trusted proxy CIDR list. |
-| HTTP service | `PUBLIC_API_BASE_URL` | Public API URL for links, callbacks, and public URL generation. |
+| HTTP service | `PUBLIC_API_BASE_URL` | Public API URL for links, callbacks, and public URL generation. Required for third-party sign-in. |
 | HTTP service | `PUBLIC_WEB_BASE_URL` | Public Web URL for links, callbacks, and public URL generation. |
 | HTTP service | `FRONTEND_DIST_DIR` | Frontend static output directory. |
 | HTTP service | `HTTP_READ_HEADER_TIMEOUT_SECONDS` | HTTP read-header timeout. |
@@ -587,13 +587,13 @@ When SSRF protection is enabled in production, administrator-saved model, MCP, E
 
 ### OAuth callbacks for Web, App, and Desktop (multi-platform clients not yet released)
 
-Set `PUBLIC_API_BASE_URL` to the externally reachable API origin before enabling the provider auth bridge. For every OIDC/OAuth2 provider, register the server callback shown in the admin provider dialog:
+Third-party sign-in requires `PUBLIC_API_BASE_URL` to be the externally reachable API origin. For every OIDC/OAuth2 provider, register the single server callback shown in the admin provider dialog:
 
 ```text
 <PUBLIC_API_BASE_URL>/api/v1/auth/providers/<provider-slug>/callback
 ```
 
-Web, App, and Desktop clients then reuse that instance callback automatically. The external provider authorization code and client secret remain on the self-hosted server; public clients receive only a short-lived, one-time DEEIX grant bound to their PKCE verifier. Keep the legacy Web callback shown by the admin dialog registered when account identity binding or older Web clients are still in use.
+Sign-in, registration, and account identity binding on Web, App, and Desktop all use this callback. The external provider authorization code and client secret remain on the self-hosted server; public clients receive only a short-lived, one-time DEEIX grant bound to their PKCE verifier. While `PUBLIC_API_BASE_URL` is unset, provider sign-in is disabled and the admin console shows a notice.
 
 ## Feature Guides
 

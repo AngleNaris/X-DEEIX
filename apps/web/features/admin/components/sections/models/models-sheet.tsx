@@ -53,6 +53,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { FeatureGate, useFeature } from "@/shared/capabilities";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import { getModelOptionPolicy } from "@/shared/api/settings";
 import {
@@ -326,6 +327,7 @@ export function ModelSheet({ open, mode, target, models, vendors, displayGroups,
   const [upstreamsLoaded, setUpstreamsLoaded] = useState(false);
   const [upstreamModelsByID, setUpstreamModelsByID] = useState<Record<string, AdminLLMUpstreamModelDTO[]>>({});
   const [upstreamModelsLoadingByID, setUpstreamModelsLoadingByID] = useState<Record<string, boolean>>({});
+  const multiUser = useFeature("multiUser");
   const [permissionGroups, setPermissionGroups] = useState<PermissionGroup[]>([]);
   const [manualPermissionGroupIDs, setManualPermissionGroupIDs] = useState<number[]>([]);
   const [matchedPermissionGroupIDs, setMatchedPermissionGroupIDs] = useState<number[]>([]);
@@ -581,6 +583,9 @@ export function ModelSheet({ open, mode, target, models, vendors, displayGroups,
   }
 
   async function saveModelPermissionGroups(accessToken: string, modelID: number) {
+    if (!multiUser) {
+      return;
+    }
     const data = await setModelPermissionGroups(accessToken, modelID, manualPermissionGroupIDs);
     setManualPermissionGroupIDs(data.manualGroupIDs);
     setMatchedPermissionGroupIDs(data.matchedGroupIDs);
@@ -644,11 +649,10 @@ export function ModelSheet({ open, mode, target, models, vendors, displayGroups,
         if (!token) {
           return;
         }
+        const noModelGroups = { manualGroupIDs: [], matchedGroupIDs: [], effectiveGroupIDs: [], unassigned: false };
         const [groups, modelGroups] = await Promise.all([
-          listPermissionGroups(token),
-          mode === "edit" && target
-            ? listModelPermissionGroups(token, target.id)
-            : Promise.resolve({ manualGroupIDs: [], matchedGroupIDs: [], effectiveGroupIDs: [], unassigned: false }),
+          multiUser ? listPermissionGroups(token) : Promise.resolve([]),
+          multiUser && mode === "edit" && target ? listModelPermissionGroups(token, target.id) : Promise.resolve(noModelGroups),
         ]);
         if (cancelled) {
           return;
@@ -676,7 +680,7 @@ export function ModelSheet({ open, mode, target, models, vendors, displayGroups,
     return () => {
       cancelled = true;
     };
-  }, [mode, open, t, target]);
+  }, [mode, multiUser, open, t, target]);
 
   useEffect(() => {
     if (!open) {
@@ -1271,27 +1275,29 @@ export function ModelSheet({ open, mode, target, models, vendors, displayGroups,
                     </Select>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-normal text-muted-foreground">
-                      {t("sheet.permissionGroups")}
-                    </Label>
-                    <PermissionGroupSelector
-                      groups={permissionGroups}
-                      selectedIDs={manualPermissionGroupIDs}
-                      matchedIDs={matchedPermissionGroupIDs}
-                      disabled={pending}
-                      loading={permissionGroupsLoading}
-                      placeholder={t("sheet.permissionGroupsPlaceholder")}
-                      emptyLabel={t("sheet.permissionGroupsEmpty")}
-                      autoBadgeLabel={t("sheet.permissionGroupsAutoBadge")}
-                      onSelectedIDsChange={setManualPermissionGroupIDs}
-                    />
-                    <p className={cn("text-[11px] leading-4", showPermissionGroupUnassigned ? "text-destructive" : "text-muted-foreground")}>
-                      {showPermissionGroupUnassigned
-                        ? t("sheet.permissionGroupsUnassigned")
-                        : t("sheet.permissionGroupsDescription")}
-                    </p>
-                  </div>
+                  <FeatureGate feature="multiUser">
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-normal text-muted-foreground">
+                        {t("sheet.permissionGroups")}
+                      </Label>
+                      <PermissionGroupSelector
+                        groups={permissionGroups}
+                        selectedIDs={manualPermissionGroupIDs}
+                        matchedIDs={matchedPermissionGroupIDs}
+                        disabled={pending}
+                        loading={permissionGroupsLoading}
+                        placeholder={t("sheet.permissionGroupsPlaceholder")}
+                        emptyLabel={t("sheet.permissionGroupsEmpty")}
+                        autoBadgeLabel={t("sheet.permissionGroupsAutoBadge")}
+                        onSelectedIDsChange={setManualPermissionGroupIDs}
+                      />
+                      <p className={cn("text-[11px] leading-4", showPermissionGroupUnassigned ? "text-destructive" : "text-muted-foreground")}>
+                        {showPermissionGroupUnassigned
+                          ? t("sheet.permissionGroupsUnassigned")
+                          : t("sheet.permissionGroupsDescription")}
+                      </p>
+                    </div>
+                  </FeatureGate>
 
                   <div className="space-y-1">
                     <Label className="text-xs font-normal text-muted-foreground" htmlFor="model-desc">{t("sheet.description")}</Label>

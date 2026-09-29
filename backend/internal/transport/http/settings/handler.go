@@ -280,7 +280,7 @@ func (h *Handler) GetChatContextPolicy(c *gin.Context) {
 // @Router /settings/feature-policy [get]
 func (h *Handler) GetFeaturePolicy(c *gin.Context) {
 	cfg := h.runtime.Snapshot()
-	response.Success(c, FeaturePolicyResponse{KnowledgeBaseEnabled: cfg.KnowledgeBaseEnabled})
+	response.Success(c, FeaturePolicyResponse{KnowledgeBaseEnabled: cfg.KnowledgeBaseEnabled, ProcessTraceEnabled: cfg.ProcessTraceEnabled})
 }
 
 // Patch godoc
@@ -332,6 +332,11 @@ func (h *Handler) Patch(c *gin.Context) {
 
 	data, err := h.service.BatchUpdate(c.Request.Context(), patchItems)
 	if err != nil {
+		var disabled *appsettings.FeatureDisabledError
+		if errors.As(err, &disabled) {
+			middleware.WriteFeatureDisabled(c, disabled.Feature, disabled.Keys...)
+			return
+		}
 		if errors.Is(err, appsettings.ErrInvalidSetting) {
 			writeSettingValidationError(c, err)
 			return

@@ -292,15 +292,6 @@ type ReorderIdentityProvidersRequest struct {
 	ProviderIDs []string `json:"providerIDs" binding:"required,dive,required,max=64"`
 }
 
-// CompleteProviderLoginRequest completes a provider login callback.
-type CompleteProviderLoginRequest struct {
-	Code         string `json:"code" binding:"required"`
-	State        string `json:"state" binding:"required,max=4096"`
-	RedirectURI  string `json:"redirectURI" binding:"required,max=2048"`
-	CodeVerifier string `json:"codeVerifier" binding:"required,min=43,max=128"`
-	Intent       string `json:"intent,omitempty" binding:"omitempty,oneof=login register bind"`
-}
-
 // ProviderAuthBridgeStartRequest starts an OAuth handoff for a client.
 type ProviderAuthBridgeStartRequest struct {
 	ClientID      string `json:"clientID" binding:"required,max=128"`
@@ -308,6 +299,15 @@ type ProviderAuthBridgeStartRequest struct {
 	CodeChallenge string `json:"codeChallenge" binding:"required,min=43,max=128"`
 	ClientState   string `json:"clientState" binding:"required,min=43,max=128"`
 	Intent        string `json:"intent,omitempty" binding:"omitempty,oneof=login register"`
+	Next          string `json:"next,omitempty" binding:"omitempty,max=2048"`
+}
+
+// ProviderBindBridgeStartRequest starts an OAuth handoff that links a provider identity to the current user.
+type ProviderBindBridgeStartRequest struct {
+	ClientID      string `json:"clientID" binding:"required,max=128"`
+	RedirectURI   string `json:"redirectURI" binding:"required,max=2048"`
+	CodeChallenge string `json:"codeChallenge" binding:"required,min=43,max=128"`
+	ClientState   string `json:"clientState" binding:"required,min=43,max=128"`
 	Next          string `json:"next,omitempty" binding:"omitempty,max=2048"`
 }
 
@@ -321,14 +321,6 @@ type ProviderAuthBridgeStartResponse struct {
 type ProviderAuthBridgeExchangeRequest struct {
 	ClientID     string `json:"clientID" binding:"required,max=128"`
 	Grant        string `json:"grant" binding:"required,min=43,max=128"`
-	CodeVerifier string `json:"codeVerifier" binding:"required,min=43,max=128"`
-}
-
-// CompleteProviderBindRequest completes linking a provider identity.
-type CompleteProviderBindRequest struct {
-	Code         string `json:"code" binding:"required"`
-	State        string `json:"state" binding:"required,max=4096"`
-	RedirectURI  string `json:"redirectURI" binding:"required,max=2048"`
 	CodeVerifier string `json:"codeVerifier" binding:"required,min=43,max=128"`
 }
 
@@ -495,6 +487,12 @@ type LoginOptionsResponseDoc struct {
 type ProviderAuthBridgeStartResponseDoc struct {
 	ErrorMsg string                          `json:"errorMsg"`
 	Data     ProviderAuthBridgeStartResponse `json:"data"`
+}
+
+// UserIdentityResponseDoc 绑定身份响应（Swagger 用）。
+type UserIdentityResponseDoc struct {
+	ErrorMsg string                   `json:"errorMsg"`
+	Data     UserIdentityResponseData `json:"data"`
 }
 
 // IdentityProviderListResponseDoc 管理员身份源列表响应（Swagger 用）。

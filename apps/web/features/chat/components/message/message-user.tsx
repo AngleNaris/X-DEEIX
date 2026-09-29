@@ -17,7 +17,7 @@ import {
   useChatMentionMenu,
 } from "@/features/chat/hooks/use-chat-mention-menu";
 import type { ChatModelOption } from "@/features/chat/types/chat-runtime";
-import type { ChatAreaMessage } from "@/features/chat/types/messages";
+import type { ChatAreaMessage, UserMessageEditMode } from "@/features/chat/types/messages";
 import type { FileContentLoader } from "@/shared/components/file-preview/preview-dialog";
 import { StreamdownRender } from "@/shared/components/markdown/streamdown-render";
 
@@ -39,7 +39,7 @@ const EDIT_MESSAGE_EMPTY_TOOL_IDS: EditMessageMentionArgs["selectedToolIDs"] = [
 type ChatMessageUserProps = {
   item: ChatAreaMessage;
   onRetryUserMessage: (message: ChatAreaMessage) => Promise<void> | void;
-  onEditUserMessage: (message: ChatAreaMessage, content: string) => Promise<boolean> | boolean;
+  onEditUserMessage: (message: ChatAreaMessage, content: string, mode: UserMessageEditMode) => Promise<boolean> | boolean;
   onForkMessage?: (message: ChatAreaMessage) => Promise<void> | void;
   onDeleteMessage?: (message: ChatAreaMessage) => Promise<void> | void;
   modelOptions?: ChatModelOption[];
@@ -149,12 +149,12 @@ export function ChatMessageUser({
   );
   const onDelete = React.useCallback(() => onDeleteMessage?.(item), [item, onDeleteMessage]);
 
-  const onEditSave = React.useCallback(async () => {
+  const onEditSave = React.useCallback(async (mode: UserMessageEditMode) => {
     const nextContent = editingValue.trim();
     if (!nextContent || nextContent === item.content.trim()) {
       return;
     }
-    const ok = await onEditUserMessage(item, nextContent);
+    const ok = await onEditUserMessage(item, nextContent, mode);
     if (ok !== false) {
       setIsEditing(false);
     }
@@ -250,7 +250,7 @@ export function ChatMessageUser({
           <div className="flex items-center justify-between gap-4">
             <div className="flex gap-2 pt-2 text-xs text-muted-foreground">
               <CircleAlert className="mt-0.5 size-3 shrink-0" />
-              <span>{tMessages("editCreatesBranch")}</span>
+              <span>{tMessages("editModes")}</span>
             </div>
             <div className="mt-3 flex items-center justify-center gap-2">
               <Button
@@ -261,12 +261,22 @@ export function ChatMessageUser({
                 {tCommon("cancel")}
               </Button>
               <Button
+                variant="outline"
+                className="rounded-lg text-xs font-medium shadow-none"
+                disabled={nextContent.length === 0 || unchanged}
+                onClick={() => void onEditSave("save")}
+                title={tMessages("editSaveOnlyHint")}
+              >
+                {tMessages("editSaveOnly")}
+              </Button>
+              <Button
                 variant="default"
                 className="rounded-lg text-xs font-medium shadow-none hover:bg-primary/60"
                 disabled={nextContent.length === 0 || unchanged}
-                onClick={() => void onEditSave()}
+                onClick={() => void onEditSave("regenerate")}
+                title={tMessages("editRegenerateHint")}
               >
-                {tCommon("save")}
+                {tMessages("editRegenerate")}
               </Button>
             </div>
           </div>

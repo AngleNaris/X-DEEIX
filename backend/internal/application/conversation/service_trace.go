@@ -340,9 +340,6 @@ func (r *messageTraceRecorder) ensureDraft(traceType string) *messageTraceDraft 
 		}
 		return r.process
 	case messageTraceTypeUpstreamThink:
-		if !r.cfg.ProcessTraceStoreUpstreamThink {
-			return nil
-		}
 		if r.upstreamThink == nil || r.upstreamThink.status == messageTraceStatusCompleted || r.upstreamThink.status == messageTraceStatusError {
 			r.upstreamThink = r.newTraceDraft(traceType, "think", "模型思考", 3, messageTraceStageThink, r.nextTraceRoundID(), "")
 			r.upstreamThink.generationCall = r.generationCall
@@ -844,7 +841,7 @@ func (r *messageTraceRecorder) failWithContext(ctx context.Context, err error) {
 }
 
 func (r *messageTraceRecorder) attachToMessage(message *model.Message) {
-	if message == nil || !r.visible() {
+	if message == nil || !r.enabled() {
 		return
 	}
 	message.ProcessTrace = r.snapshot()
@@ -858,7 +855,7 @@ func (r *messageTraceRecorder) upstreamThinkContent() string {
 }
 
 func (r *messageTraceRecorder) snapshot() *model.MessageProcessTrace {
-	if !r.visible() {
+	if !r.enabled() {
 		return nil
 	}
 	process := traceDraftToBlock(r.process)
@@ -1282,7 +1279,7 @@ func (r *messageTraceRecorder) liveSnapshot() *model.MessageProcessTrace {
 }
 
 func (r *messageTraceRecorder) emitProcessUpdate() {
-	if !r.visible() || r.process == nil {
+	if !r.enabled() || r.process == nil {
 		return
 	}
 	emitEvent(r.onEvent, "process_update", map[string]any{
@@ -1293,7 +1290,7 @@ func (r *messageTraceRecorder) emitProcessUpdate() {
 }
 
 func (r *messageTraceRecorder) emitToolUpdate() {
-	if !r.visible() || r.tools == nil {
+	if !r.enabled() || r.tools == nil {
 		return
 	}
 	emitEvent(r.onEvent, "process_update", map[string]any{
@@ -1305,7 +1302,7 @@ func (r *messageTraceRecorder) emitToolUpdate() {
 
 // emitUpstreamThinkUpdate 在思考轮次结束时推送结构快照，让客户端的事件列表立即拿到终态与结束时间。
 func (r *messageTraceRecorder) emitUpstreamThinkUpdate() {
-	if !r.visible() || r.upstreamThink == nil {
+	if !r.enabled() || r.upstreamThink == nil {
 		return
 	}
 	trace := r.liveSnapshot()
@@ -1320,7 +1317,7 @@ func (r *messageTraceRecorder) emitUpstreamThinkUpdate() {
 }
 
 func (r *messageTraceRecorder) emitUpstreamThinkDelta(update upstreamThinkLiveUpdate) {
-	if !r.visible() || r.upstreamThink == nil {
+	if !r.enabled() || r.upstreamThink == nil {
 		return
 	}
 	payload := map[string]any{
@@ -2028,7 +2025,7 @@ func buildRAGProcessTrace(
 	}
 	citations := make([]traceCitation, 0, len(chunks))
 	for _, chunk := range chunks {
-		citations = append(citations, traceCitation{FileName: chunk.FileName, FileID: chunk.FileID, ChunkIndex: chunk.ChunkIndex, Score: chunk.Score, Preview: textutil.CompactSnippet(chunk.Content, 100)})
+		citations = append(citations, traceCitation{FileName: chunk.FileName, FileID: chunk.FileID, ChunkIndex: chunk.ChunkIndex, Score: chunk.Score, Preview: textutil.CompactSnippet(chunk.Content, 100), Modality: chunk.Modality})
 	}
 	detail := fmt.Sprintf("检索已完成，共检索 %d 个文件，命中 %d 个段落。", len(names), len(chunks))
 	stage := traceStage{Kind: processTraceKindRetrieval, Status: processTraceStatusCompleted, FileCount: len(names), ChunkCount: len(chunks)}

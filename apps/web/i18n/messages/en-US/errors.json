@@ -378,9 +378,23 @@
   },
   "content_moderation": {
     "blocked": "This content was blocked by safety checks.",
-    "invalid_config": "Invalid content moderation configuration.",
-    "config_required": "A complete service configuration and at least one policy category are required when content moderation is enabled.",
-    "probe_failed": "Content moderation connection test failed.",
-    "event_not_found": "Content moderation event not found."
+    "invalidConfig": "Invalid content moderation configuration.",
+    "configRequired": "A complete service configuration and at least one policy category are required when content moderation is enabled.",
+    "probeFailed": "Content moderation connection test failed.",
+    "eventNotFound": "Content moderation event not found."
+  },
+  "feature": {
+    "disabled": "This feature is not available on this server.",
+    "byFeature": {
+      "multiUser": "This server has a single account; user and group management are not available.",
+      "registration": "Registration is not available on this server.",
+      "identityProviders": "Third-party sign-in is not available on this server.",
+      "accountSecurity": "Password, email, two-factor and session management are not available on this server.",
+      "announcements": "Announcements are not available on this server.",
+      "billingGating": "Plans, balances and payments are not available on this server.",
+      "usageMetering": "Usage metering is not available on this server.",
+      "contentModeration": "Content moderation is not available on this server.",
+      "sharing": "Public sharing is not available on this server."
+    }
   }
 }

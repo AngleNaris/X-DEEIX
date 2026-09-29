@@ -15,6 +15,7 @@ import type {
   SyncAdminLLMUpstreamModelsData,
 } from "@/features/admin/api/llm.types";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
+import { useCapabilities } from "@/shared/capabilities";
 
 type ApplyUpstreamModelSyncInput = {
   allowEmpty: boolean;
@@ -55,6 +56,7 @@ function throwIfAborted(signal: AbortSignal) {
 }
 
 export function useUpstreamModelSync(open: boolean, upstreamID: number | null) {
+  const { flags: capabilities } = useCapabilities();
   const [catalog, setCatalog] = React.useState<ListAdminLLMRemoteModelsData | null>(null);
   const [catalogLoading, setCatalogLoading] = React.useState(false);
   const [catalogError, setCatalogError] = React.useState<unknown>(null);
@@ -132,7 +134,7 @@ export function useUpstreamModelSync(open: boolean, upstreamID: number | null) {
       try {
         const token = await resolveAccessToken();
         throwIfAborted(controller.signal);
-        const groups = await listPermissionGroups(token, controller.signal);
+        const groups = capabilities.multiUser ? await listPermissionGroups(token, controller.signal) : [];
         if (!controller.signal.aborted) {
           setPermissionGroups(groups);
         }
@@ -147,7 +149,7 @@ export function useUpstreamModelSync(open: boolean, upstreamID: number | null) {
       }
     })();
     return () => controller.abort();
-  }, [open]);
+  }, [capabilities.multiUser, open]);
 
   const applySync = React.useCallback(async (input: ApplyUpstreamModelSyncInput): Promise<ApplyUpstreamModelSyncResult> => {
     if (!upstreamID) {

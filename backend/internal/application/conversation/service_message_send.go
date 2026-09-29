@@ -17,6 +17,7 @@ import (
 	domainmemory "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/memory"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	platformtracing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/observability/tracing"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
@@ -2225,7 +2226,8 @@ func messageKnowledgeSourcesFromRAGChunks(chunks []model.RAGChunk) []model.Messa
 			FileID:     strings.TrimSpace(chunk.FileID),
 			ChunkIndex: chunk.ChunkIndex,
 			Score:      chunk.Score,
-			Preview:    compactSnippet(chunk.Content, 100),
+			Preview:    textutil.CompactSnippet(chunk.Content, 100),
+			Modality:   chunk.Modality,
 		})
 	}
 	return sources

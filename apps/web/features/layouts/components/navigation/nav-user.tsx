@@ -41,6 +41,7 @@ import { useAuthSession } from "@/shared/auth/auth-session-context";
 import { clearSessionAndRedirectToLogin } from "@/shared/auth/session";
 import { dispatchUserProfileUpdated } from "@/shared/auth/user-profile-events";
 import { dispatchOpenAnnouncements, getAnnouncementUnread, subscribeAnnouncementUnreadChanged } from "@/shared/events/announcement-events";
+import { FeatureGate } from "@/shared/capabilities";
 
 export function NavUser({
   user,
@@ -179,12 +180,14 @@ export function NavUser({
               <DropdownMenuItem onSelect={navigateFromMenu("/setting/general")}>
                 {t("settings")}
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={openAnnouncementsFromMenu}>
-                <span className="min-w-0 flex-1 truncate">{t("announcements")}</span>
-                <span className="ml-auto flex size-4 shrink-0 items-center justify-center">
-                  {hasUnreadAnnouncement ? <span aria-hidden="true" className="size-1.5 rounded-full bg-destructive" /> : null}
-                </span>
-              </DropdownMenuItem>
+              <FeatureGate feature="announcements">
+                <DropdownMenuItem onSelect={openAnnouncementsFromMenu}>
+                  <span className="min-w-0 flex-1 truncate">{t("announcements")}</span>
+                  <span className="ml-auto flex size-4 shrink-0 items-center justify-center">
+                    {hasUnreadAnnouncement ? <span aria-hidden="true" className="size-1.5 rounded-full bg-destructive" /> : null}
+                  </span>
+                </DropdownMenuItem>
+              </FeatureGate>
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger className="focus:bg-accent/40 data-[state=open]:bg-accent/40">
                   {t("language")}
@@ -206,12 +209,14 @@ export function NavUser({
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
             </DropdownMenuGroup>
-            <DropdownMenuSeparator />
-            <DropdownMenuGroup>
-              <DropdownMenuItem onSelect={navigateFromMenu("/setting/subscription")}>
-                {t("upgradePlan")}
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
+            <FeatureGate feature="billingGating">
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuItem onSelect={navigateFromMenu("/setting/subscription")}>
+                  {t("upgradePlan")}
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </FeatureGate>
             <DropdownMenuSeparator />
             {isAdmin ? (
               <DropdownMenuItem onSelect={navigateFromMenu("/admin")}>

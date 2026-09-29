@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ArrowRight, Pencil, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowRight, Pencil, Plus, Save, Trash2, TriangleAlert } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
@@ -19,6 +19,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogHeightTransition, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Field, FieldLabel } from "@/components/ui/field";
@@ -106,7 +107,6 @@ export function AdminLoginSettingsPage() {
   const [forceDeleteProviderMessage, setForceDeleteProviderMessage] = React.useState("");
   const [providerForm, setProviderForm] = React.useState<IdentityProviderForm>(DEFAULT_PROVIDER_FORM);
   const [oidcEndpointMode, setOidcEndpointMode] = React.useState<"issuer" | "discovery">("issuer");
-  const [frontendOrigin, setFrontendOrigin] = React.useState("");
   const [providerCallbackBaseURL, setProviderCallbackBaseURL] = React.useState("");
   const [loading, setLoading] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
@@ -137,10 +137,6 @@ export function AdminLoginSettingsPage() {
   React.useEffect(() => {
     void loadData();
   }, [loadData]);
-
-  React.useEffect(() => {
-    setFrontendOrigin(window.location.origin);
-  }, []);
 
   const dirtyFieldIDs = React.useMemo(() => {
     const result = new Set<string>();
@@ -389,10 +385,7 @@ export function AdminLoginSettingsPage() {
 
   const oidcEndpointValue = oidcEndpointMode === "discovery" ? (providerForm.discoveryURL ?? "") : (providerForm.issuerURL ?? "");
   const callbackSlug = providerForm.slug?.trim() || normalizeProviderSlugPreview(providerForm.name) || "provider";
-  const legacyCallbackURL = `${frontendOrigin || "http://localhost:3000"}/auth/callback?provider=${encodeURIComponent(callbackSlug)}`;
-  const callbackURL = providerCallbackBaseURL
-    ? `${providerCallbackBaseURL}/${encodeURIComponent(callbackSlug)}/callback`
-    : legacyCallbackURL;
+  const callbackURL = providerCallbackBaseURL ? `${providerCallbackBaseURL}/${encodeURIComponent(callbackSlug)}/callback` : "";
 
   return (
     <SettingsPage>
@@ -539,6 +532,14 @@ export function AdminLoginSettingsPage() {
                           </div>
                         </div>
                       </div>
+
+                      {!loading && !providerCallbackBaseURL ? (
+                        <Alert variant="destructive" className="mb-3">
+                          <TriangleAlert />
+                          <AlertTitle>{t("providers.bridgeMissingTitle")}</AlertTitle>
+                          <AlertDescription>{t("providers.bridgeMissingDescription")}</AlertDescription>
+                        </Alert>
+                      ) : null}
 
                       <AdminSortableList
                         items={providers.map((provider) => provider.publicID)}
@@ -709,11 +710,9 @@ export function AdminLoginSettingsPage() {
                 <Input value={providerForm.name} onChange={(event) => setProviderForm((prev) => ({ ...prev, name: event.target.value }))} />
               </label>
               <label className="col-span-2 space-y-1 text-sm">
-                <span className="text-xs text-muted-foreground">
-                  {t(providerCallbackBaseURL ? "providerDialog.serverCallbackURL" : "providerDialog.callbackURL")}
-                </span>
+                <span className="text-xs text-muted-foreground">{t("providerDialog.callbackURL")}</span>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                  <Input value={callbackURL} disabled readOnly />
+                  <Input value={callbackURL} placeholder={t("providerDialog.callbackURLUnavailable")} disabled readOnly />
                   <CopyActionButton
                     type="button"
                     variant="ghost"
@@ -726,24 +725,6 @@ export function AdminLoginSettingsPage() {
                   />
                 </div>
               </label>
-              {callbackURL !== legacyCallbackURL ? (
-                <label className="col-span-2 space-y-1 text-sm">
-                  <span className="text-xs text-muted-foreground">{t("providerDialog.legacyWebCallbackURL")}</span>
-                  <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">
-                    <Input value={legacyCallbackURL} disabled readOnly />
-                    <CopyActionButton
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="text-muted-foreground shadow-none"
-                      value={legacyCallbackURL}
-                      messages={{ copied: t("toast.callbackCopied"), failed: commonT("errors.copyFailed") }}
-                      aria-label={t("providerDialog.copyCallbackURL")}
-                      title={t("providerDialog.copyCallbackURL")}
-                    />
-                  </div>
-                </label>
-              ) : null}
               <label className="col-span-2 space-y-1 text-sm">
                 <span className="text-xs text-muted-foreground">{t("providerDialog.logoURL")}</span>
                 <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2">

@@ -114,30 +114,6 @@ type UpsertIdentityProviderInput struct {
 	AvatarField         string
 }
 
-// CompleteProviderLoginInput 描述第三方登录回调的校验与审计上下文。
-type CompleteProviderLoginInput struct {
-	Slug         string
-	Code         string
-	State        string
-	RedirectURI  string
-	CodeVerifier string
-	Intent       string
-	RequestID    string
-	AuditContext requestmeta.SessionAuditContext
-}
-
-// CompleteProviderBindInput 描述将第三方身份绑定到当前用户所需的回调参数。
-type CompleteProviderBindInput struct {
-	UserID       uint
-	Slug         string
-	Code         string
-	State        string
-	RedirectURI  string
-	CodeVerifier string
-	RequestID    string
-	AuditContext requestmeta.SessionAuditContext
-}
-
 type resolveProviderUserInput struct {
 	Provider      domainuser.IdentityProvider
 	Subject       string
@@ -175,16 +151,6 @@ type githubEmailAddress struct {
 	Email    string `json:"email"`
 	Primary  bool   `json:"primary"`
 	Verified bool   `json:"verified"`
-}
-
-type providerOAuthState struct {
-	Provider      string `json:"provider"`
-	RedirectURI   string `json:"redirectURI"`
-	Next          string `json:"next"`
-	Intent        string `json:"intent"`
-	CodeChallenge string `json:"codeChallenge"`
-	Nonce         string `json:"nonce"`
-	ExpiresAt     int64  `json:"expiresAt"`
 }
 
 // GetLoginOptions returns the authentication methods and providers available to the client.
@@ -366,46 +332,49 @@ func (s *Service) ReorderIdentityProviders(ctx context.Context, publicIDs []stri
 	return s.repo.UpdateIdentityProviderSortOrders(ctx, normalizedIDs)
 }
 
-// CompleteProviderLogin exchanges a provider callback for an application session.
-func (s *Service) CompleteProviderLogin(ctx context.Context, input CompleteProviderLoginInput) (*LoginResult, error) {
-	if !s.cfg.Snapshot().ThirdPartyLoginEnabled {
-		return nil, ErrThirdPartyLoginDisabled
-	}
-	provider, err := s.repo.GetIdentityProviderBySlug(ctx, input.Slug)
-	if err != nil {
-		return nil, err
-	}
-	trimmedCode := strings.TrimSpace(input.Code)
-	if trimmedCode == "" {
-		return nil, ErrAuthorizationCodeRequired
-	}
-	verifiedState, err := s.verifyProviderState(input.Slug, input.RedirectURI, input.State)
-	if err != nil {
-		return nil, err
-	}
-	if verifiedState.Intent != normalizeProviderIntent(input.Intent) {
-		return nil, ErrOAuthIntentMismatch
-	}
-	if verifiedState.Intent == providerIntentLogin && !provider.LoginEnabled {
-		return nil, ErrProviderLoginDisabled
-	}
-	if verifiedState.Intent == providerIntentBind {
-		return nil, ErrProviderBindEndpointRequired
-	}
-	if verifiedState.Intent == providerIntentRegister {
-		if !provider.LoginEnabled || !provider.RegistrationEnabled {
-			return nil, ErrProviderRegistrationDisabled
-		}
-	}
-	if err = validateProviderCodeVerifier(input.CodeVerifier, verifiedState.CodeChallenge); err != nil {
-		return nil, err
-	}
+// providerProfileClaims 是用授权码从身份源取回并归一化后的用户资料。
+type providerProfileClaims struct {
+	Subject       string
+	Email         string
+	DisplayName   string
+	AvatarURL     string
+	EmailVerified bool
+	ProfileJSON   string
+}
 
-	userItem, subject, err := s.resolveProviderLoginCode(ctx, *provider, trimmedCode, input.RedirectURI, strings.TrimSpace(input.CodeVerifier))
+// fetchProviderProfileClaims 用授权码换取令牌并拉取用户信息，不读写本地用户。
+func (s *Service) fetchProviderProfileClaims(
+	ctx context.Context,
+	provider domainuser.IdentityProvider,
+	code string,
+	redirectURI string,
+	codeVerifier string,
+) (*providerProfileClaims, error) {
+	tokenResponse, err := s.exchangeProviderCode(ctx, provider, code, redirectURI, codeVerifier)
 	if err != nil {
 		return nil, err
 	}
-	return s.completeProviderLoginForUser(ctx, userItem, provider.Slug, subject, input.RequestID, input.AuditContext)
+	profile, err := s.fetchProviderUserInfo(ctx, provider, tokenResponse.AccessToken)
+	if err != nil {
+		return nil, err
+	}
+	profileJSON, _ := json.Marshal(profile)
+	subject := claimString(profile, provider.SubjectField)
+	if subject == "" {
+		return nil, ErrProviderSubjectMissing
+	}
+	email, err := normalizeProviderEmail(claimString(profile, provider.EmailField))
+	if err != nil {
+		return nil, err
+	}
+	return &providerProfileClaims{
+		Subject:       subject,
+		Email:         email,
+		DisplayName:   textutil.FirstNonEmpty(claimString(profile, provider.NameField), email, subject),
+		AvatarURL:     claimString(profile, provider.AvatarField),
+		EmailVerified: resolveProviderEmailVerified(profile, provider),
+		ProfileJSON:   string(profileJSON),
+	}, nil
 }
 
 func (s *Service) resolveProviderLoginCode(
@@ -415,39 +384,23 @@ func (s *Service) resolveProviderLoginCode(
 	redirectURI string,
 	codeVerifier string,
 ) (*domainuser.User, string, error) {
-	tokenResponse, err := s.exchangeProviderCode(ctx, provider, code, redirectURI, codeVerifier)
+	claims, err := s.fetchProviderProfileClaims(ctx, provider, code, redirectURI, codeVerifier)
 	if err != nil {
 		return nil, "", err
 	}
-	profile, err := s.fetchProviderUserInfo(ctx, provider, tokenResponse.AccessToken)
-	if err != nil {
-		return nil, "", err
-	}
-	profileJSON, _ := json.Marshal(profile)
-	subject := claimString(profile, provider.SubjectField)
-	if subject == "" {
-		return nil, "", ErrProviderSubjectMissing
-	}
-	email, err := normalizeProviderEmail(claimString(profile, provider.EmailField))
-	if err != nil {
-		return nil, "", err
-	}
-	displayName := textutil.FirstNonEmpty(claimString(profile, provider.NameField), email, subject)
-	avatarURL := claimString(profile, provider.AvatarField)
-	emailVerified := resolveProviderEmailVerified(profile, provider)
 	userItem, err := s.resolveProviderUser(ctx, resolveProviderUserInput{
 		Provider:      provider,
-		Subject:       subject,
-		Email:         email,
-		DisplayName:   displayName,
-		AvatarURL:     avatarURL,
-		EmailVerified: emailVerified,
-		ProfileJSON:   string(profileJSON),
+		Subject:       claims.Subject,
+		Email:         claims.Email,
+		DisplayName:   claims.DisplayName,
+		AvatarURL:     claims.AvatarURL,
+		EmailVerified: claims.EmailVerified,
+		ProfileJSON:   claims.ProfileJSON,
 	})
 	if err != nil {
 		return nil, "", err
 	}
-	return userItem, subject, nil
+	return userItem, claims.Subject, nil
 }
 
 func (s *Service) completeProviderLoginForUser(
@@ -512,63 +465,28 @@ func (s *Service) completeProviderLoginForUser(
 	return result, nil
 }
 
-// CompleteProviderBind links a provider identity to the authenticated user.
-func (s *Service) CompleteProviderBind(ctx context.Context, input CompleteProviderBindInput) (*UserIdentityView, error) {
-	if input.UserID == 0 {
-		return nil, ErrUnauthorized
-	}
-	if !s.cfg.Snapshot().ThirdPartyLoginEnabled {
-		return nil, ErrThirdPartyLoginDisabled
-	}
-	provider, err := s.repo.GetIdentityProviderBySlug(ctx, input.Slug)
-	if err != nil {
-		return nil, err
-	}
-	if !provider.LoginEnabled {
-		return nil, ErrProviderLoginDisabled
-	}
-	trimmedCode := strings.TrimSpace(input.Code)
-	if trimmedCode == "" {
-		return nil, ErrAuthorizationCodeRequired
-	}
-	verifiedState, err := s.verifyProviderState(input.Slug, input.RedirectURI, input.State)
-	if err != nil {
-		return nil, err
-	}
-	if verifiedState.Intent != providerIntentBind {
-		return nil, ErrOAuthIntentMismatch
-	}
-	if err = validateProviderCodeVerifier(input.CodeVerifier, verifiedState.CodeChallenge); err != nil {
-		return nil, err
-	}
-
-	tokenResponse, err := s.exchangeProviderCode(ctx, *provider, trimmedCode, input.RedirectURI, strings.TrimSpace(input.CodeVerifier))
-	if err != nil {
-		return nil, err
-	}
-	profile, err := s.fetchProviderUserInfo(ctx, *provider, tokenResponse.AccessToken)
-	if err != nil {
-		return nil, err
-	}
-	profileJSON, _ := json.Marshal(profile)
-	subject := claimString(profile, provider.SubjectField)
-	if subject == "" {
-		return nil, ErrProviderSubjectMissing
-	}
-	normalizedEmail, err := normalizeProviderEmail(claimString(profile, provider.EmailField))
-	if err != nil {
-		return nil, err
-	}
-	providerDisplayName := textutil.FirstNonEmpty(claimString(profile, provider.NameField), normalizedEmail, subject)
-	emailVerified := resolveProviderEmailVerified(profile, *provider)
+// bindProviderIdentity 把已取回的身份源资料绑到指定用户；同一主体重复绑定只刷新资料。
+func (s *Service) bindProviderIdentity(
+	ctx context.Context,
+	userID uint,
+	provider domainuser.IdentityProvider,
+	claims providerProfileClaims,
+	requestID string,
+	auditCtx requestmeta.SessionAuditContext,
+) (*UserIdentityView, error) {
+	subject := claims.Subject
+	normalizedEmail := claims.Email
+	profileJSON := claims.ProfileJSON
+	providerDisplayName := claims.DisplayName
+	emailVerified := claims.EmailVerified
 	now := time.Now()
 
 	existingIdentity, err := s.repo.GetUserIdentityByProviderSubject(ctx, provider.ID, subject)
 	if err == nil {
-		if existingIdentity.UserID != input.UserID {
+		if existingIdentity.UserID != userID {
 			return nil, ErrProviderIdentityConflict
 		}
-		if err = s.repo.UpdateUserIdentityLogin(ctx, existingIdentity.ID, string(profileJSON), providerDisplayName, normalizedEmail, emailVerified); err != nil {
+		if err = s.repo.UpdateUserIdentityLogin(ctx, existingIdentity.ID, profileJSON, providerDisplayName, normalizedEmail, emailVerified); err != nil {
 			return nil, err
 		}
 		return &UserIdentityView{
@@ -590,14 +508,14 @@ func (s *Service) CompleteProviderBind(ctx context.Context, input CompleteProvid
 	}
 	if normalizedEmail != "" {
 		existingUser, findErr := s.repo.GetByEmail(ctx, normalizedEmail)
-		if findErr == nil && existingUser.ID != input.UserID {
+		if findErr == nil && existingUser.ID != userID {
 			return nil, fmt.Errorf("provider email belongs to another account; sign in to that account or change its email before binding: %w", ErrProviderEmailConflict)
 		}
 		if findErr != nil && !errors.Is(findErr, repository.ErrNotFound) {
 			return nil, findErr
 		}
 	}
-	currentIdentities, err := s.repo.ListUserIdentitiesByUserID(ctx, input.UserID)
+	currentIdentities, err := s.repo.ListUserIdentitiesByUserID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -608,24 +526,24 @@ func (s *Service) CompleteProviderBind(ctx context.Context, input CompleteProvid
 	}
 
 	created, err := s.createProviderIdentity(ctx, providerIdentityInput{
-		UserID:              input.UserID,
-		Provider:            *provider,
+		UserID:              userID,
+		Provider:            provider,
 		Subject:             subject,
 		ProviderDisplayName: providerDisplayName,
 		Email:               normalizedEmail,
 		EmailVerified:       emailVerified,
-		ProfileJSON:         string(profileJSON),
+		ProfileJSON:         profileJSON,
 		LinkedAt:            now,
 	})
 	if err != nil {
 		return nil, err
 	}
-	normalizedAuditCtx := s.resolveSessionAuditContext(ctx, input.AuditContext)
+	normalizedAuditCtx := s.resolveSessionAuditContext(ctx, auditCtx)
 	s.RecordAuthEvent(
 		ctx,
 		repository.AuthEventInput{
-			UserID:    input.UserID,
-			RequestID: input.RequestID,
+			UserID:    userID,
+			RequestID: requestID,
 			EventType: "provider_bind",
 			Result:    "success",
 			ClientIP:  normalizedAuditCtx.ClientIP,
@@ -906,52 +824,6 @@ func buildProviderAuthURL(provider domainuser.IdentityProvider, authURL string, 
 	}
 	parsed.RawQuery = values.Encode()
 	return parsed.String(), nil
-}
-
-// BuildProviderAuthURL builds a validated provider authorization URL for the web flow.
-func (s *Service) BuildProviderAuthURL(ctx context.Context, slug string, redirectURI string, nextPath string, codeChallenge string, intent string) (string, error) {
-	if !s.cfg.Snapshot().ThirdPartyLoginEnabled {
-		return "", ErrThirdPartyLoginDisabled
-	}
-	if err := s.validateProviderRedirectURI(slug, redirectURI); err != nil {
-		return "", err
-	}
-	if err := validateProviderCodeChallenge(codeChallenge); err != nil {
-		return "", err
-	}
-	provider, err := s.repo.GetIdentityProviderBySlug(ctx, slug)
-	if err != nil {
-		return "", err
-	}
-	normalizedIntent := normalizeProviderIntent(intent)
-	if normalizedIntent == providerIntentLogin && !provider.LoginEnabled {
-		return "", ErrProviderLoginDisabled
-	}
-	if normalizedIntent == providerIntentBind && !provider.LoginEnabled {
-		return "", ErrProviderLoginDisabled
-	}
-	if normalizedIntent == providerIntentRegister {
-		if !provider.LoginEnabled || !provider.RegistrationEnabled {
-			return "", ErrProviderRegistrationDisabled
-		}
-	}
-	authURL, _, _, err := s.resolveProviderEndpoints(ctx, *provider)
-	if err != nil {
-		return "", err
-	}
-	state, err := s.signProviderState(providerOAuthState{
-		Provider:      slug,
-		RedirectURI:   redirectURI,
-		Next:          normalizeProviderNextPath(nextPath),
-		Intent:        normalizedIntent,
-		CodeChallenge: strings.TrimSpace(codeChallenge),
-		Nonce:         conv.NormalizePublicID(uuid.NewString()),
-		ExpiresAt:     time.Now().Add(10 * time.Minute).Unix(),
-	})
-	if err != nil {
-		return "", err
-	}
-	return buildProviderAuthURL(*provider, authURL, redirectURI, state, codeChallenge)
 }
 
 func (s *Service) exchangeProviderCode(ctx context.Context, provider domainuser.IdentityProvider, code string, redirectURI string, codeVerifier string) (*oauthTokenResponse, error) {
@@ -1372,45 +1244,6 @@ func (s *Service) createWithCredentialAndIdentityUsingAvailableUsername(ctx cont
 	return ErrUsernameTaken
 }
 
-func (s *Service) signProviderState(state providerOAuthState) (string, error) {
-	payload, err := json.Marshal(state)
-	if err != nil {
-		return "", err
-	}
-	encodedPayload := base64.RawURLEncoding.EncodeToString(payload)
-	signature := providerStateSignature(s.cfg.Snapshot().JWTSecret, encodedPayload)
-	return encodedPayload + "." + signature, nil
-}
-
-func (s *Service) verifyProviderState(slug string, redirectURI string, rawState string) (*providerOAuthState, error) {
-	parts := strings.Split(strings.TrimSpace(rawState), ".")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return nil, ErrOAuthStateInvalid
-	}
-	expected := providerStateSignature(s.cfg.Snapshot().JWTSecret, parts[0])
-	if !hmac.Equal([]byte(expected), []byte(parts[1])) {
-		return nil, ErrOAuthStateInvalid
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
-	if err != nil {
-		return nil, ErrOAuthStateInvalid
-	}
-	var state providerOAuthState
-	if err = json.Unmarshal(payload, &state); err != nil {
-		return nil, ErrOAuthStateInvalid
-	}
-	if state.Provider != slug || state.RedirectURI != redirectURI {
-		return nil, ErrOAuthStateMismatch
-	}
-	if time.Now().Unix() > state.ExpiresAt {
-		return nil, ErrOAuthStateExpired
-	}
-	if err = s.validateProviderRedirectURI(slug, redirectURI); err != nil {
-		return nil, err
-	}
-	return &state, nil
-}
-
 func providerStateSignature(secret string, encodedPayload string) string {
 	mac := hmac.New(sha256.New, []byte(strings.TrimSpace(secret)))
 	mac.Write([]byte(encodedPayload))
@@ -1427,17 +1260,6 @@ var providerPKCEPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43,128}$`)
 func validateProviderCodeChallenge(codeChallenge string) error {
 	if !providerPKCEPattern.MatchString(strings.TrimSpace(codeChallenge)) {
 		return ErrPKCEChallengeRequired
-	}
-	return nil
-}
-
-func validateProviderCodeVerifier(codeVerifier string, expectedChallenge string) error {
-	trimmedVerifier := strings.TrimSpace(codeVerifier)
-	if !providerPKCEPattern.MatchString(trimmedVerifier) {
-		return ErrPKCEVerifierRequired
-	}
-	if !hmac.Equal([]byte(providerCodeChallenge(trimmedVerifier)), []byte(strings.TrimSpace(expectedChallenge))) {
-		return ErrPKCEMismatch
 	}
 	return nil
 }

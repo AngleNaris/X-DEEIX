@@ -378,9 +378,23 @@
   },
   "content_moderation": {
     "blocked": "内容已被安全检查拦截。",
-    "invalid_config": "内容审核配置无效。",
-    "config_required": "启用内容审核时必须配置完整服务并至少选择一个审核类别。",
-    "probe_failed": "内容审核连接测试失败。",
-    "event_not_found": "未找到内容审核事件。"
+    "invalidConfig": "内容审核配置无效。",
+    "configRequired": "启用内容审核时必须配置完整服务并至少选择一个审核类别。",
+    "probeFailed": "内容审核连接测试失败。",
+    "eventNotFound": "未找到内容审核事件。"
+  },
+  "feature": {
+    "disabled": "此服务器未提供该功能。",
+    "byFeature": {
+      "multiUser": "此服务器只有一个账号，不提供账号与权限组管理。",
+      "registration": "此服务器不开放注册。",
+      "identityProviders": "此服务器不提供第三方登录。",
+      "accountSecurity": "此服务器不提供密码、邮箱、两步验证与会话管理。",
+      "announcements": "此服务器不提供公告。",
+      "billingGating": "此服务器不提供套餐、余额与支付。",
+      "usageMetering": "此服务器不提供用量统计。",
+      "contentModeration": "此服务器不提供内容审核。",
+      "sharing": "此服务器不提供公开分享。"
+    }
   }
 }

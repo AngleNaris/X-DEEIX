@@ -41,6 +41,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/settings"
 	appskill "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/skill"
 	appsystemevent "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/systemevent"
+	appuicomponent "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/uicomponent"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/user"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/usersettings"
 	domainagentgroup "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/agentgroup"
@@ -83,6 +84,8 @@ import (
 	settingsrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/settings"
 	skillrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/skill"
 	systemeventrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/systemevent"
+	uicomponentrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/uicomponent"
+	uicomponenthttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/uicomponent"
 	userrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/user"
 	usersettingsrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/usersettings"
 	platformruntime "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/runtime"
@@ -324,6 +327,7 @@ func NewAppWithOptions(opts Options) (*App, error) {
 	settingsRepo := settingsrepo.NewRepo(db)
 	settingsService := settings.NewService(settingsRepo, cfg.DataEncryptionKey)
 	settingsService.SetAuditWriter(auditService)
+	settingsService.SetRuntime(runtimeCfg)
 	runtimeService := appruntime.NewService(runtimeCfg, extractprobe.Prober{})
 	runtimeService.SetDockerRunner(platformruntime.NewDockerRunner())
 	settingsCache := cacheBackend.Settings()
@@ -505,8 +509,8 @@ func NewAppWithOptions(opts Options) (*App, error) {
 	userHandler := userhttp.NewHandler(userService)
 	userModule := userhttp.NewModule(userHandler)
 	mcpService := appmcp.NewServiceWithRuntime(runtimeCfg, mcpRepo, mcpClient)
-	mcpService.SetSystemEventWriter(systemEventService)
 	mcpService.SetBillingModeProvider(billingService)
+	mcpService.SetSystemEventWriter(systemEventService)
 	mcpHandler := mcphttp.NewHandler(mcpService)
 	mcpModule := mcphttp.NewModule(mcpHandler)
 	adminService := admin.NewService(userService, auditService)
@@ -552,6 +556,11 @@ func NewAppWithOptions(opts Options) (*App, error) {
 	conversationService.SetSkillResolver(skillService)
 	skillHandler := skillhttp.NewHandler(skillService)
 	skillModule := skillhttp.NewModule(skillHandler)
+	uiComponentService := appuicomponent.NewService(uicomponentrepo.NewRepo(db))
+	uiComponentService.SetFeatureEnabled(func() bool { return runtimeCfg.Snapshot().UIComponentsEnabled })
+	uiComponentService.SetAuditWriter(auditService)
+	conversationService.SetUIComponentResolver(uiComponentService)
+	uiComponentModule := uicomponenthttp.NewModule(uicomponenthttp.NewHandler(uiComponentService))
 	knowledgeBaseRepo := knowledgebaserepo.NewRepo(db)
 	knowledgeBaseService := appknowledgebase.NewService(knowledgeBaseRepo)
 	knowledgeBaseService.SetAuditWriter(auditService)
@@ -606,6 +615,7 @@ func NewAppWithOptions(opts Options) (*App, error) {
 		Announcement:      announcementModule,
 		PromptPreset:      promptPresetModule,
 		Skill:             skillModule,
+		UIComponent:       uiComponentModule,
 		KnowledgeBase:     knowledgeBaseModule,
 		Settings:          settingsModule,
 		UserSettings:      userSettingsModule,

@@ -431,6 +431,7 @@ export function useChatModelOptions({
   const [showModelInfo, setShowModelInfo] = React.useState(true);
   const [showLatency, setShowLatency] = React.useState(true);
   const [showTokenUsage, setShowTokenUsage] = React.useState(true);
+  const [showProcessTrace, setShowProcessTrace] = React.useState(true);
   const [showBillingCost, setShowBillingCost] = React.useState(false);
   const [billingDisplayCurrency, setBillingDisplayCurrency] = React.useState<BillingDisplayCurrency>("USD");
   const [billingDisplayUsdToCnyRate, setBillingDisplayUsdToCnyRate] = React.useState<number | null>(null);
@@ -529,6 +530,7 @@ export function useChatModelOptions({
         setShowModelInfo(settings["chat.show_model_info"] !== "false");
         setShowLatency(settings["chat.show_latency"] !== "false");
         setShowTokenUsage(settings["chat.show_token_usage"] !== "false");
+        setShowProcessTrace(settings["chat.show_process_trace"] !== "false");
         setShowBillingCost((billingConfig?.config.mode ?? "self") !== "self" && settings["chat.show_billing_cost"] !== "false");
         setBillingDisplayCurrency(normalizeBillingDisplayCurrency(billingConfig?.config.displayCurrency));
         setBillingDisplayUsdToCnyRate(billingConfig?.config.usdToCNYRate ?? null);
@@ -695,6 +697,7 @@ export function useChatModelOptions({
     showLatency,
     showTokenUsage,
     showBillingCost,
+    showProcessTrace,
     billingDisplayCurrency,
     billingDisplayUsdToCnyRate,
     modelOptionPolicy,

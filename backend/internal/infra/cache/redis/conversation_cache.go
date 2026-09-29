@@ -25,6 +25,7 @@ type ragCacheChunk struct {
 	FileName   string  `json:"file_name"`
 	FileID     string  `json:"file_id"`
 	ChunkIndex int     `json:"chunk_index"`
+	Modality   string  `json:"modality,omitempty"`
 	Score      float32 `json:"score"`
 }
 
@@ -722,6 +723,7 @@ func (c *conversationCache) GetRAGCache(ctx context.Context, key string) ([]doma
 			FileName:   c.FileName,
 			FileID:     c.FileID,
 			ChunkIndex: c.ChunkIndex,
+			Modality:   c.Modality,
 			Score:      c.Score,
 		})
 	}
@@ -740,6 +742,7 @@ func (c *conversationCache) SetRAGCache(ctx context.Context, key string, chunks 
 			FileName:   ch.FileName,
 			FileID:     ch.FileID,
 			ChunkIndex: ch.ChunkIndex,
+			Modality:   ch.Modality,
 			Score:      ch.Score,
 		})
 	}

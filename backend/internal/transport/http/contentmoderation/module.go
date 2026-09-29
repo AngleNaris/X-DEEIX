@@ -1,6 +1,10 @@
 package contentmoderation
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/gin-gonic/gin"
+
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
+)
 
 // Module registers content moderation admin routes.
 type Module struct {
@@ -13,11 +17,11 @@ func NewModule(handler *Handler) *Module {
 }
 
 // RegisterRoutes registers routes under the admin group.
-func (m *Module) RegisterRoutes(adminGroup *gin.RouterGroup) {
+func (m *Module) RegisterRoutes(adminGroup *gin.RouterGroup, gate middleware.FeatureGate) {
 	if m == nil || m.Handler == nil {
 		return
 	}
-	group := adminGroup.Group("/content-moderation")
+	group := adminGroup.Group("/content-moderation", gate.Require("contentModeration"))
 	group.GET("/config", m.Handler.GetConfig)
 	group.PUT("/config", m.Handler.UpdateConfig)
 	group.POST("/probe", m.Handler.Probe)

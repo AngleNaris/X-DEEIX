@@ -391,13 +391,13 @@ docker compose logs app
 
 ### Web、App 与桌面端 OAuth 回调（多端暂未发布）
 
-启用第三方授权桥前，请先把 `PUBLIC_API_BASE_URL` 配置为外部可访问的 API 地址。每个 OIDC/OAuth2 身份源都应登记后台身份源弹窗展示的服务器回调：
+第三方登录要求 `PUBLIC_API_BASE_URL` 为外部可访问的 API 地址。每个 OIDC/OAuth2 身份源只需登记后台身份源弹窗展示的这一个服务器回调：
 
 ```text
 <PUBLIC_API_BASE_URL>/api/v1/auth/providers/<provider-slug>/callback
 ```
 
-Web、App 与桌面端会自动复用当前实例的这个回调。外部身份源的授权码和 Client Secret 始终留在用户自己的服务器；公共客户端只会收到一个短时、单次使用并绑定 PKCE verifier 的 DEEIX 授权码。如果仍需使用账号身份绑定或兼容旧版 Web 客户端，请同时保留后台展示的旧版 Web 回调地址。
+Web、App 与桌面端的登录、注册和账号身份绑定都走这一个回调。外部身份源的授权码和 Client Secret 始终留在用户自己的服务器；公共客户端只会收到一个短时、单次使用并绑定 PKCE verifier 的 DEEIX 授权码。未配置 `PUBLIC_API_BASE_URL` 时第三方登录不可用，管理后台会给出提示。
 
 ## 功能指南
 

@@ -48,6 +48,15 @@ const (
 	DefaultMCPMaxSelectedToolsPerMessage = 32
 	// MaxMCPSelectedToolsPerMessage 是运行时配置允许的安全上限，防止一次请求暴露过多工具 schema。
 	MaxMCPSelectedToolsPerMessage = 128
+
+	// EmbeddingProtocolOpenAI 为 OpenAI 兼容的 /embeddings 文本协议。
+	EmbeddingProtocolOpenAI = "openai"
+	// EmbeddingProtocolGemini 为 Google Generative Language 的 batchEmbedContents 协议，支持图片输入。
+	EmbeddingProtocolGemini = "gemini"
+	// EmbeddingProtocolVoyage 为 Voyage AI 的 /multimodalembeddings 协议，支持图片输入。
+	EmbeddingProtocolVoyage = "voyage"
+	// EmbeddingProtocolJina 为 Jina AI 的 /embeddings 协议（对象数组输入），支持图片输入。
+	EmbeddingProtocolJina = "jina"
 )
 
 // DefaultModelOptionAllowedPathsJSON 返回用户可透传模型参数的默认白名单。
@@ -545,6 +554,7 @@ type Config struct {
 	ExtractLLMOCRPrompt               string // LLM OCR 提示词
 	EmbeddingEnabled                  bool   // 是否启用 Embedding 服务
 	EmbeddingHost                     string // Embedding HTTP 服务地址
+	EmbeddingProtocol                 string // Embedding 请求协议：openai / gemini / voyage / jina
 	EmbeddingKey                      string // Embedding HTTP 服务鉴权 Key，可选
 	EmbeddingTimeoutSeconds           int    // Embedding 请求超时（秒）
 	EmbeddingOutputDimensions         int    // 写库/检索统一输出维度
@@ -809,6 +819,7 @@ func Load() Config {
 		EmbeddingKey:                      "",
 		EmbeddingTimeoutSeconds:           60,
 		EmbeddingOutputDimensions:         1536,
+		EmbeddingProtocol:                 EmbeddingProtocolOpenAI,
 		EmbeddingNormalize:                true,
 		EmbedTriggerOnUpload:              true,
 		EmbedChunkSizeTokens:              1024,

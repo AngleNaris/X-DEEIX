@@ -20,11 +20,11 @@ type FileExtractResult struct {
 	OCRUsed      bool
 }
 
-func (s *Service) cloneOrTriggerEmbedding(_ context.Context, _ *model.FileObject, target *model.FileObject) {
+func (s *Service) cloneOrTriggerEmbedding(ctx context.Context, _ *model.FileObject, target *model.FileObject) {
 	if target == nil {
 		return
 	}
-	s.embeddingSvc.MaybeTrigger(*target)
+	s.embeddingSvc.MaybeTrigger(ctx, *target)
 }
 
 // ListFiles 分页查询用户文件。

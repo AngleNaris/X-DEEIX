@@ -1380,31 +1380,8 @@ func (r *Repo) UpdateMessageState(
 		Error)
 }
 
-func (r *Repo) UpdateUserMessageContent(
-	ctx context.Context,
-	messageID uint,
-	conversationID uint,
-	userID uint,
-	content string,
-) error {
-	if messageID == 0 || conversationID == 0 || userID == 0 {
-		return repository.ErrInvalidInput
-	}
-	result := r.db.WithContext(ctx).
-		Model(&models.Message{}).
-		Where("id = ? AND conversation_id = ? AND user_id = ? AND role = ?", messageID, conversationID, userID, "user").
-		Update("content", content)
-	if result.Error != nil {
-		return translateError(result.Error)
-	}
-	if result.RowsAffected == 0 {
-		return repository.ErrNotFound
-	}
-	return nil
-}
-
-// UpdateAssistantMessageContent 更新当前用户 assistant 消息正文并标记编辑时间。
-func (r *Repo) UpdateAssistantMessageContent(
+// UpdateMessageContent 更新当前用户 user/assistant 消息正文并标记编辑时间。
+func (r *Repo) UpdateMessageContent(
 	ctx context.Context,
 	userID uint,
 	publicID string,
@@ -1419,7 +1396,7 @@ func (r *Repo) UpdateAssistantMessageContent(
 	var item models.Message
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.
-			Where("user_id = ? AND public_id = ? AND role = ?", userID, normalizedPublicID, "assistant").
+			Where("user_id = ? AND public_id = ? AND role IN ?", userID, normalizedPublicID, []string{"user", "assistant"}).
 			First(&item).Error; err != nil {
 			return err
 		}
@@ -1447,6 +1424,41 @@ func (r *Repo) UpdateAssistantMessageContent(
 	item = single[0]
 	result := toMessageDomain(item)
 	return &result, nil
+}
+
+// UpdateUserMessageContent 按 messageID 更新当前用户 user 消息正文（保留旧编辑路径）。
+func (r *Repo) UpdateUserMessageContent(
+	ctx context.Context,
+	messageID uint,
+	conversationID uint,
+	userID uint,
+	content string,
+) error {
+	if messageID == 0 || conversationID == 0 || userID == 0 {
+		return repository.ErrInvalidInput
+	}
+	result := r.db.WithContext(ctx).
+		Model(&models.Message{}).
+		Where("id = ? AND conversation_id = ? AND user_id = ? AND role = ?", messageID, conversationID, userID, "user").
+		Update("content", content)
+	if result.Error != nil {
+		return translateError(result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return repository.ErrNotFound
+	}
+	return nil
+}
+
+// UpdateAssistantMessageContent 兼容旧命名，语义同 UpdateMessageContent（user/assistant 均可更新）。
+func (r *Repo) UpdateAssistantMessageContent(
+	ctx context.Context,
+	userID uint,
+	publicID string,
+	content string,
+	editedAt time.Time,
+) (*domainconversation.Message, error) {
+	return r.UpdateMessageContent(ctx, userID, publicID, content, editedAt)
 }
 
 // CancelPendingGenerationMessagesByRunID 将用户显式取消的 pending 回合更新为稳定终态。
@@ -3812,6 +3824,7 @@ type fileChunkSearchRow struct {
 	ChunkIndex int       `gorm:"column:chunk_index"`
 	PageNum    int       `gorm:"column:page_num"`
 	CharOffset int       `gorm:"column:char_offset"`
+	Modality   string    `gorm:"column:modality"`
 	Content    string    `gorm:"column:content"`
 	TokenCount int       `gorm:"column:token_count"`
 	CreatedAt  time.Time `gorm:"column:created_at"`
@@ -3899,7 +3912,7 @@ func (r *Repo) searchSQLiteFileChunks(ctx context.Context, userID uint, fileObjI
 	var rows []fileChunkSearchRow
 	query := fmt.Sprintf(`
 		SELECT chunks.id, chunks.file_obj_id, chunks.user_id, chunks.chunk_index, chunks.page_num,
-		       chunks.char_offset, chunks.content, chunks.token_count, chunks.created_at,
+		       chunks.char_offset, chunks.modality, chunks.content, chunks.token_count, chunks.created_at,
 		       (1.0 - vectors.distance) AS similarity
 		FROM %s AS vectors
 		JOIN "file_chunks" AS chunks
@@ -3946,6 +3959,7 @@ func (r *Repo) searchSQLiteFileChunks(ctx context.Context, userID uint, fileObjI
 				ChunkIndex: row.ChunkIndex,
 				PageNum:    row.PageNum,
 				CharOffset: row.CharOffset,
+				Modality:   row.Modality,
 				Content:    row.Content,
 				TokenCount: row.TokenCount,
 				CreatedAt:  row.CreatedAt,
@@ -3998,7 +4012,7 @@ func (r *Repo) SearchFileChunks(ctx context.Context, userID uint, fileObjIDs []u
 			LIMIT ?
 		)
 		SELECT chunks.id, chunks.file_obj_id, chunks.user_id, chunks.chunk_index, chunks.page_num,
-		       chunks.char_offset, chunks.content, chunks.token_count, chunks.created_at,
+		       chunks.char_offset, chunks.modality, chunks.content, chunks.token_count, chunks.created_at,
 		       (1 - (%s <=> ?::vector(%d))) AS similarity
 		FROM file_chunks AS chunks
 		JOIN vector_candidates AS candidates ON candidates.id = chunks.id
@@ -4040,6 +4054,7 @@ func (r *Repo) SearchFileChunks(ctx context.Context, userID uint, fileObjIDs []u
 				ChunkIndex: row.ChunkIndex,
 				PageNum:    row.PageNum,
 				CharOffset: row.CharOffset,
+				Modality:   row.Modality,
 				Content:    row.Content,
 				TokenCount: row.TokenCount,
 				CreatedAt:  row.CreatedAt,
@@ -4068,7 +4083,7 @@ func (r *Repo) BM25SearchFileChunks(ctx context.Context, userID uint, fileObjIDs
 		return nil, nil
 	}
 	rawQuery := `
-		SELECT id, file_obj_id, user_id, chunk_index, page_num, char_offset, content, token_count, created_at,
+		SELECT id, file_obj_id, user_id, chunk_index, page_num, char_offset, modality, content, token_count, created_at,
 		       ts_rank(to_tsvector('simple', content), to_tsquery('simple', ?)) AS similarity
 		FROM file_chunks
 		WHERE file_obj_id IN ?
@@ -4109,6 +4124,7 @@ func (r *Repo) BM25SearchFileChunks(ctx context.Context, userID uint, fileObjIDs
 				ChunkIndex: row.ChunkIndex,
 				PageNum:    row.PageNum,
 				CharOffset: row.CharOffset,
+				Modality:   row.Modality,
 				Content:    row.Content,
 				TokenCount: row.TokenCount,
 				CreatedAt:  row.CreatedAt,
@@ -4157,6 +4173,7 @@ func (r *Repo) keywordSearchFileChunks(ctx context.Context, userID uint, fileObj
 				ChunkIndex: row.ChunkIndex,
 				PageNum:    row.PageNum,
 				CharOffset: row.CharOffset,
+				Modality:   row.Modality,
 				Content:    row.Content,
 				TokenCount: row.TokenCount,
 				CreatedAt:  row.CreatedAt,
@@ -4807,6 +4824,7 @@ type messageKnowledgeSourceRecord struct {
 	ChunkIndex int     `json:"chunk_index"`
 	Score      float32 `json:"score"`
 	Preview    string  `json:"preview"`
+	Modality   string  `json:"modality,omitempty"`
 }
 
 func marshalMessageKnowledgeSources(items []domainconversation.MessageKnowledgeSource) string {
@@ -4817,7 +4835,7 @@ func marshalMessageKnowledgeSources(items []domainconversation.MessageKnowledgeS
 	for _, item := range items {
 		records = append(records, messageKnowledgeSourceRecord{
 			FileName: item.FileName, FileID: item.FileID, ChunkIndex: item.ChunkIndex,
-			Score: item.Score, Preview: item.Preview,
+			Score: item.Score, Preview: item.Preview, Modality: item.Modality,
 		})
 	}
 	raw, err := json.Marshal(records)
@@ -4839,7 +4857,7 @@ func parseMessageKnowledgeSources(raw string) []domainconversation.MessageKnowle
 	for _, record := range records {
 		items = append(items, domainconversation.MessageKnowledgeSource{
 			FileName: record.FileName, FileID: record.FileID, ChunkIndex: record.ChunkIndex,
-			Score: record.Score, Preview: record.Preview,
+			Score: record.Score, Preview: record.Preview, Modality: record.Modality,
 		})
 	}
 	return items
@@ -5279,6 +5297,7 @@ func toFileChunkModel(item *domainconversation.FileChunk) models.FileChunk {
 		ChunkIndex:         item.ChunkIndex,
 		PageNum:            item.PageNum,
 		CharOffset:         item.CharOffset,
+		Modality:           item.Modality,
 		Content:            item.Content,
 		TokenCount:         item.TokenCount,
 		EmbeddingSignature: item.EmbeddingSignature,

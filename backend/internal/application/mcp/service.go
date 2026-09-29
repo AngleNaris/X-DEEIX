@@ -8,12 +8,12 @@ import (
 	"net/url"
 	"strings"
 
-	systemeventapp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/systemevent"
 	domainmcp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/mcp"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/mcpauth"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/secretbox"
 	portmcp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/mcp"
+	systemeventapp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/systemevent"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
@@ -46,6 +46,11 @@ type Service struct {
 	billingModeProvider billingModeProvider
 }
 
+// systemEventWriter 写入系统事件（MCP 工具同步审计）。
+type systemEventWriter interface {
+	Write(ctx context.Context, input systemeventapp.WriteInput)
+}
+
 // toolLister 列出远端 MCP 服务暴露的工具。
 type toolLister interface {
 	ListTools(ctx context.Context, cfg portmcp.CallConfig) ([]portmcp.Tool, error)
@@ -59,10 +64,6 @@ type billingModeProvider interface {
 type ReorderServerInput struct {
 	ServerID uint
 	ToolIDs  []uint
-}
-
-type systemEventWriter interface {
-	Write(ctx context.Context, input systemeventapp.WriteInput)
 }
 
 type ServerInput struct {
@@ -98,14 +99,14 @@ func NewServiceWithRuntime(cfg *config.Runtime, repo repository.MCPRepository, c
 	return &Service{cfg: cfg, repo: repo, client: client}
 }
 
-// SetSystemEventWriter 注入系统事件写入器。
-func (s *Service) SetSystemEventWriter(writer systemEventWriter) {
-	s.systemEventWriter = writer
-}
-
 // SetBillingModeProvider 注入计费模式查询器。
 func (s *Service) SetBillingModeProvider(provider billingModeProvider) {
 	s.billingModeProvider = provider
+}
+
+// SetSystemEventWriter 注入系统事件写入器。
+func (s *Service) SetSystemEventWriter(writer systemEventWriter) {
+	s.systemEventWriter = writer
 }
 
 func (s *Service) ListServers(ctx context.Context) ([]domainmcp.Server, error) {

@@ -6,16 +6,12 @@ import { useTranslations } from "next-intl";
 import { Link2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SpinnerLabel } from "@/components/ui/spinner";
-import {
-  providerAuthBridgeStorageKey,
-  providerPKCEStorageKey,
-  TWO_FACTOR_CHALLENGE_STORAGE_KEY,
-  TWO_FACTOR_METHODS_STORAGE_KEY,
-} from "@/features/auth/model/login-page";
+import { TWO_FACTOR_CHALLENGE_STORAGE_KEY, TWO_FACTOR_METHODS_STORAGE_KEY } from "@/features/auth/model/login-page";
 import { useLocalizedErrorMessage } from "@/i18n/use-localized-error";
-import { completeProviderBind, completeProviderLogin, exchangeProviderAuthBridgeGrant } from "@/shared/api/auth";
+import { exchangeProviderAuthBridgeGrant, exchangeProviderBindBridgeGrant } from "@/shared/api/auth";
 import { ApiError } from "@/shared/api/http-client";
-import { DEFAULT_AUTH_NEXT_PATH, normalizeAuthNextPath } from "@/shared/auth/local-path";
+import { normalizeAuthNextPath } from "@/shared/auth/local-path";
+import { clearProviderBridgeRequest, readProviderBridgeRequest } from "@/shared/auth/provider-bridge";
 import { AppLogo } from "@/shared/components/app-logo";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import { resolveOAuthClientId } from "@/shared/platform/desktop-oauth";
@@ -68,26 +64,40 @@ export function AuthCallbackPage() {
     const provider = params.get("provider") ?? "";
     const grant = params.get("grant") ?? "";
     if (provider && grant) {
-      const stored = readProviderAuthBridgeRequest(provider);
-      window.sessionStorage.removeItem(providerAuthBridgeStorageKey(provider));
+      const stored = readProviderBridgeRequest(provider);
+      clearProviderBridgeRequest(provider);
       if (!stored || !constantTimeStringEqual(params.get("state") ?? "", stored.state)) {
         setError(t("expiredSession"));
         return;
       }
-      void exchangeProviderAuthBridgeGrant(provider, {
-        clientID: resolveOAuthClientId(),
-        grant,
-        codeVerifier: stored.verifier,
-      })
+      const exchangeInput = { clientID: resolveOAuthClientId(), grant, codeVerifier: stored.verifier };
+      const nextPath = normalizeAuthNextPath(stored.next);
+      if (stored.intent === "bind") {
+        void resolveAccessToken()
+          .then((accessToken) => {
+            if (!accessToken) {
+              throw new Error(t("bindSessionExpired"));
+            }
+            return exchangeProviderBindBridgeGrant(accessToken, provider, exchangeInput);
+          })
+          .then(() => {
+            router.replace(nextPath);
+          })
+          .catch((caught) => {
+            setError(resolveErrorMessage(caught, t("bindFailed")));
+          });
+        return;
+      }
+      void exchangeProviderAuthBridgeGrant(provider, exchangeInput)
         .then((result) => {
           if (result.twoFactorRequired) {
             window.sessionStorage.setItem(TWO_FACTOR_CHALLENGE_STORAGE_KEY, result.twoFactorChallengeToken ?? "");
             window.sessionStorage.setItem(TWO_FACTOR_METHODS_STORAGE_KEY, JSON.stringify(result.verificationMethods ?? ["two_factor"]));
-            router.replace(`/login?next=${encodeURIComponent(stored.next)}`);
+            router.replace(`/login?next=${encodeURIComponent(nextPath)}`);
             return;
           }
           void completeNativeSignIn(result);
-          router.replace(stored.next);
+          router.replace(nextPath);
         })
         .catch((caught) => {
           if (isProviderEmailConflictError(caught)) {
@@ -102,62 +112,7 @@ export function AuthCallbackPage() {
         });
       return;
     }
-    const code = params.get("code") ?? "";
-    const state = params.get("state") ?? "";
-    const parsedState = parseProviderState(state);
-    const intent = parsedState.intent;
-    const nextPath = parsedState.next;
-    if (!provider || !code || !state) {
-      setError(t("missingParams"));
-      return;
-    }
-    const codeVerifier = window.sessionStorage.getItem(providerPKCEStorageKey(provider)) ?? "";
-    window.sessionStorage.removeItem(providerPKCEStorageKey(provider));
-    if (!codeVerifier) {
-      setError(t("expiredSession"));
-      return;
-    }
-
-    const redirectURI = `${window.location.origin}${window.location.pathname}?provider=${encodeURIComponent(provider)}`;
-    if (intent === "bind") {
-      void resolveAccessToken()
-        .then((accessToken) => {
-          if (!accessToken) {
-            throw new Error(t("bindSessionExpired"));
-          }
-          return completeProviderBind(accessToken, provider, code, state, redirectURI, codeVerifier);
-        })
-        .then(() => {
-          router.replace(nextPath);
-        })
-        .catch((caught) => {
-          setError(resolveErrorMessage(caught, t("bindFailed")));
-        });
-      return;
-    }
-
-    void completeProviderLogin(provider, code, state, redirectURI, codeVerifier, intent)
-      .then((result) => {
-        if (result.twoFactorRequired) {
-          window.sessionStorage.setItem(TWO_FACTOR_CHALLENGE_STORAGE_KEY, result.twoFactorChallengeToken ?? "");
-          window.sessionStorage.setItem(TWO_FACTOR_METHODS_STORAGE_KEY, JSON.stringify(result.verificationMethods ?? ["two_factor"]));
-          router.replace(`/login?next=${encodeURIComponent(nextPath)}`);
-          return;
-        }
-        void completeNativeSignIn(result);
-        router.replace(nextPath);
-      })
-      .catch((caught) => {
-        if (isProviderEmailConflictError(caught)) {
-          const details = caught.details as ProviderEmailConflictDetails | undefined;
-          setEmailConflict({
-            providerSlug: details?.providerSlug?.trim() || undefined,
-            email: details?.email?.trim() || undefined,
-          });
-          return;
-        }
-        setError(resolveErrorMessage(caught, t("loginFailed")));
-      });
+    setError(t("missingParams"));
   }, [resolveErrorMessage, router, t]);
 
   const conflictProviderLabel = React.useMemo(() => {
@@ -236,23 +191,6 @@ export function AuthCallbackPage() {
   );
 }
 
-function readProviderAuthBridgeRequest(slug: string): { verifier: string; state: string; intent: "login" | "register"; next: string } | null {
-  try {
-    const raw = window.sessionStorage.getItem(providerAuthBridgeStorageKey(slug));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { verifier?: string; state?: string; intent?: string; next?: string };
-    if (!parsed.verifier || !parsed.state) return null;
-    return {
-      verifier: parsed.verifier,
-      state: parsed.state,
-      intent: parsed.intent === "register" ? "register" : "login",
-      next: normalizeAuthNextPath(parsed.next),
-    };
-  } catch {
-    return null;
-  }
-}
-
 function constantTimeStringEqual(left: string, right: string): boolean {
   if (left.length !== right.length) return false;
   let difference = 0;
@@ -268,20 +206,4 @@ function isProviderEmailConflictError(error: unknown): boolean {
   }
   const details = error.details as ProviderEmailConflictDetails | undefined;
   return details?.action === PROVIDER_EMAIL_CONFLICT_ACTION_SIGN_IN_THEN_BIND;
-}
-
-function parseProviderState(raw: string): { next: string; intent: "login" | "register" | "bind" } {
-  try {
-    const [encodedPayload] = raw.split(".");
-    if (!encodedPayload) return { next: DEFAULT_AUTH_NEXT_PATH, intent: "login" };
-    const padded = encodedPayload.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(encodedPayload.length / 4) * 4, "=");
-    const parsed = JSON.parse(atob(padded)) as { next?: string; intent?: string };
-    const intent = parsed.intent ?? "";
-    return {
-      next: normalizeAuthNextPath(parsed.next),
-      intent: intent === "register" ? "register" : intent === "bind" ? "bind" : "login",
-    };
-  } catch {
-    return { next: DEFAULT_AUTH_NEXT_PATH, intent: "login" };
-  }
 }

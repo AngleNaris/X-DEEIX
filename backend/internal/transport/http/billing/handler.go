@@ -230,7 +230,10 @@ func (h *Handler) PatchBillingConfig(c *gin.Context) {
 		})
 	}
 	if _, err := h.settings.BatchUpdate(c.Request.Context(), patches); err != nil {
-		if errors.Is(err, appsettings.ErrInvalidSetting) {
+		var disabled *appsettings.FeatureDisabledError
+		if errors.As(err, &disabled) {
+			middleware.WriteFeatureDisabled(c, disabled.Feature, disabled.Keys...)
+		} else if errors.Is(err, appsettings.ErrInvalidSetting) {
 			writeSettingsValidationError(c, err)
 		} else {
 			response.InternalError(c)

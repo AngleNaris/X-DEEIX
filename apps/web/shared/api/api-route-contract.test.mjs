@@ -79,7 +79,7 @@ const contracts = [
     frontend: "apps/web/shared/api/file.ts",
     frontendNeedle: "/api/v1/shared-files/",
     backend: "backend/internal/transport/http/conversation/router.go",
-    backendNeedle: 'public.GET("/shared-files/:share_id"',
+    backendNeedle: 'sharing.GET("/shared-files/:share_id"',
   },
 ];
 

@@ -18,6 +18,7 @@ export type ChatContextPolicy = {
 
 export type FeaturePolicy = {
   knowledgeBaseEnabled: boolean;
+  processTraceEnabled: boolean;
 };
 
 export async function getModelOptionPolicy(accessToken: string): Promise<ModelOptionPolicy> {

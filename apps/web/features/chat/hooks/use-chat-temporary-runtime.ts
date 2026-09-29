@@ -11,7 +11,7 @@ import {
   upsertLiveUpstreamThinkTrace,
 } from "@/features/chat/model/upstream-think-store";
 import type { PendingAttachment } from "@/features/chat/types/chat-runtime";
-import type { ChatAreaMessage, MessageAttachment } from "@/features/chat/types/messages";
+import type { ChatAreaMessage, MessageAttachment, UserMessageEditMode } from "@/features/chat/types/messages";
 import {
   resolveErrorDetails,
   resolveErrorMessage,
@@ -594,11 +594,25 @@ export function useChatTemporaryRuntime({
     });
   }, [resolveUserTurn, submitTurn, t]);
 
-  const editUserMessage = React.useCallback(async (message: ChatAreaMessage, content: string) => {
+  const editUserMessage = React.useCallback(async (message: ChatAreaMessage, content: string, mode: UserMessageEditMode) => {
     const turn = resolveUserTurn(message);
     if (!turn) {
       toast.error(t("failed"));
       return false;
+    }
+    if (mode === "save") {
+      const nextContent = content.trim();
+      if (!nextContent || sendingRef.current) {
+        return false;
+      }
+      updateMessage(turn.message.id, (current) => ({ ...current, content: nextContent }));
+      const historyEntry = historyRef.current[turn.message.historyOffset];
+      if (historyEntry?.role === "user") {
+        const nextHistory = historyRef.current.slice();
+        nextHistory[turn.message.historyOffset] = { ...historyEntry, content: nextContent };
+        historyRef.current = nextHistory;
+      }
+      return true;
     }
     return submitTurn({
       content,
@@ -607,7 +621,7 @@ export function useChatTemporaryRuntime({
       replaceFromIndex: turn.index,
       consumeComposer: false,
     });
-  }, [resolveUserTurn, submitTurn, t]);
+  }, [resolveUserTurn, submitTurn, t, updateMessage]);
 
   const editAssistantMessage = React.useCallback(async (message: ChatAreaMessage, content: string) => {
     const nextContent = content.trim();

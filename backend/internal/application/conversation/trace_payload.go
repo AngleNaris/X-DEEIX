@@ -80,6 +80,7 @@ type traceCitation struct {
 	ChunkIndex int     `json:"chunk_index,omitempty"`
 	Score      float32 `json:"score,omitempty"`
 	Preview    string  `json:"preview,omitempty"`
+	Modality   string  `json:"modality,omitempty"`
 }
 
 type traceToolCall struct {

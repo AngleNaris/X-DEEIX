@@ -519,46 +519,92 @@ func (h *Handler) DeleteCurrentUserIdentity(c *gin.Context) {
 	response.Success(c, DeleteUserIdentityResponse{Deleted: true})
 }
 
-func (h *Handler) CompleteProviderBind(c *gin.Context) {
+// StartProviderBindBridge godoc
+// @Summary 创建第三方身份绑定授权桥事务
+// @Description 为当前登录用户创建 PKCE 保护的绑定事务；外部身份源仅回调当前 DEEIX 实例，绑定在兑换时才生效
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param slug path string true "身份源 slug"
+// @Param body body ProviderBindBridgeStartRequest true "授权桥参数"
+// @Success 200 {object} ProviderAuthBridgeStartResponseDoc
+// @Failure 400 {object} ErrorDoc
+// @Failure 401 {object} ErrorDoc
+// @Router /me/identities/providers/{slug}/authorize [post]
+func (h *Handler) StartProviderBindBridge(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	userID := middleware.MustUserID(c)
 	if userID == 0 {
 		response.ErrorFrom(c, http.StatusUnauthorized, errUnauthorized)
 		return
 	}
-	var req CompleteProviderBindRequest
+	var req ProviderBindBridgeStartRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.InvalidRequestBody(c, err)
 		return
 	}
-	identity, err := h.service.CompleteProviderBind(
+	result, err := h.service.StartProviderAuthBridge(c.Request.Context(), c.Param("slug"), appauth.ProviderAuthBridgeStartInput{
+		ClientID:      req.ClientID,
+		RedirectURI:   req.RedirectURI,
+		CodeChallenge: req.CodeChallenge,
+		ClientState:   req.ClientState,
+		Intent:        "bind",
+		Next:          req.Next,
+		UserID:        userID,
+	})
+	if err != nil {
+		response.ErrorFrom(c, http.StatusBadRequest, err)
+		return
+	}
+	response.Success(c, ProviderAuthBridgeStartResponse{
+		AuthorizationURL: result.AuthorizationURL,
+		ExpiresAt:        result.ExpiresAt,
+	})
+}
+
+// ExchangeProviderBindBridgeGrant godoc
+// @Summary 兑换第三方身份绑定一次性授权码
+// @Description 使用客户端 PKCE verifier 兑换绑定授权码，将身份绑到当前登录用户
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Security BearerAuth
+// @Param slug path string true "身份源 slug"
+// @Param body body ProviderAuthBridgeExchangeRequest true "授权码兑换参数"
+// @Success 200 {object} UserIdentityResponseDoc
+// @Failure 400 {object} ErrorDoc
+// @Failure 401 {object} ErrorDoc
+// @Router /me/identities/providers/{slug}/exchange [post]
+func (h *Handler) ExchangeProviderBindBridgeGrant(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	userID := middleware.MustUserID(c)
+	if userID == 0 {
+		response.ErrorFrom(c, http.StatusUnauthorized, errUnauthorized)
+		return
+	}
+	var req ProviderAuthBridgeExchangeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.InvalidRequestBody(c, err)
+		return
+	}
+	identity, err := h.service.ExchangeProviderAuthBridgeBindGrant(
 		c.Request.Context(),
-		appauth.CompleteProviderBindInput{
-			UserID:       userID,
-			Slug:         c.Param("slug"),
-			Code:         req.Code,
-			State:        req.State,
-			RedirectURI:  req.RedirectURI,
+		userID,
+		c.Param("slug"),
+		appauth.ProviderAuthBridgeExchangeInput{
+			ClientID:     req.ClientID,
+			Grant:        req.Grant,
 			CodeVerifier: req.CodeVerifier,
-			RequestID:    middleware.MustRequestID(c),
-			AuditContext: middleware.ResolveSessionAuditContext(c),
 		},
+		middleware.MustRequestID(c),
+		middleware.ResolveSessionAuditContext(c),
 	)
 	if err != nil {
 		response.ErrorFrom(c, http.StatusBadRequest, err)
 		return
 	}
 	response.Success(c, UserIdentityResponseData{Identity: toUserIdentityResponse(*identity)})
-}
-
-func (h *Handler) StartProviderLogin(c *gin.Context) {
-	slug := c.Param("slug")
-	callback := c.Query("redirect_uri")
-	target, err := h.service.BuildProviderAuthURL(c.Request.Context(), slug, callback, c.Query("next"), c.Query("code_challenge"), c.Query("intent"))
-	if err != nil {
-		response.ErrorFrom(c, http.StatusBadRequest, err)
-		return
-	}
-	c.Redirect(http.StatusFound, target)
 }
 
 // StartProviderAuthBridge godoc
@@ -645,50 +691,6 @@ func (h *Handler) ExchangeProviderAuthBridgeGrant(c *gin.Context) {
 		},
 		middleware.MustRequestID(c),
 		middleware.ResolveSessionAuditContext(c),
-	)
-	if err != nil {
-		var emailConflictErr *appauth.ProviderEmailConflictError
-		if errors.As(err, &emailConflictErr) {
-			response.ErrorWithDetails(
-				c,
-				http.StatusConflict,
-				"auth.provider_email_conflict",
-				gin.H{
-					"providerSlug": emailConflictErr.ProviderSlug,
-					"email":        emailConflictErr.Email,
-					"action":       emailConflictErr.Action,
-				},
-			)
-			return
-		}
-		if errors.Is(err, appauth.ErrAccountLocked) {
-			writeAccountLockedResponse(c, err)
-			return
-		}
-		response.ErrorFrom(c, http.StatusBadRequest, err)
-		return
-	}
-	h.respondWithSession(c, result)
-}
-
-func (h *Handler) CompleteProviderLogin(c *gin.Context) {
-	var req CompleteProviderLoginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.InvalidRequestBody(c, err)
-		return
-	}
-	result, err := h.service.CompleteProviderLogin(
-		c.Request.Context(),
-		appauth.CompleteProviderLoginInput{
-			Slug:         c.Param("slug"),
-			Code:         req.Code,
-			State:        req.State,
-			RedirectURI:  req.RedirectURI,
-			CodeVerifier: req.CodeVerifier,
-			Intent:       req.Intent,
-			RequestID:    middleware.MustRequestID(c),
-			AuditContext: middleware.ResolveSessionAuditContext(c),
-		},
 	)
 	if err != nil {
 		var emailConflictErr *appauth.ProviderEmailConflictError

@@ -1354,7 +1354,12 @@ func formatRAGFileContext(chunks []domainconversation.RAGChunk) []string {
 		if chunkIndex <= 0 {
 			chunkIndex = index + 1
 		}
-		items = append(items, `<doc name="`+xmlEscapeAttr(name)+`" i="`+xmlEscapeAttr(fmt.Sprintf("%d", chunkIndex))+`">`+xmlEscapeText(text)+`</doc>`)
+		attrs := `name="` + xmlEscapeAttr(name) + `" i="` + xmlEscapeAttr(fmt.Sprintf("%d", chunkIndex)) + `"`
+		if chunk.Modality == domainconversation.FileChunkModalityImage {
+			// 图片分片的文本来自 OCR；原图已作为附件随消息发送。
+			attrs += ` kind="image"`
+		}
+		items = append(items, `<doc `+attrs+`>`+xmlEscapeText(text)+`</doc>`)
 	}
 	return items
 }
@@ -1582,7 +1587,7 @@ func (s *Service) selectRelevantUserMemories(ctx context.Context, userID uint, q
 	}
 	searchCtx, cancel := context.WithTimeout(ctx, userMemoryRecallDeadline)
 	defer cancel()
-	embeddings, embeddingSignature, err := s.embeddingSvc.EmbedTextsWithSignature(searchCtx, []string{query})
+	embeddings, embeddingSignature, err := s.embeddingSvc.EmbedQueriesWithSignature(searchCtx, []string{query})
 	if err != nil || len(embeddings) == 0 {
 		return fallback
 	}

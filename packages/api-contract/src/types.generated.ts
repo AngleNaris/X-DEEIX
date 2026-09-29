@@ -11,6 +11,18 @@
  * ---------------------------------------------------------------
  */
 
+export interface ActiveMessageGenerationEventResponse {
+  conversationPublicID?: string;
+  runID?: string;
+  runs?: ActiveMessageGenerationResponse[];
+  type: string;
+}
+
+export interface ActiveMessageGenerationResponse {
+  conversationPublicID: string;
+  runID: string;
+}
+
 export interface ActiveSessionListResponse {
   results: ActiveSessionResponse[];
   total: number;
@@ -688,6 +700,36 @@ export interface BrandingResponseDoc {
   errorMsg: string;
 }
 
+export interface Capabilities {
+  /** AccountSecurity 密码、邮箱、两步验证、会话、注销账号。 */
+  accountSecurity: boolean;
+  /** Announcements 系统公告。 */
+  announcements: boolean;
+  /** BillingGating 计费规则可以拒绝请求：套餐、余额、兑换码、支付。 */
+  billingGating: boolean;
+  /** ContentModeration 内容审核。 */
+  contentModeration: boolean;
+  /** IdentityProviders 第三方登录与身份绑定。 */
+  identityProviders: boolean;
+  /** MultiUser 存在多个账号：账号管理、权限组。 */
+  multiUser: boolean;
+  /** Registration 可自行注册账号。 */
+  registration: boolean;
+  /** Sharing 对话公开分享链接；只监听回环的服务器没有可分享的对象。 */
+  sharing: boolean;
+  /** UsageMetering 记录用量与费用。 */
+  usageMetering: boolean;
+}
+
+export interface CapabilitiesResponse {
+  features: Capabilities;
+}
+
+export interface CapabilitiesResponseDoc {
+  data: CapabilitiesResponse;
+  errorMsg: string;
+}
+
 export interface ChangeAgentGroupSupervisorRequest {
   /** @maxLength 32 */
   memberPublicID: string;
@@ -729,24 +771,6 @@ export interface CheckoutResponseDoc {
 
 export interface CircuitResetResponse {
   reset: boolean;
-}
-
-export interface CleanupConversationRunsRequest {
-  /**
-   * @maxItems 100
-   * @minItems 1
-   */
-  runIDs: string[];
-}
-
-export interface CleanupConversationRunsResponse {
-  deletedCount: number;
-  runCount: number;
-}
-
-export interface CleanupConversationRunsResponseDoc {
-  data: CleanupConversationRunsResponse;
-  errorMsg: string;
 }
 
 export interface CleanupLogsRequest {
@@ -2298,6 +2322,7 @@ export interface MessageKnowledgeSourceResponse {
   chunkIndex: number;
   fileID: string;
   fileName: string;
+  modality?: string;
   preview: string;
   score: number;
 }
@@ -2409,7 +2434,7 @@ export interface MessageTraceBlockResponse {
   payloadJSON?: string;
   roundID?: string;
   stage?: string;
-  startedAt: string;
+  startedAt?: string;
   status: string;
   summary: string;
   title: string;
@@ -3227,6 +3252,25 @@ export interface ProviderAuthBridgeStartResponseDoc {
   errorMsg: string;
 }
 
+export interface ProviderBindBridgeStartRequest {
+  /** @maxLength 128 */
+  clientID: string;
+  /**
+   * @minLength 43
+   * @maxLength 128
+   */
+  clientState: string;
+  /**
+   * @minLength 43
+   * @maxLength 128
+   */
+  codeChallenge: string;
+  /** @maxLength 2048 */
+  next?: string;
+  /** @maxLength 2048 */
+  redirectURI: string;
+}
+
 export interface PublicFileShareResponseDoc {
   data: PublicFileShareResult;
   errorMsg: string;
@@ -3700,6 +3744,11 @@ export interface SendMessageRequest {
   skillIDs?: number[];
   /** @maxLength 32 */
   sourceMessagePublicID?: string;
+  /**
+   * UIComponentIDs 是本次会话勾选的交互式组件；后端据此注入组件目录提示词，不可见的 ID 被忽略。
+   * @maxItems 32
+   */
+  uiComponentIDs?: number[];
   userModelID?: number;
 }
 
@@ -4015,29 +4064,6 @@ export interface SyncUpstreamModelsResponse {
 export interface SyncUpstreamModelsResponseDoc {
   data: SyncUpstreamModelsResponse;
   errorMsg: string;
-}
-
-export interface SystemEventListResponseDoc {
-  data: {
-    results: SystemEventResponse[];
-    total: number;
-  };
-  errorMsg: string;
-}
-
-export interface SystemEventResponse {
-  createdAt: string;
-  detailJSON: string;
-  event: string;
-  id: number;
-  level: string;
-  message: string;
-  requestID: string;
-  resource: string;
-  resourceID: string;
-  source: string;
-  traceID: string;
-  updatedAt: string;
 }
 
 export interface TemporaryChatHistoryMessage {
@@ -4988,6 +5014,29 @@ export interface UserErrorDoc {
   errorMsg: string;
 }
 
+export interface UserIdentityResponse {
+  email: string;
+  emailVerified: boolean;
+  id: number;
+  lastLoginAt: string | null;
+  linkedAt: string;
+  providerDisplayName: string;
+  providerID: number;
+  providerLogoURL: string;
+  providerName: string;
+  providerSlug: string;
+  providerType: string;
+}
+
+export interface UserIdentityResponseData {
+  identity: UserIdentityResponse;
+}
+
+export interface UserIdentityResponseDoc {
+  data: UserIdentityResponseData;
+  errorMsg: string;
+}
+
 export interface UserListResponseDoc {
   data: {
     results: AdminUserResponse[];
@@ -5758,22 +5807,6 @@ export namespace Admin {
     export type RequestBody = never;
     export type RequestHeaders = {};
     export type ResponseBody = ConversationEventListResponseDoc;
-  }
-
-  /**
-   * @description 物理删除指定运行的全部对话事件；保留消息、附件、调用与计费记录
-   * @tags admin
-   * @name ConversationEventsCleanupCreate
-   * @summary 管理员按运行清理对话事件
-   * @request POST:/admin/conversation-events/cleanup
-   * @secure
-   */
-  export namespace ConversationEventsCleanupCreate {
-    export type RequestParams = {};
-    export type RequestQuery = {};
-    export type RequestBody = CleanupConversationRunsRequest;
-    export type RequestHeaders = {};
-    export type ResponseBody = CleanupConversationRunsResponseDoc;
   }
 
   /**
@@ -8017,41 +8050,6 @@ export namespace Admin {
   }
 
   /**
-   * @description 管理员分页查看后台结构化系统事件
-   * @tags admin
-   * @name SystemEventsList
-   * @summary 管理员查询系统事件
-   * @request GET:/admin/system-events
-   * @secure
-   */
-  export namespace SystemEventsList {
-    export type RequestParams = {};
-    export type RequestQuery = {
-      /** 创建时间起点(RFC3339) */
-      created_from?: string;
-      /** 创建时间终点(RFC3339) */
-      created_to?: string;
-      /** 事件 */
-      event?: string;
-      /** 级别 */
-      level?: string;
-      /** 页码 */
-      page?: number;
-      /** 每页数量 */
-      page_size?: number;
-      /** 搜索关键词 */
-      query?: string;
-      /** 排序方式 */
-      sort?: string;
-      /** 来源 */
-      source?: string;
-    };
-    export type RequestBody = never;
-    export type RequestHeaders = {};
-    export type ResponseBody = SystemEventListResponseDoc;
-  }
-
-  /**
    * No description
    * @tags admin/ui-components
    * @name UiComponentsList
@@ -8935,6 +8933,23 @@ export namespace Branding {
   }
 }
 
+export namespace Capabilities {
+  /**
+   * @description 返回这台服务器提供哪些功能。客户端据此决定显示什么；能力关闭的功能其端点返回 404 feature.disabled。
+   * @tags system
+   * @name CapabilitiesList
+   * @summary 查询服务器能力声明
+   * @request GET:/capabilities
+   */
+  export namespace CapabilitiesList {
+    export type RequestParams = {};
+    export type RequestQuery = {};
+    export type RequestBody = never;
+    export type RequestHeaders = {};
+    export type ResponseBody = CapabilitiesResponseDoc;
+  }
+}
+
 export namespace ContextArtifacts {
   /**
    * @description 查询当前用户可访问的上下文证据详情，用于 Prompt Trace 来源查看
@@ -9428,6 +9443,22 @@ export namespace ConversationRuns {
   }
 
   /**
+   * @description Sends an authoritative snapshot followed by live user-scoped run state events
+   * @tags chat
+   * @name StreamList
+   * @summary Stream active conversation generations
+   * @request GET:/conversation-runs/stream
+   * @secure
+   */
+  export namespace StreamList {
+    export type RequestParams = {};
+    export type RequestQuery = {};
+    export type RequestBody = never;
+    export type RequestHeaders = {};
+    export type ResponseBody = ActiveMessageGenerationEventResponse;
+  }
+
+  /**
    * @description 仅在用户显式点击暂停时取消对应 run；浏览器刷新或断开连接不会调用此接口
    * @tags chat
    * @name CancelCreate
@@ -9487,12 +9518,14 @@ export namespace ConversationRuns {
   /**
    * @description 页面刷新后按 run_id 重新订阅仍在运行的生成流，返回 NDJSON 事件
    * @tags chat
-   * @name StreamList
+   * @name StreamList2
    * @summary 恢复流式生成订阅
    * @request GET:/conversation-runs/{run_id}/stream
+   * @originalName streamList
+   * @duplicate
    * @secure
    */
-  export namespace StreamList {
+  export namespace StreamList2 {
     export type RequestParams = {
       /** 运行 ID */
       runId: string;
@@ -10782,6 +10815,44 @@ export namespace Me {
   }
 
   /**
+   * @description 为当前登录用户创建 PKCE 保护的绑定事务；外部身份源仅回调当前 DEEIX 实例，绑定在兑换时才生效
+   * @tags auth
+   * @name IdentitiesProvidersAuthorizeCreate
+   * @summary 创建第三方身份绑定授权桥事务
+   * @request POST:/me/identities/providers/{slug}/authorize
+   * @secure
+   */
+  export namespace IdentitiesProvidersAuthorizeCreate {
+    export type RequestParams = {
+      /** 身份源 slug */
+      slug: string;
+    };
+    export type RequestQuery = {};
+    export type RequestBody = ProviderBindBridgeStartRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = ProviderAuthBridgeStartResponseDoc;
+  }
+
+  /**
+   * @description 使用客户端 PKCE verifier 兑换绑定授权码，将身份绑到当前登录用户
+   * @tags auth
+   * @name IdentitiesProvidersExchangeCreate
+   * @summary 兑换第三方身份绑定一次性授权码
+   * @request POST:/me/identities/providers/{slug}/exchange
+   * @secure
+   */
+  export namespace IdentitiesProvidersExchangeCreate {
+    export type RequestParams = {
+      /** 身份源 slug */
+      slug: string;
+    };
+    export type RequestQuery = {};
+    export type RequestBody = ProviderAuthBridgeExchangeRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = UserIdentityResponseDoc;
+  }
+
+  /**
    * @description 标记当前用户已完成首次引导
    * @tags auth
    * @name OnboardingCompleteCreate
@@ -10869,7 +10940,7 @@ export namespace Memories {
 
 export namespace Messages {
   /**
-   * @description 更新当前用户会话中的 assistant 消息内容，并标记为已编辑
+   * @description 就地更新当前用户会话中的 user 或 assistant 消息内容并标记为已编辑，不触发重新生成
    * @tags chat
    * @name MessagesPartialUpdate
    * @summary 更新消息内容

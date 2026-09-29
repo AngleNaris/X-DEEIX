@@ -16,6 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { FeatureGate } from "@/shared/capabilities";
 
 type ConversationShareExportActionsProps = {
   shareLabel: string;
@@ -46,20 +47,22 @@ export function ConversationShareExportMenuItems({
   const hasScreenshot = Boolean(onScreenshotLatest || onScreenshotSelect);
   return (
     <>
-      <DropdownMenuItem
-        disabled={!onShare}
-        onSelect={(event) => {
-          event.preventDefault();
-          if (!onShare) {
-            return;
-          }
-          onCloseMenu?.();
-          onShare();
-        }}
-      >
-        <DropdownMenuItemIcon icon={Share2} className="text-current" />
-        {shareLabel}
-      </DropdownMenuItem>
+      <FeatureGate feature="sharing">
+        <DropdownMenuItem
+          disabled={!onShare}
+          onSelect={(event) => {
+            event.preventDefault();
+            if (!onShare) {
+              return;
+            }
+            onCloseMenu?.();
+            onShare();
+          }}
+        >
+          <DropdownMenuItemIcon icon={Share2} className="text-current" />
+          {shareLabel}
+        </DropdownMenuItem>
+      </FeatureGate>
       <DropdownMenuItem
         disabled={!onExport}
         onSelect={(event) => {

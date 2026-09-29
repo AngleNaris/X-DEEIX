@@ -13,7 +13,6 @@ import type {
   ResetUserPasswordRequest,
   ResetUserPasswordResponse,
   RevokeUserSessionsResponse,
-  SystemEventResponse,
   UpdateUserStatusRequest,
   UserDataResponse,
   UsageLogResponse,
@@ -63,7 +62,6 @@ export type AdminUserAuthEventDTO = AuthEventResponse;
 
 export type AdminAuditLogDTO = AuditLogResponse;
 
-export type AdminSystemEventDTO = SystemEventResponse;
 
 export type AdminUsageLogDTO = Omit<UsageLogResponse, "billingAt">;
 
@@ -76,7 +74,6 @@ export type AdminConversationEventDTO = ConversationEventResponse;
 export type ListAdminUsersResult = PagePayload<AdminUserDTO>;
 export type ListAdminUserAuthEventsResult = PagePayload<AdminUserAuthEventDTO>;
 export type ListAdminAuditLogsResult = PagePayload<AdminAuditLogDTO>;
-export type ListAdminSystemEventsResult = PagePayload<AdminSystemEventDTO>;
 export type ListAdminUsageLogsResult = PagePayload<AdminUsageLogDTO>;
 export type ListAdminPaymentOrdersResult = PagePayload<AdminPaymentOrderDTO>;
 export type ListAdminRedemptionsResult = PagePayload<AdminRedemptionRecordDTO>;

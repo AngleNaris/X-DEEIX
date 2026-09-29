@@ -25,6 +25,9 @@ var ErrInvalidStoredFilePath = errors.New("invalid stored file path")
 
 const defaultStorageRootDir = "./storage"
 
+// ErrStoredFileTooLarge 表示文件超过调用方允许读取的上限。
+var ErrStoredFileTooLarge = errors.New("stored file exceeds size limit")
+
 const (
 	EngineBuiltin         = "builtin"
 	EngineTika            = "tika"
@@ -129,7 +132,37 @@ func (s *Service) ExtractStoredFile(ctx context.Context, input ExtractInput) (Re
 	return s.extractLocalFile(ctx, input, absPath)
 }
 
-func (s *Service) extractLocalFile(ctx context.Context, input ExtractInput, absPath string) (Result, error) {
+// ReadStoredFile 读取已落盘文件的原始字节，超过 limit 时返回 ErrStoredFileTooLarge。
+func (s *Service) ReadStoredFile(ctx context.Context, storagePath string, limit int64) ([]byte, error) {
+	store, err := s.openObjectStore(ctx)
+	if err != nil {
+		return nil, err
+	}
+	reader, info, err := store.Open(ctx, storagePath)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	if limit > 0 && info.SizeBytes > limit {
+		return nil, ErrStoredFileTooLarge
+	}
+	if limit <= 0 {
+		return io.ReadAll(reader)
+	}
+	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, ErrStoredFileTooLarge
+	}
+	return data, nil
+}
+
+func (s *Service) extractLocalFile(ctx context.Context, input ExtractInput, absPath string) (result Result, err error) {
+	defer func() {
+		err = withErrorCode(err)
+	}()
 	input.OCREngine = normalizeOCREngine(input.OCREngine)
 	file := input.File
 	file.StoragePath = absPath

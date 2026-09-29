@@ -17,6 +17,7 @@ export type ChatSettings = {
   showModelInfo: boolean;
   showLatency: boolean;
   showBillingCost: boolean;
+  showProcessTrace: boolean;
   markdownRender: boolean;
   autoExpandThinking: boolean;
   autoExpandToolCalls: boolean;
